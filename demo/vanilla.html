@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>claim-marker — vanilla mount()</title>
+    <style>
+      body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #f1f5f9; color: #0f172a; }
+      main { max-width: 900px; margin: 0 auto; padding: 24px; }
+      .stage { height: 420px; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(15,23,42,.12); }
+      pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 12px; overflow: auto; font-size: 12px; max-height: 220px; }
+      button { padding: 8px 14px; border: 0; border-radius: 8px; background: #0f172a; color: #fff; font: inherit; cursor: pointer; }
+      h2 { margin-top: 32px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Vanilla <code>mount()</code></h1>
+      <p>Both widgets with no React in the host page's own code.</p>
+
+      <h2>Damage marker</h2>
+      <div id="damage" class="stage"></div>
+      <p><button id="export">export()</button> <button id="sample">load() a sample</button></p>
+      <pre id="out">{}</pre>
+
+      <h2>Accident scenario</h2>
+      <div id="scenario" class="stage"></div>
+      <p><button id="scn-export">export()</button> <button id="scn-sample">load() a sample</button></p>
+      <pre id="scn-out">{}</pre>
+    </main>
+    <script type="module" src="/demo/vanilla.ts"></script>
+  </body>
+</html>
