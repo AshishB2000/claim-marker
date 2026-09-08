@@ -4,8 +4,13 @@
  * it samples every triangle of a body and asks nearestZone() which zone each surface
  * point lands in.
  *
- * A zone with no samples is unreachable: it exists in the data and can never be picked,
- * which the unit tests cannot catch because they only check each anchor against itself.
+ * A zone with no samples is unreachable: it exists in the data and can never be picked.
+ * The unit tests check each anchor against itself and enforce a 15 cm gap between anchors,
+ * neither of which can prove a zone actually claims bodywork.
+ *
+ * Shares are weighted by triangle area, not sample count. Wheel meshes carry far more
+ * triangles than a flat slab, so an unweighted count makes the largest panel on the vehicle
+ * look starved.
  *
  *   node scripts/probe-zones.ts            # every vehicle
  *   node scripts/probe-zones.ts van        # one
@@ -53,10 +58,15 @@ function triangles(file: string): V3[][] {
       continue
     }
     const { acc: iAcc, start: iStart } = read(prim.indices)
-    // 5123 = UNSIGNED_SHORT, 5125 = UNSIGNED_INT
-    const wide = iAcc.componentType === 5125
-    const idx = (n: number) =>
-      wide ? glb.readUInt32LE(iStart + n * 4) : glb.readUInt16LE(iStart + n * 2)
+    // Kenney sizes indices to the mesh: a 62-vertex part is UNSIGNED_BYTE. Assuming SHORT
+    // reads past the buffer view and throws on exactly the small extra parts (a van's rear
+    // shutter) that a new body is most likely to bring with it.
+    const width = { 5121: 1, 5123: 2, 5125: 4 }[iAcc.componentType as 5121 | 5123 | 5125]
+    if (!width) throw new Error(`unsupported index componentType ${iAcc.componentType}`)
+    const idx = (n: number) => {
+      const at = iStart + n * width
+      return width === 1 ? glb.readUInt8(at) : width === 2 ? glb.readUInt16LE(at) : glb.readUInt32LE(at)
+    }
     for (let i = 0; i + 2 < iAcc.count; i += 3) {
       out.push([verts[idx(i)], verts[idx(i + 1)], verts[idx(i + 2)]])
     }
@@ -66,15 +76,28 @@ function triangles(file: string): V3[][] {
 
 const dist = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
+/** triangle area, so shares reflect surface rather than how finely a part was modelled */
+function area([a, b, c]: V3[]): number {
+  const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+  const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]
+  return (
+    Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]) / 2
+  )
+}
+
 function probe(vehicle: Vehicle): number {
   const tris = triangles(new URL(MODELS[vehicle]).pathname)
   const zones = zonesOf(vehicle)
 
-  const hits = new Map<string, { n: number; sum: V3; nearest: number }>()
-  for (const z of zones) hits.set(z.id, { n: 0, sum: [0, 0, 0], nearest: Infinity })
+  const hits = new Map<string, { n: number; area: number; sum: V3; nearest: number }>()
+  for (const z of zones) hits.set(z.id, { n: 0, area: 0, sum: [0, 0, 0], nearest: Infinity })
 
   let samples = 0
-  for (const [a, b, c] of tris) {
+  let total = 0
+  for (const tri of tris) {
+    const [a, b, c] = tri
+    const share = area(tri) / BARY.length
+    total += area(tri)
     for (const [u, v, w] of BARY) {
       const p: V3 = [
         a[0] * u + b[0] * v + c[0] * w,
@@ -84,6 +107,7 @@ function probe(vehicle: Vehicle): number {
       const zone = nearestZone(vehicle, p)
       const h = hits.get(zone.id)!
       h.n++
+      h.area += share
       h.sum[0] += p[0]
       h.sum[1] += p[1]
       h.sum[2] += p[2]
@@ -97,7 +121,7 @@ function probe(vehicle: Vehicle): number {
     }
   }
 
-  console.log(`\n== ${vehicle} — ${tris.length} tris, ${samples} samples`)
+  console.log(`\n== ${vehicle} — ${tris.length} tris, ${samples} samples, ${total.toFixed(2)} m² surface`)
   const unreachable: string[] = []
   for (const z of zones) {
     const h = hits.get(z.id)!
@@ -107,7 +131,7 @@ function probe(vehicle: Vehicle): number {
       continue
     }
     const c = h.sum.map((s) => (s / h.n).toFixed(2)).join(',')
-    const pct = ((h.n / samples) * 100).toFixed(1).padStart(5)
+    const pct = ((h.area / total) * 100).toFixed(1).padStart(5)
     console.log(
       `  ${z.id.padEnd(26)} ${String(h.n).padStart(5)} (${pct}%)  centroid ${c}  anchor-to-surface ${h.nearest.toFixed(3)}`,
     )
