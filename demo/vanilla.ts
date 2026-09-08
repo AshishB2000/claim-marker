@@ -7,6 +7,7 @@ const brief = (png: string) => `${png.slice(0, 24)}… (${Math.round(png.length 
 // ── damage marker ────────────────────────────────────────────────────
 const marker = mount(document.getElementById('damage')!, {
   vehicle: 'sedan',
+  theme: 'dark',
   onChange: (v) => show('out', v),
 })
 // mount() returns a usable handle synchronously — this must not throw
@@ -25,6 +26,7 @@ on('export', () => {
 
 // ── accident scenario ────────────────────────────────────────────────
 const scenario = mountScenario(document.getElementById('scenario')!, {
+  theme: 'dark',
   onChange: (v) => show('scn-out', v),
 })
 show('scn-out', scenario.export().json)

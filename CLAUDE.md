@@ -4,16 +4,16 @@ Two embeddable widgets for a first-notice-of-loss form: a 3D vehicle damage mark
 accident scenario builder. Ships as an npm package (ESM + types) with React and vanilla
 entry points. No backend, no accounts, no AI.
 
-Design decisions and their reasoning live in [docs/spec.md](docs/spec.md) and
-[docs/spec-scenario.md](docs/spec-scenario.md). Read the relevant one before changing
-behaviour it describes.
+Design decisions and their reasoning live in [docs/spec.md](docs/spec.md),
+[docs/spec-scenario.md](docs/spec-scenario.md) and [docs/spec-polish.md](docs/spec-polish.md).
+Read the relevant one before changing behaviour it describes.
 
 ## Commands
 
 ```bash
 npm run dev            # vite, http://localhost:5173
 npm run lint           # oxlint — must be silent, warnings included
-npm test               # vitest, 86 tests across 3 files
+npm test               # vitest, 92 tests across 4 files
 npm run build          # tsc -b, lib build, then .d.ts emit
 ```
 
@@ -67,15 +67,23 @@ cursor leaves the canvas and would freeze a drag under an overlay panel. Each dr
 a plane at the height of the handle being held, not `y = 0`.
 
 **Widget CSS is injected, scoped under `.cm-`** (`src/style.ts`). The widgets cannot require
-the host app to run Tailwind; Tailwind is for the demo page only.
+the host app to run Tailwind; Tailwind is for the demo page only. Colours are `--cm-*` custom
+properties with the dark set on `.cm-root.cm-dark`; the canvas-side colours (clear colour, road,
+grid) live in `src/theme.ts` because WebGL cannot read CSS. Add a colour to both, not one.
+
+**A blank canvas in a screenshot is usually not a bug.** three.js links shader programs in
+parallel and skips objects whose program is not ready; under headless or software GL the lit
+materials can take several seconds while the unlit path lines show immediately, which looks
+exactly like a broken Suspense boundary. `smoke.mjs` and `shoot.mjs` poll for a rendered frame
+(`settled()`) — do the same before trusting any capture, and use `scripts/pixel.mjs` to check.
 
 ## Layout
 
 ```
-src/schema.ts zones.ts style.ts models.ts   shared by both widgets
-src/marker/                                  damage marker
-src/scenario/                                scenario builder
-demo/                                        demo page, not shipped
+src/schema.ts zones.ts style.ts theme.ts models.ts   shared by both widgets
+src/marker/                                           damage marker (camera.ts is the fly-to maths)
+src/scenario/                                         scenario builder
+demo/                                                 demo page, not shipped
 ```
 
 ## Before saying it works

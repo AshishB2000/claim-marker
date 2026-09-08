@@ -1,1 +1,71 @@
 @import "tailwindcss";
+
+/* the page toggles .dark on <html>; the widgets get the same choice as a prop */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply bg-slate-100 text-slate-900 dark:bg-[#070a14] dark:text-slate-100;
+  }
+}
+
+@layer components {
+  .page-glow {
+    background-image:
+      radial-gradient(55% 45% at 12% 0%, rgba(59, 130, 246, 0.14), transparent 65%),
+      radial-gradient(40% 35% at 92% 100%, rgba(245, 158, 11, 0.1), transparent 65%);
+  }
+  .page-grid {
+    background-image:
+      linear-gradient(rgba(148, 163, 184, 0.16) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.16) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse 70% 55% at 50% 0%, #000 20%, transparent 100%);
+  }
+  .gradient-text {
+    @apply bg-gradient-to-r from-blue-500 via-sky-400 to-amber-400 bg-clip-text text-transparent;
+  }
+
+  .card {
+    @apply rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 dark:bg-white/[0.035] dark:shadow-none dark:ring-white/10;
+  }
+  .card-title {
+    @apply text-[11px] font-semibold tracking-[0.12em] text-slate-400 uppercase dark:text-slate-500;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-300 transition select-none hover:bg-slate-50 disabled:opacity-40 dark:bg-white/[0.06] dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10;
+  }
+  .btn-primary {
+    @apply bg-slate-900 text-white ring-0 hover:bg-slate-700 dark:bg-blue-500 dark:text-white dark:hover:bg-blue-400;
+  }
+  .btn-sm {
+    @apply px-2 py-1 text-xs;
+  }
+
+  .seg {
+    @apply rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 transition select-none hover:text-slate-900 dark:text-slate-400 dark:hover:text-white;
+  }
+  .seg[aria-pressed="true"] {
+    @apply bg-slate-900 text-white shadow dark:bg-white/10 dark:text-white dark:ring-1 dark:ring-white/10;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-900/10 dark:bg-white/[0.03] dark:text-slate-300 dark:ring-white/10;
+  }
+  .muted {
+    @apply text-slate-500 dark:text-slate-400;
+  }
+  .faint {
+    @apply text-slate-400 dark:text-slate-500;
+  }
+  .input {
+    @apply w-full rounded-lg bg-white px-2.5 py-2 text-sm ring-1 ring-slate-300 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-blue-400 dark:bg-white/[0.04] dark:ring-white/10 dark:placeholder:text-slate-600 dark:focus:ring-blue-400/60;
+  }
+  .row {
+    @apply flex items-start gap-3 rounded-lg px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-white/[0.04];
+  }
+}

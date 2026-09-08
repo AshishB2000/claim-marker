@@ -145,16 +145,21 @@ export function createScenarioStore(initial?: ScenarioValue) {
         })
       },
 
-      load: (value) =>
+      // a controlled host re-sends the whole document on every edit — typing a note, say —
+      // so a selection or an open damage overlay survives when its vehicle is still there
+      load: (value) => {
+        const { selected, marking } = get()
+        const keep = (id: string | null) => (id !== null && value.vehicles.some((v) => v.id === id) ? id : null)
         set({
           layout: value.layout,
           vehicles: value.vehicles,
           impact: value.impact,
           note: value.note,
-          selected: null,
+          selected: keep(selected),
           drag: null,
-          marking: null,
-        }),
+          marking: keep(marking),
+        })
+      },
 
       value: () => {
         const s = get()

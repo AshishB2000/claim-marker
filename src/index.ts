@@ -24,6 +24,9 @@ export {
 } from './scenario/schema'
 export type { Role, ScenarioValue, ScenarioVehicle } from './scenario/schema'
 
+export { THEME } from './theme'
+export type { Theme, ThemeColors } from './theme'
+
 export { LAYOUTS, LAYOUT_IDS } from './scenario/layouts'
 export type { LayoutId, Point2 } from './scenario/layouts'
 

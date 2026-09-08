@@ -3,6 +3,7 @@ import { useStore } from 'zustand'
 import { DamageMarker } from '../marker/DamageMarker'
 import { SCHEMA } from '../schema'
 import { injectStyle } from '../style'
+import { themeClass, type Theme } from '../theme'
 import { VEHICLES, VEHICLE_IDS, type Vehicle } from '../zones'
 import { LAYOUTS, LAYOUT_IDS } from './layouts'
 import { ScenarioScene } from './Scene'
@@ -31,12 +32,14 @@ export type ScenarioBuilderProps = {
   /** controlled value; omit for uncontrolled */
   value?: ScenarioValue
   onChange?: (value: ScenarioValue) => void
+  /** `light` (default) or `dark`; finer control is the `--cm-*` custom properties */
+  theme?: Theme
   className?: string
   style?: CSSProperties
   ref?: Ref<ScenarioHandle>
 }
 
-export function ScenarioBuilder({ value, onChange, className, style, ref }: ScenarioBuilderProps) {
+export function ScenarioBuilder({ value, onChange, theme = 'light', className, style, ref }: ScenarioBuilderProps) {
   injectStyle()
 
   const [store] = useState(() =>
@@ -102,8 +105,8 @@ export function ScenarioBuilder({ value, onChange, className, style, ref }: Scen
   }
 
   return (
-    <div className={className ? `cm-root ${className}` : 'cm-root'} style={style}>
-      <ScenarioScene store={store} onCanvas={setCanvas} />
+    <div className={themeClass(theme, className)} style={style}>
+      <ScenarioScene store={store} theme={theme} onCanvas={setCanvas} />
 
       <div className="cm-bar cm-bar-top">
         <div className="cm-chips">
@@ -198,6 +201,7 @@ export function ScenarioBuilder({ value, onChange, className, style, ref }: Scen
             <DamageMarker
               key={marking.id}
               vehicle={marking.body}
+              theme={theme}
               value={{ schema: SCHEMA, vehicle: marking.body, damages: marking.damages }}
               onChange={(v) => act().setDamages(marking.id, v.damages)}
             />

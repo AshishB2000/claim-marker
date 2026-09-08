@@ -2,7 +2,8 @@
 
 <p align="center">
   Two embeddable 3D widgets for insurance claims.<br>
-  Lay out how the accident happened, and mark where the damage is. Both emit structured JSON and a PNG.
+  Lay out how the accident happened, and mark where the damage is. Both emit structured JSON and a PNG.<br>
+  Light and dark, no backend, nothing fetched at runtime.
 </p>
 
 <p align="center">
@@ -31,7 +32,7 @@ have.
 | | |
 | --- | --- |
 | <img src="docs/screenshot.png" alt="Damage marker" width="100%"> | <img src="docs/overlay.png" alt="Marking damage on a vehicle from inside the scenario" width="100%"> |
-| **Damage marker** — tap the car, pick a severity | **Integrated** — mark a scenario vehicle's damage in place |
+| **Damage marker** — hover names the panel, tap it, pick a severity; pins are numbered and tapping one flies the camera to it | **Integrated** — mark a scenario vehicle's damage in place |
 
 ## Quick start
 
@@ -72,7 +73,7 @@ function ClaimStep() {
 
 `<DamageMarker />` has the same shape and is useful on its own when you only need the damage step.
 Pass `value` / `onChange` to run either controlled; omit both for uncontrolled and read the state
-with `export()`.
+with `export()`. Both take `theme="dark"` for a dark portal.
 
 **Vanilla**
 
@@ -80,6 +81,7 @@ with `export()`.
 import { mount, mountScenario } from 'claim-marker'
 
 const diagram = mountScenario(document.getElementById('scenario'), {
+  theme: 'dark',
   onChange: (value) => console.log(value),
 })
 
@@ -179,7 +181,7 @@ field.
 
 | | |
 | --- | --- |
-| `<ScenarioBuilder />` | `value` `onChange` `className` `style` `ref` |
+| `<ScenarioBuilder />` | `value` `onChange` `theme` `className` `style` `ref` |
 | `<DamageMarker />` | the same, plus `vehicle` and `modelUrl` |
 | `mountScenario(el, opts)` | → `{ export, load, destroy }` |
 | `mount(el, opts)` | → `{ export, load, destroy }` |
@@ -187,22 +189,33 @@ field.
 Both `export()` calls return `{ json, png }`, where `png` is a data URL of the current view —
 literally what the user is looking at.
 
+### Theming
+
+`theme` is `light` (default) or `dark`. Everything DOM-side is a CSS custom property on the
+widget's root — `--cm-bg`, `--cm-panel`, `--cm-text`, `--cm-muted`, `--cm-line`, `--cm-accent`
+and friends, see `src/style.ts` — so a third look is a stylesheet rule on `.cm-root`, not a
+fork. The few colours WebGL cannot read from CSS (the clear colour, the road, the grid) come
+from the exported `THEME` table.
+
 ## Notes for integrators
 
 - **No network at runtime.** The models are inlined into the bundle and the lighting is built from
   lightformers, not a hosted HDRI. Nothing is fetched from a CDN while your form is open.
-- **852 kB, 219 kB gzipped** — of which 788 kB is the three vehicle models and 44 kB is code.
+- **861 kB, 221 kB gzipped** — of which 807 kB is the three vehicle models, base64-inlined, and
+  55 kB is code.
   `react`, `react-dom` and `three` are peer dependencies, so you get one copy of three.js, not two.
   If that size matters, the fix is separate entry points; see [the spec](docs/spec-scenario.md).
 - **Styling is self-contained.** The widgets inject their own CSS scoped under `.cm-`. They do not
-  need Tailwind and will not touch your styles.
+  need Tailwind and will not touch your styles. Override the `--cm-*` custom properties to restyle.
+- **The marker turns slowly until it is touched**, which is how a claimant learns it can be
+  rotated. Tapping a pin eases the camera round to face that damage.
 - **Several widgets on one page is fine.** State is per instance.
 
 ## Development
 
 ```bash
 npm run lint
-npm test          # zone classification, both schema round-trips, store behaviour
+npm test          # zone classification, both schema round-trips, store behaviour, fly-to camera maths
 npm run build     # the package, into dist/
 npm run build:demo
 ```
@@ -217,7 +230,8 @@ node scripts/pixel.mjs docs/scenario.png 883,550   # sample rendered pixels, for
 ```
 
 The design decisions, including the ones not visible in the code, are in
-[docs/spec.md](docs/spec.md) and [docs/spec-scenario.md](docs/spec-scenario.md).
+[docs/spec.md](docs/spec.md), [docs/spec-scenario.md](docs/spec-scenario.md) and
+[docs/spec-polish.md](docs/spec-polish.md).
 
 ## Licence
 

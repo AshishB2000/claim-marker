@@ -1,6 +1,7 @@
+import { useMemo, useRef, type ComponentRef } from 'react'
 import * as THREE from 'three'
 import { Billboard, Html, Line } from '@react-three/drei'
-import type { ThreeEvent } from '@react-three/fiber'
+import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import type { Point2 } from './layouts'
 import { ROLE_COLOR, type ScenarioVehicle } from './schema'
 import type { ScenarioStore } from './store'
@@ -8,6 +9,37 @@ import type { ScenarioStore } from './store'
 const Y = 0.04
 /** the head sits short of the vehicle so the car does not hide it */
 const HEAD_AT = 0.86
+/** metres per second the dashes travel; a cue for direction, not a speed */
+const FLOW = 3.5
+
+/**
+ * Dashes marching towards the vehicle. Direction of travel shown as motion on a static
+ * path — nothing about timing enters the document, and the decision against playback in
+ * spec-scenario.md stands.
+ */
+function Flow({ points, color }: { points: THREE.Vector3[]; color: string }) {
+  const ref = useRef<ComponentRef<typeof Line>>(null)
+  useFrame((_, dt) => {
+    const line = ref.current
+    if (line) line.material.dashOffset -= dt * FLOW
+  })
+  return (
+    <Line
+      ref={ref}
+      points={points}
+      color="#ffffff"
+      lineWidth={0.16}
+      worldUnits
+      dashed
+      dashSize={0.9}
+      gapSize={1.3}
+      transparent
+      opacity={0.9}
+      // the colour is the vehicle's own; white dashes on it read as movement, not a second line
+      vertexColors={points.map(() => new THREE.Color(color).lerp(new THREE.Color('#ffffff'), 0.55))}
+    />
+  )
+}
 
 /**
  * The approach, drawn through [...path, position] — path is where the vehicle came from and
@@ -22,19 +54,21 @@ export function TravelPath({
   vehicle: ScenarioVehicle
   selected: boolean
 }) {
-  if (v.path.length === 0) return null
-
-  const points = [...v.path, v.position].map(([x, z]) => new THREE.Vector3(x, Y, z))
-  const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.25)
-  const head = curve.getPointAt(HEAD_AT)
-  const tangent = curve.getTangentAt(HEAD_AT)
   const color = ROLE_COLOR[v.role]
+  const curve = useMemo(() => {
+    if (v.path.length === 0) return null
+    const points = [...v.path, v.position].map(([x, z]) => new THREE.Vector3(x, Y, z))
+    const c = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.25)
+    return { line: c.getPoints(60), head: c.getPointAt(HEAD_AT), tangent: c.getTangentAt(HEAD_AT) }
+  }, [v.path, v.position])
+  if (!curve) return null
 
   return (
     <>
-      <Line points={curve.getPoints(60)} color={color} lineWidth={0.34} worldUnits transparent opacity={0.85} />
+      <Line points={curve.line} color={color} lineWidth={0.34} worldUnits transparent opacity={0.85} />
+      <Flow points={curve.line.map((p) => p.clone().setY(Y + 0.01))} color={color} />
 
-      <group position={head} rotation-y={Math.atan2(tangent.x, tangent.z)}>
+      <group position={curve.head} rotation-y={Math.atan2(curve.tangent.x, curve.tangent.z)}>
         <mesh rotation-x={Math.PI / 2}>
           <coneGeometry args={[0.62, 1.5, 18]} />
           <meshBasicMaterial color={color} toneMapped={false} />

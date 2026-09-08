@@ -9,25 +9,23 @@ import { chromium } from 'playwright'
 
 const url = process.argv[2] ?? 'http://localhost:5173/'
 
+// the scenario shot is the README hero and shows the whole page; the other two crop to the
+// demo block (#demo: stage plus sidebar) so the car is not a thumbnail
 const TABS = [
-  { tab: 'Accident scenario', out: 'docs/scenario.png', settle: 2500 },
-  { tab: 'Damage marker', out: 'docs/screenshot.png', settle: 1500 },
+  { tab: 'Accident scenario', out: 'docs/scenario.png', settle: 2500, full: true },
+  { tab: 'Damage marker', out: 'docs/screenshot.png', settle: 1500, full: false },
 ]
 
 const browser = await chromium.launch()
-const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 2 })
+const page = await browser.newPage({ viewport: { width: 1280, height: 1100 }, deviceScaleFactor: 2 })
 const errors = []
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 page.on('pageerror', (e) => errors.push(String(e)))
 
-await page.goto(url, { waitUntil: 'networkidle' })
-await page.waitForSelector('canvas')
-await page.waitForTimeout(3500)
-
 /** read back the pixels of what export() would return, to prove the buffer is not blank */
-const inspectExport = () =>
-  page.evaluate(async () => {
-    const canvas = document.querySelector('canvas')
+const inspectExport = (sel = 'canvas') =>
+  page.evaluate(async (sel) => {
+    const canvas = document.querySelector(sel)
     const dataUrl = canvas.toDataURL('image/png')
     const img = new Image()
     img.src = dataUrl
@@ -41,17 +39,33 @@ const inspectExport = () =>
     const colors = new Set()
     for (let i = 0; i < px.length; i += 4 * 499) colors.add(`${px[i]},${px[i + 1]},${px[i + 2]}`)
     return { width: img.width, height: img.height, kb: Math.round(dataUrl.length / 1024), distinctColors: colors.size }
-  })
+  }, sel)
+
+/**
+ * Wait for a real frame rather than a fixed time: three.js skips objects whose shader program
+ * is still linking, and under software GL the lit materials can take seconds to come up.
+ */
+const settled = async (sel = 'canvas') => {
+  for (let i = 0; i < 50; i++) {
+    if ((await inspectExport(sel)).distinctColors >= 50) return
+    await page.waitForTimeout(300)
+  }
+  throw new Error(`${sel} never rendered a frame`)
+}
+
+await page.goto(url, { waitUntil: 'networkidle' })
+await page.waitForSelector('canvas')
+await settled()
 
 const report = {}
-for (const { tab, out, settle } of TABS) {
+for (const { tab, out, settle, full } of TABS) {
   await page.getByRole('button', { name: tab, exact: true }).click()
-  await page.waitForTimeout(settle)
-  await page.getByRole('button', { name: 'Sample' }).click()
+  await settled()
+  await page.getByRole('button', { name: 'Sample', exact: true }).click()
   await page.waitForTimeout(settle)
 
   report[tab] = { png: await inspectExport(), json: JSON.parse(await page.textContent('pre')) }
-  await page.screenshot({ path: out })
+  await (full ? page.screenshot({ path: out }) : page.locator('#demo').screenshot({ path: out }))
   console.log(`${out} — ${JSON.stringify(report[tab].png)}`)
 }
 
@@ -60,8 +74,10 @@ await page.getByRole('button', { name: 'Accident scenario', exact: true }).click
 await page.waitForTimeout(1500)
 await page.getByRole('button', { name: /^A ·/ }).click()
 await page.getByRole('button', { name: /^Mark damage/ }).click()
-await page.waitForTimeout(3500)
-await page.screenshot({ path: 'docs/overlay.png' })
+await page.waitForSelector('.cm-overlay canvas')
+await settled('.cm-overlay canvas')
+await page.waitForTimeout(800)
+await page.locator('#demo').screenshot({ path: 'docs/overlay.png' })
 console.log('docs/overlay.png')
 
 await browser.close()
@@ -80,6 +96,6 @@ if (scenario.json.vehicles.reduce((n, v) => n + v.damages.length, 0) !== 2) fail
 
 const damage = report['Damage marker']
 if (damage.png.distinctColors < 50) fail(`damage export looks blank (${damage.png.distinctColors} colours)`)
-if (damage.json.damages?.length !== 2) fail(`expected 2 damages, got ${damage.json.damages?.length}`)
+if (damage.json.damages?.length !== 3) fail(`expected 3 damages, got ${damage.json.damages?.length}`)
 
 console.log('\nok — both tabs render, both exports are real frames')

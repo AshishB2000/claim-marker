@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { DamageMarker, type DamageMarkerHandle, type ExportResult } from './DamageMarker'
 import type { ClaimValue } from '../schema'
+import type { Theme } from '../theme'
 import type { Vehicle } from '../zones'
 
 export type MountOptions = {
@@ -10,6 +11,7 @@ export type MountOptions = {
   value?: ClaimValue
   onChange?: (value: ClaimValue) => void
   modelUrl?: string
+  theme?: Theme
 }
 
 export type MountedMarker = {

@@ -3,10 +3,12 @@ import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { ScenarioBuilder, type ScenarioExport, type ScenarioHandle } from './ScenarioBuilder'
 import type { ScenarioValue } from './schema'
+import type { Theme } from '../theme'
 
 export type MountScenarioOptions = {
   value?: ScenarioValue
   onChange?: (value: ScenarioValue) => void
+  theme?: Theme
 }
 
 export type MountedScenario = {

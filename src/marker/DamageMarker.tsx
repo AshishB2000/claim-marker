@@ -3,6 +3,7 @@ import { useStore } from 'zustand'
 import { emptyValue, parse, type ClaimValue } from '../schema'
 import { createMarkerStore } from './store'
 import { injectStyle } from '../style'
+import { themeClass, type Theme } from '../theme'
 import { Scene } from './Scene'
 import type { Vehicle } from '../zones'
 
@@ -24,6 +25,8 @@ export type DamageMarkerProps = {
   onChange?: (value: ClaimValue) => void
   /** override where the .glb is fetched from, e.g. your own CDN */
   modelUrl?: string
+  /** `light` (default) or `dark`; finer control is the `--cm-*` custom properties */
+  theme?: Theme
   className?: string
   style?: CSSProperties
   ref?: Ref<DamageMarkerHandle>
@@ -39,6 +42,7 @@ export function DamageMarker({
   value,
   onChange,
   modelUrl,
+  theme = 'light',
   className,
   style,
   ref,
@@ -48,6 +52,8 @@ export function DamageMarker({
   // built once: `value` and `vehicle` seed it, later changes arrive through the effects below
   const [store] = useState(() => createMarkerStore(value ?? emptyValue(vehicle)))
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null)
+  // slow turntable until the first touch, which is also the hint that it can be rotated
+  const [idle, setIdle] = useState(true)
 
   // Remember what we last emitted, compared by content rather than identity: a controlled
   // consumer that derives `value` — from a larger form object, say — hands back an equal but
@@ -90,8 +96,8 @@ export function DamageMarker({
   )
 
   return (
-    <div className={className ? `cm-root ${className}` : 'cm-root'} style={style}>
-      <Scene store={store} modelUrl={modelUrl} onCanvas={setCanvas} />
+    <div className={themeClass(theme, className)} style={style} onPointerDownCapture={() => setIdle(false)}>
+      <Scene store={store} modelUrl={modelUrl} theme={theme} idle={idle} onCanvas={setCanvas} />
       <Hint store={store} />
     </div>
   )

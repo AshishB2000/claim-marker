@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Environment, Lightformer, OrbitControls } from '@react-three/drei'
 import { useStore } from 'zustand'
+import { THEME, type Theme } from '../theme'
 import { LayoutMesh } from './LayoutMesh'
 import { ScenarioCar } from './Vehicle'
 import { IMPACT_Y, ImpactMark, TravelPath } from './Path'
@@ -64,7 +65,15 @@ function DragDriver({ store }: { store: ScenarioStore }) {
   return null
 }
 
-export function ScenarioScene({ store, onCanvas }: { store: ScenarioStore; onCanvas: (c: HTMLCanvasElement) => void }) {
+export function ScenarioScene({
+  store,
+  theme,
+  onCanvas,
+}: {
+  store: ScenarioStore
+  theme: Theme
+  onCanvas: (c: HTMLCanvasElement) => void
+}) {
   const layout = useStore(store, (s) => s.layout)
   const vehicles = useStore(store, (s) => s.vehicles)
   const selected = useStore(store, (s) => s.selected)
@@ -85,7 +94,7 @@ export function ScenarioScene({ store, onCanvas }: { store: ScenarioStore; onCan
       onCreated={({ gl }) => onCanvas(gl.domElement)}
       onPointerMissed={() => store.getState().select(null)}
     >
-      <color attach="background" args={['#eef2f6']} />
+      <color attach="background" args={[THEME[theme].bg]} />
 
       <Suspense fallback={null}>
         {/* local lightformers, not a drei preset: presets fetch an HDRI from a CDN */}
@@ -96,7 +105,7 @@ export function ScenarioScene({ store, onCanvas }: { store: ScenarioStore; onCan
           <Lightformer form="rect" intensity={0.5} color="#e6efff" position={[-16, 6, -10]} rotation-y={Math.PI / 4} scale={[16, 8, 1]} />
         </Environment>
 
-        <LayoutMesh layout={layout} />
+        <LayoutMesh layout={layout} theme={theme} />
 
         {vehicles.map((v) => (
           <ScenarioCar key={v.id} store={store} vehicle={v} selected={v.id === selected} />
