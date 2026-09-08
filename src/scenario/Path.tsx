@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { Line } from '@react-three/drei'
+import { Billboard, Html, Line } from '@react-three/drei'
 import type { ThreeEvent } from '@react-three/fiber'
 import type { Point2 } from './layouts'
 import { ROLE_COLOR, type ScenarioVehicle } from './schema'
@@ -60,26 +60,49 @@ export function TravelPath({
   )
 }
 
+const IMPACT = '#dc2626'
+
+/** how high the badge floats; vehicles stand about 1.8 m tall at scene scale */
+export const IMPACT_Y = 3.4
+
+/**
+ * The cross floats above the vehicles rather than lying on the road, where the cars it sits
+ * between hid it. A leader line and a ground ring keep it tied to the actual point.
+ *
+ * The badge itself is DOM, not geometry, because the vehicle labels are drei <Html> and so
+ * paint over the canvas — no amount of height would put WebGL in front of them. Given a
+ * higher zIndexRange it always wins, and `pointerEvents: none` lets the pointer fall through
+ * to the invisible disc behind it, so dragging still goes through the normal 3D path.
+ */
 export function ImpactMark({ store, at }: { store: ScenarioStore; at: Point2 }) {
   const grab = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation()
     store.getState().startDrag({ kind: 'impact' })
   }
   return (
-    <group position={[at[0], 0.06, at[1]]} onPointerDown={grab}>
-      {/* generous invisible grab area */}
-      <mesh rotation-x={-Math.PI / 2}>
-        <circleGeometry args={[2, 20]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+    <group position={[at[0], 0, at[1]]}>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.05}>
+        <ringGeometry args={[0.5, 0.74, 36]} />
+        <meshBasicMaterial color={IMPACT} toneMapped={false} transparent opacity={0.9} />
       </mesh>
-      {[Math.PI / 4, -Math.PI / 4].map((rot, i) => (
-        <group key={i} rotation-y={rot}>
-          <mesh rotation-x={-Math.PI / 2}>
-            <planeGeometry args={[0.55, 3.4]} />
-            <meshBasicMaterial color="#dc2626" toneMapped={false} />
-          </mesh>
-        </group>
-      ))}
+
+      <mesh position-y={IMPACT_Y / 2}>
+        <cylinderGeometry args={[0.05, 0.05, IMPACT_Y, 8]} />
+        <meshBasicMaterial color={IMPACT} toneMapped={false} transparent opacity={0.75} />
+      </mesh>
+
+      <Billboard position={[0, IMPACT_Y, 0]}>
+        <mesh onPointerDown={grab}>
+          <circleGeometry args={[1.1, 20]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      </Billboard>
+
+      <Html position={[0, IMPACT_Y, 0]} center zIndexRange={[30, 25]} style={{ pointerEvents: 'none' }}>
+        <div className="cm-impact" title="Point of impact">
+          ✕
+        </div>
+      </Html>
     </group>
   )
 }

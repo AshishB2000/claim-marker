@@ -284,6 +284,20 @@ const CSS = `
 }
 .cm-overlay-head .cm-btn { width: auto; margin: 0; padding: 6px 14px; }
 .cm-overlay-body { position: relative; flex: 1; min-height: 0; }
+
+.cm-impact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #dc2626;
+  color: #fff;
+  font: 700 14px/1 system-ui, sans-serif;
+  /* white ring so it reads against both asphalt and paintwork */
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35), 0 0 0 3px rgba(255, 255, 255, 0.92);
+}
 `
 
 let done = false

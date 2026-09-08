@@ -5,13 +5,21 @@ import { Environment, Lightformer, OrbitControls } from '@react-three/drei'
 import { useStore } from 'zustand'
 import { LayoutMesh } from './LayoutMesh'
 import { ScenarioCar } from './Vehicle'
-import { ImpactMark, TravelPath } from './Path'
-import type { ScenarioStore } from './store'
-
-const GROUND = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+import { IMPACT_Y, ImpactMark, TravelPath } from './Path'
+import type { Drag, ScenarioStore } from './store'
 
 /** looking down; below this the ground-plane drag gets ambiguous */
 const MAX_POLAR = (65 * Math.PI) / 180
+
+/**
+ * Aim the drag plane at the height the grabbed handle actually lives on. The impact cross
+ * floats above the vehicles, so intersecting y=0 would snap it to the ground point under the
+ * cursor the moment it was picked up. A plane is normal·p + constant = 0, so y = h is −h.
+ */
+function planeAt(plane: THREE.Plane, drag: Drag) {
+  plane.constant = drag.kind === 'impact' ? -IMPACT_Y : 0
+  return plane
+}
 
 /**
  * Drags read the ground plane from the camera ray every frame, rather than from whichever
@@ -19,25 +27,39 @@ const MAX_POLAR = (65 * Math.PI) / 180
  * car, still tracks — which per-object pointer handlers do not manage.
  */
 function DragDriver({ store }: { store: ScenarioStore }) {
-  const { camera, raycaster, pointer } = useThree()
+  const { camera, raycaster, gl } = useThree()
   const hit = useMemo(() => new THREE.Vector3(), [])
+  const plane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), [])
+  const ndc = useMemo(() => new THREE.Vector2(), [])
 
-  useFrame(() => {
-    if (!store.getState().drag) return
-    raycaster.setFromCamera(pointer, camera)
-    if (raycaster.ray.intersectPlane(GROUND, hit)) store.getState().dragTo(hit.x, hit.z)
-  })
-
-  // the pointer can be released anywhere, including outside the canvas
+  // Tracked from window rather than r3f's own `pointer`, which only updates while the cursor
+  // is over the canvas. The selected-vehicle panel sits on top of the diagram, so dragging a
+  // car under it would otherwise freeze the moment the pointer crossed the panel.
   useEffect(() => {
+    const track = (e: PointerEvent) => {
+      const r = gl.domElement.getBoundingClientRect()
+      ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1))
+    }
     const end = () => store.getState().endDrag()
+    window.addEventListener('pointerdown', track)
+    window.addEventListener('pointermove', track)
+    // the pointer can be released anywhere, including outside the window
     window.addEventListener('pointerup', end)
     window.addEventListener('pointercancel', end)
     return () => {
+      window.removeEventListener('pointerdown', track)
+      window.removeEventListener('pointermove', track)
       window.removeEventListener('pointerup', end)
       window.removeEventListener('pointercancel', end)
     }
-  }, [store])
+  }, [gl, ndc, store])
+
+  useFrame(() => {
+    const drag = store.getState().drag
+    if (!drag) return
+    raycaster.setFromCamera(ndc, camera)
+    if (raycaster.ray.intersectPlane(planeAt(plane, drag), hit)) store.getState().dragTo(hit.x, hit.z)
+  })
 
   return null
 }

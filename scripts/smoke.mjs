@@ -90,6 +90,36 @@ await page.waitForTimeout(600)
 if ((await damagesOf('a')).length !== 0) fail('changing the body left stale damages behind')
 console.log('ok — changing the body cleared its damages')
 
+// ── the impact badge: grabbable through its DOM layer, and no jump on grab ───
+await page.getByRole('button', { name: '+ Impact point' }).click()
+await page.waitForTimeout(900)
+const badge = page.locator('.cm-impact')
+if ((await badge.count()) !== 1) fail('the impact badge did not appear')
+
+const box2 = await badge.boundingBox()
+const centre = { x: box2.x + box2.width / 2, y: box2.y + box2.height / 2 }
+const impactNow = async () => (await json('pre')).impact
+const before = await impactNow()
+
+// press without moving. The badge floats, so the drag plane has to sit at its height —
+// intersecting y=0 instead would snap it to the ground point under the cursor.
+await page.mouse.move(centre.x, centre.y)
+await page.mouse.down()
+await page.waitForTimeout(500)
+const held = await impactNow()
+const jump = Math.hypot(held[0] - before[0], held[1] - before[1])
+if (jump > 0.6) fail(`impact jumped ${jump.toFixed(2)} m on grab — the drag plane height is wrong`)
+
+// drag right, straight under the selected-vehicle panel: the pointer leaves the canvas
+// partway, which used to freeze the drag dead
+await page.mouse.move(centre.x + 130, centre.y, { steps: 10 })
+await page.waitForTimeout(500)
+await page.mouse.up()
+const after = await impactNow()
+const moved = Math.hypot(after[0] - before[0], after[1] - before[1])
+if (moved < 3) fail(`impact did not follow the drag under the panel (moved only ${moved.toFixed(2)} m)`)
+console.log(`ok — impact badge drags: ${jump.toFixed(2)} m jump on grab, ${moved.toFixed(1)} m travelled under the panel`)
+
 // every layout has to actually render; three of four are otherwise never looked at
 for (const layout of ['T-junction', 'Straight road', 'Parking lot', 'Four-way intersection']) {
   await page.getByRole('button', { name: layout, exact: true }).click()

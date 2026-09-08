@@ -100,6 +100,19 @@ its values. Making it work would mean per-body exports, which would let
 API than the bytes it saves. If the size ever matters, the fix is separate `.` and `./scenario`
 entry points, not a cleverer map.
 
+**The impact cross is DOM, not geometry.** It floats above the vehicles rather than lying on the
+road, where the two cars it sits between hid it. Raising it in 3D is not enough on its own: the
+vehicle labels are drei `<Html>`, so they paint over the canvas and no amount of height puts WebGL
+in front of them. The badge is therefore an `<Html>` too, with a higher `zIndexRange`, and
+`pointerEvents: none` so the pointer falls through to an invisible disc behind it and dragging
+still goes through the normal 3D path. A leader line and a ground ring keep it tied to the point.
+
+**Drags track the pointer from `window`, not from r3f's `pointer`**, which only updates while the
+cursor is over the canvas. The selected-vehicle panel sits on top of the diagram, so dragging a car
+under it froze the drag the moment the pointer crossed the panel. Each drag also intersects a plane
+at the height of the handle being held — the impact badge floats, and intersecting `y = 0` would
+snap it to the ground point under the cursor the instant it was picked up.
+
 **Flat surfaces are layered on Y**: ground 0, asphalt 0.010, the crossing carriageway 0.014,
 paint 0.022. Two coincident road planes z-fight visibly across the intersection box, and giving
 the crossing road its own layer also reads correctly — one carriageway passes over the other.

@@ -192,6 +192,15 @@ describe('store', () => {
     expect(store.getState().vehicles[0].damages).toEqual([])
   })
 
+  it('drags the impact point without touching the vehicles', () => {
+    const store = withTwo()
+    const before = store.getState().vehicles
+    store.getState().startDrag({ kind: 'impact' })
+    store.getState().dragTo(-3.5, 4.25)
+    expect(store.getState().impact).toEqual([-3.5, 4.25])
+    expect(store.getState().vehicles).toBe(before)
+  })
+
   it('never reuses an id that is still taken', () => {
     const store = withTwo()
     store.getState().addVehicle()
