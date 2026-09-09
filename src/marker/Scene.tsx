@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { Billboard, ContactShadows, Environment, Grid, Html, Lightformer, OrbitControls } from '@react-three/drei'
+import { Billboard, ContactShadows, Environment, Grid, Html, MeshReflectorMaterial, OrbitControls } from '@react-three/drei'
 import { useStore } from 'zustand'
 import { SEVERITY_COLOR } from '../schema'
 import { THEME, type Theme } from '../theme'
@@ -9,6 +9,8 @@ import type { MarkerStore } from './store'
 import { Car } from './Car'
 import { Picker } from './Picker'
 import { ORBIT_TARGET, cameraFor } from './camera'
+import { STUDIO } from '../vehicles/BodyPreview'
+import { toWorld } from '../vehicles/bodies'
 import type { V3 } from '../zones'
 
 /**
@@ -59,26 +61,26 @@ function Pin({
     <Billboard position={at}>
       {/* generous invisible tap target — the visible pin is small on a phone */}
       <mesh onPointerDown={onPick}>
-        <circleGeometry args={[0.12, 16]} />
+        <circleGeometry args={[0.19, 16]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <mesh onPointerDown={onPick}>
-        <circleGeometry args={[0.078, 32]} />
+        <circleGeometry args={[0.125, 32]} />
         <meshBasicMaterial color="#ffffff" toneMapped={false} {...lift} polygonOffsetUnits={-40} />
       </mesh>
       <mesh position-z={0.0005} onPointerDown={onPick}>
-        <circleGeometry args={[0.058, 32]} />
+        <circleGeometry args={[0.093, 32]} />
         <meshBasicMaterial color={color} toneMapped={false} {...lift} polygonOffsetUnits={-44} />
       </mesh>
       {tex && (
         <mesh position-z={0.001} onPointerDown={onPick}>
-          <planeGeometry args={[0.095, 0.095]} />
+          <planeGeometry args={[0.152, 0.152]} />
           <meshBasicMaterial map={tex} transparent depthWrite={false} toneMapped={false} {...lift} polygonOffsetUnits={-48} />
         </mesh>
       )}
       {ring && (
         <mesh position-z={0.0015}>
-          <ringGeometry args={[0.094, 0.108, 40]} />
+          <ringGeometry args={[0.15, 0.173, 40]} />
           <meshBasicMaterial color={ring} toneMapped={false} {...lift} polygonOffsetUnits={-52} />
         </mesh>
       )}
@@ -87,6 +89,7 @@ function Pin({
 }
 
 function Markers({ store, accent }: { store: MarkerStore; accent: string }) {
+  const vehicle = useStore(store, (s) => s.vehicle)
   const damages = useStore(store, (s) => s.damages)
   const selected = useStore(store, (s) => s.selected)
   const pending = useStore(store, (s) => s.pending)
@@ -95,7 +98,7 @@ function Markers({ store, accent }: { store: MarkerStore; accent: string }) {
       {damages.map((d, i) => (
         <Pin
           key={i}
-          at={d.point}
+          at={toWorld(vehicle, d.point)}
           color={SEVERITY_COLOR[d.severity]}
           label={String(i + 1)}
           ring={i === selected ? accent : undefined}
@@ -105,17 +108,18 @@ function Markers({ store, accent }: { store: MarkerStore; accent: string }) {
           }}
         />
       ))}
-      {pending && <Pin at={pending.point} color={accent} />}
+      {pending && <Pin at={toWorld(vehicle, pending.point)} color={accent} />}
     </>
   )
 }
 
 /** names the zone under the cursor; hidden while a picker is open so the two never overlap */
 function HoverLabel({ store }: { store: MarkerStore }) {
+  const vehicle = useStore(store, (s) => s.vehicle)
   const zone = useStore(store, (s) => (s.pending || s.selected !== null ? null : s.hovered))
   if (!zone) return null
   return (
-    <Html position={zone.anchor} center zIndexRange={[20, 10]} style={{ pointerEvents: 'none' }}>
+    <Html position={toWorld(vehicle, zone.anchor)} center zIndexRange={[20, 10]} style={{ pointerEvents: 'none' }}>
       <div className="cm-zone">{zone.label}</div>
     </Html>
   )
@@ -136,12 +140,13 @@ function CameraRig({ store }: { store: MarkerStore }) {
 
   useEffect(() => {
     if (selected === null) return
-    const d = store.getState().damages[selected]
+    const { damages, vehicle } = store.getState()
+    const d = damages[selected]
     if (!d) return
     const target = controls?.target ?? new THREE.Vector3(...ORBIT_TARGET)
     const distance = camera.position.distanceTo(target)
     goal.current = new THREE.Vector3(
-      ...cameraFor(d.point, distance, [target.x, target.y, target.z], [camera.position.x - target.x, camera.position.z - target.z]),
+      ...cameraFor(toWorld(vehicle, d.point), distance, [target.x, target.y, target.z], [camera.position.x - target.x, camera.position.z - target.z]),
     )
   }, [selected, store, camera, controls])
 
@@ -181,12 +186,14 @@ function CameraRig({ store }: { store: MarkerStore }) {
 export function Scene({
   store,
   modelUrl,
+  paint,
   theme,
   idle,
   onCanvas,
 }: {
   store: MarkerStore
   modelUrl?: string
+  paint: string
   theme: Theme
   /** turntable until the first touch */
   idle: boolean
@@ -210,34 +217,45 @@ export function Scene({
       <color attach="background" args={[t.bg]} />
 
       <Suspense fallback={null}>
-        {/* soft studio built from lightformers, not a drei preset: presets fetch an HDRI
-            from a CDN at runtime, which has no business inside someone's claims form */}
-        <Environment resolution={256}>
-          <Lightformer form="rect" intensity={3} color="#ffffff" position={[0, 5, 0]} rotation-x={Math.PI / 2} scale={[8, 5, 1]} />
-          <Lightformer form="rect" intensity={1.4} color="#e6efff" position={[-5, 2, -3]} rotation-y={Math.PI / 4} scale={[6, 3, 1]} />
-          <Lightformer form="rect" intensity={1.2} color="#fff4e6" position={[5, 2, 3]} rotation-y={-Math.PI / 4} scale={[6, 3, 1]} />
-        </Environment>
-        <Car store={store} modelUrl={modelUrl} />
+        {/* a real photographic studio, served with the page, is what makes paint look like paint */}
+        <Environment files={STUDIO} environmentIntensity={0.9} />
+        <Car store={store} paint={paint} modelUrl={modelUrl} />
       </Suspense>
 
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[4, 6.5, 3]} intensity={1.5} />
-      <directionalLight position={[-5, 3, -4]} intensity={0.45} color="#dce7ff" />
+      <directionalLight position={[4, 6.5, 3]} intensity={1.1} />
+      <directionalLight position={[-5, 3, -4]} intensity={0.3} color="#dce7ff" />
 
-      {/* a measuring surface to stand on, fading out well inside the frame */}
+      {/* a polished floor under the car; the grid sits just above it as a measuring surface */}
+      {/* wide enough that its edge never enters the frame at any orbit distance */}
+      <mesh rotation-x={-Math.PI / 2} position={[0, -0.004, 0]}>
+        <planeGeometry args={[160, 160]} />
+        <MeshReflectorMaterial
+          blur={[600, 180]}
+          resolution={1024}
+          mixBlur={1}
+          mixStrength={theme === 'dark' ? 6 : 2.2}
+          roughness={0.9}
+          depthScale={1.1}
+          minDepthThreshold={0.4}
+          maxDepthThreshold={1.4}
+          color={t.bg}
+          metalness={0.2}
+          mirror={0}
+        />
+      </mesh>
       <Grid
         position={[0, -0.002, 0]}
         infiniteGrid
-        cellSize={0.5}
+        cellSize={1}
         cellThickness={0.7}
         cellColor={t.grid}
-        sectionSize={2.5}
+        sectionSize={5}
         sectionThickness={1.1}
         sectionColor={t.section}
-        fadeDistance={7.5}
+        fadeDistance={34}
         fadeStrength={1.6}
       />
-      <ContactShadows position={[0, 0.001, 0]} opacity={0.5} scale={9} blur={2.6} far={2.2} resolution={1024} color={t.shadow} />
+      <ContactShadows position={[0, 0.001, 0]} opacity={0.5} scale={16} blur={2.6} far={4} resolution={1024} color={t.shadow} />
 
       <Markers store={store} accent={t.accent} />
       <HoverLabel store={store} />

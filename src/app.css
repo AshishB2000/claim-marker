@@ -1,0 +1,264 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6fe;
+  --color-brand-200: #bfd3fe;
+  --color-brand-500: #2f6bff;
+  --color-brand-600: #1f56e6;
+  --color-brand-700: #1a45b8;
+  --color-ink: #0f172a;
+}
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply bg-slate-50 text-ink;
+  }
+  ::selection {
+    @apply bg-brand-200;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06),0_8px_24px_-12px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/[0.06];
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition select-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply bg-brand-600 text-white shadow-[0_1px_2px_rgba(31,86,230,0.3),0_8px_20px_-8px_rgba(31,86,230,0.6)] hover:bg-brand-500;
+  }
+  .btn-secondary {
+    @apply bg-white text-ink ring-1 ring-slate-300 hover:bg-slate-50;
+  }
+  .btn-ghost {
+    @apply text-slate-600 hover:bg-slate-100 hover:text-ink;
+  }
+  .btn-sm {
+    @apply rounded-lg px-3 py-1.5 text-xs;
+  }
+  .input {
+    @apply w-full rounded-xl bg-white px-3.5 py-2.5 text-[15px] text-ink ring-1 ring-slate-300 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-brand-500;
+  }
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-slate-600;
+  }
+  .eyebrow {
+    @apply text-[11px] font-semibold tracking-[0.14em] text-slate-500 uppercase;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-slate-900/10 transition select-none hover:bg-slate-50;
+  }
+  .chip[aria-pressed="true"] {
+    @apply bg-ink text-white ring-ink;
+  }
+  .swatch {
+    @apply relative size-8 rounded-full ring-2 ring-white shadow-[0_0_0_1px_rgba(15,23,42,0.15)] transition hover:scale-110;
+  }
+  .swatch[aria-pressed="true"] {
+    @apply scale-110 shadow-[0_0_0_2px_var(--color-brand-600)];
+  }
+}
+
+/* ── the map ────────────────────────────────────────────────────────── */
+
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+}
+.maplibregl-marker {
+  /* every marker is ours; MapLibre's default pin element is never used */
+  cursor: grab;
+}
+.maplibregl-marker:active {
+  cursor: grabbing;
+}
+
+/* a car's footprint at the map's scale, turned to its heading; the visible car is the 3D
+   model beneath. Drag the body to move it, the handle ahead of its nose to turn it. */
+.mk-car {
+  width: var(--w, 30px);
+  height: var(--l, 80px);
+  touch-action: none;
+}
+.mk-car .mk-body {
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mk-color, #2f6bff) 10%, transparent);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 0 0 4px color-mix(in srgb, var(--mk-color, #2f6bff) 75%, transparent);
+  transition: box-shadow 0.15s, background 0.15s;
+}
+/* a wedge on the front edge, so an unselected car still shows which way it faces */
+.mk-car .mk-body::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  width: 0;
+  height: 0;
+  transform: translate(-50%, -100%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 9px solid var(--mk-color, #2f6bff);
+  filter: drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.95));
+}
+.mk-car[data-selected="true"] .mk-body {
+  background: color-mix(in srgb, var(--mk-color, #2f6bff) 24%, transparent);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 0 0 5px var(--mk-color, #2f6bff);
+}
+
+/* the turn handle floats ahead of the nose; only the selected car shows it */
+.mk-car .mk-turn {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 32px;
+  height: 32px;
+  transform: translate(-50%, calc(-100% - 16px));
+  border-radius: 50%;
+  background: var(--mk-color, #2f6bff);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.4), 0 0 0 3px rgba(255, 255, 255, 0.95);
+  cursor: grab;
+  touch-action: none;
+}
+.mk-car .mk-turn::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  border-top: 3px solid #fff;
+  border-right: 3px solid #fff;
+  transform: translate(-50%, -25%) rotate(-45deg);
+}
+.mk-car[data-selected="true"] .mk-turn {
+  display: block;
+}
+.mk-car .mk-turn:active {
+  cursor: grabbing;
+}
+
+/* the label stays upright and above the car whatever way the car faces: the wrap is a
+   point at the centre that the scene counter-rotates and lifts */
+.mk-car .mk-tagwrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.mk-car .mk-tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: #fff;
+  font: 600 12px/1.5 var(--font-sans);
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.35), 0 0 0 2px rgba(255, 255, 255, 0.9);
+}
+.mk-car .mk-tag::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 8px;
+  height: 8px;
+  transform: translateX(-50%) rotate(45deg);
+  background: inherit;
+}
+
+.mk-way {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.45), 0 0 0 3px var(--mk-color, #2f6bff);
+  touch-action: none;
+}
+
+.mk-impact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #dc2626;
+  color: #fff;
+  font: 700 15px/1 var(--font-sans);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.4), 0 0 0 3px rgba(255, 255, 255, 0.95);
+  touch-action: none;
+}
+
+/* playback: the cars drive, everything a finger grabs steps aside until it is over */
+.maplibregl-map.mk-playing :is(.mk-car, .mk-way, .mk-impact) {
+  visibility: hidden;
+}
+
+.mk-pin {
+  width: 22px;
+  height: 22px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg) translate(3px, -3px);
+  background: var(--color-brand-600);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.4), 0 0 0 3px rgba(255, 255, 255, 0.95);
+}
+
+/* the map is waiting for a tap */
+.maplibregl-map.mk-tap .maplibregl-canvas {
+  cursor: crosshair !important;
+}
+
+.range {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e2e8f0, #cbd5e1);
+  outline: none;
+}
+.range::-webkit-slider-thumb {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #1f56e6;
+  border: 3px solid #fff;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.35);
+  cursor: grab;
+}
+.range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #1f56e6;
+  border: 3px solid #fff;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.35);
+  cursor: grab;
+}
+
+/* the scale bar, so a metre reads as a metre */
+.maplibregl-ctrl-scale {
+  font: 600 11px/1.4 var(--font-sans);
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.85);
+  border: 2px solid #0f172a;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  padding: 0 6px;
+}

@@ -7,16 +7,16 @@ const anchor = (id: string) => zoneById('sedan', id)!.anchor
 
 describe('cameraFor', () => {
   it('keeps the orbit distance, so a fly-to never changes the zoom', () => {
-    for (const id of ['right_front_door', 'roof', 'front_bumper', 'left_taillight']) {
+    for (const id of ['left_front_door', 'roof', 'front_bumper', 'right_taillight']) {
       expect(dist(cameraFor(anchor(id), 4.2), ORBIT_TARGET)).toBeCloseTo(4.2, 6)
     }
   })
 
-  it('looks at a door from that side of the car', () => {
-    const right = cameraFor(anchor('right_front_door'), 4)
+  it('looks at a door from that side of the car: the left door is at +X', () => {
     const left = cameraFor(anchor('left_front_door'), 4)
-    expect(right[0]).toBeGreaterThan(2)
-    expect(left[0]).toBeLessThan(-2)
+    const right = cameraFor(anchor('right_front_door'), 4)
+    expect(left[0]).toBeGreaterThan(2)
+    expect(right[0]).toBeLessThan(-2)
   })
 
   it('looks at the bumpers end-on', () => {
@@ -24,11 +24,15 @@ describe('cameraFor', () => {
     expect(cameraFor(anchor('rear_bumper'), 4)[2]).toBeLessThan(-2)
   })
 
-  it('rises for the roof and stays low for the sills', () => {
-    const roof = cameraFor(anchor('roof'), 4)
-    const wheel = cameraFor(anchor('right_front_wheel'), 4)
-    expect(roof[1]).toBeGreaterThan(3.5)
-    expect(wheel[1]).toBeLessThan(2.2)
+  it('rises for the roof and stays low for the sills, without going overhead', () => {
+    // the angle the camera looks down from, measured at the point it orbits
+    const elevation = (at: number[]) => (Math.asin((at[1] - ORBIT_TARGET[1]) / 4) * 180) / Math.PI
+    const roof = elevation(cameraFor(anchor('roof'), 4))
+    const wheel = elevation(cameraFor(anchor('left_front_wheel'), 4))
+    expect(roof).toBeGreaterThan(wheel)
+    expect(wheel).toBeGreaterThan(10)
+    // still a three-quarter view: swinging overhead for a roof damage loses the whole car
+    expect(roof).toBeLessThan(45)
   })
 
   it('stays where the camera already is when the point sits on the centre line', () => {

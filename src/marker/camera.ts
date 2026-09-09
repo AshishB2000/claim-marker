@@ -1,15 +1,19 @@
 import type { V3 } from '../zones'
 
 /** the marker orbits this point — roughly the middle of the body */
-export const ORBIT_TARGET: V3 = [0, 0.62, 0]
+export const ORBIT_TARGET: V3 = [0, 0.7, 0]
 
 const DEG = Math.PI / 180
-/** a beltline hit is seen from just above eye level, the roof from well above */
-const ELEVATION_LOW = 20 * DEG
-const ELEVATION_HIGH = 60 * DEG
-/** body heights across the three kits: sills at ~0.15, roofs at 1.30 */
-const Y_LOW = 0.4
-const Y_HIGH = 1.25
+/**
+ * A beltline hit is seen from just above eye level, the roof from higher. Both stay inside a
+ * natural three-quarter view: swinging overhead for a roof damage loses the whole car, which
+ * is not what someone asked for by tapping a pin on it.
+ */
+const ELEVATION_LOW = 16 * DEG
+const ELEVATION_HIGH = 40 * DEG
+/** body heights in metres: sills sit near 0.4, roofs between 1.35 and 3.25 */
+const Y_LOW = 0.5
+const Y_HIGH = 1.5
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n))
 

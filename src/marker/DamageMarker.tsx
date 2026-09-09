@@ -25,6 +25,8 @@ export type DamageMarkerProps = {
   onChange?: (value: ClaimValue) => void
   /** override where the .glb is fetched from, e.g. your own CDN */
   modelUrl?: string
+  /** the body's paint, as #rrggbb */
+  paint?: string
   /** `light` (default) or `dark`; finer control is the `--cm-*` custom properties */
   theme?: Theme
   className?: string
@@ -42,6 +44,7 @@ export function DamageMarker({
   value,
   onChange,
   modelUrl,
+  paint = '#b9bec6',
   theme = 'light',
   className,
   style,
@@ -97,7 +100,7 @@ export function DamageMarker({
 
   return (
     <div className={themeClass(theme, className)} style={style} onPointerDownCapture={() => setIdle(false)}>
-      <Scene store={store} modelUrl={modelUrl} theme={theme} idle={idle} onCanvas={setCanvas} />
+      <Scene store={store} modelUrl={modelUrl} paint={paint} theme={theme} idle={idle} onCanvas={setCanvas} />
       <Hint store={store} />
     </div>
   )
