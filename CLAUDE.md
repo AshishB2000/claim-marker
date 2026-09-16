@@ -16,11 +16,18 @@ changing behaviour it describes.
 ## Commands
 
 ```bash
-npm run dev            # vite, http://localhost:5173
+npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, ~210 tests across 11 files
-npm run build          # tsc -b, then the static site into dist/
+npm test               # vitest, ~240 tests across 16 files
+npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
+npm run server         # the reference claim server on 8788; needs the build's dist/lib/claim.js
 ```
+
+`node scripts/integration-smoke.mjs` needs `npm run dev` running and one build done: it
+starts its own claim server, webhook receiver and host page and proves the embed, prefill,
+the offline outbox, the server, the webhook signature and the desk. Run it for anything
+touching `src/config.ts`, `src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`,
+`server/` or `src/adjuster/`.
 
 Two end-to-end scripts need `npm run dev` running in another shell and reach the internet
 (map tiles, the geocoder):
@@ -132,6 +139,22 @@ is one metre everywhere. Zone anchors and stored damage points stay in kit units
 The unit tests assert no zone's anchor classifies as a neighbour's — if that fails, the anchors
 are wrong, not the test.
 
+**Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
+`config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
+and friends directly; those are only the defaults `config` starts from. `main.tsx` awaits
+`loadConfig()` before rendering, so anything evaluated at module import time (a `const` from
+env) is stale by definition: `assistOn` is a function for that reason. Config from a host page
+is a trust boundary — `applyConfig` and `parsePrefill` drop what they do not understand, and
+`VITE_ALLOWED_HOSTS` limits who may send it. Events to the host go through `tell()`.
+
+**Submit never loses a report.** `submitClaim` retries, then queues into IndexedDB
+(`src/claim/outbox.ts`) and resolves `queued`; the done page says so; `flushOutbox` drains on
+load and `online`. A refusal is `Rejected` and is the only error the customer sees.
+
+**`ReportDocument` is the one rendering of a `claim/1` document**, used by the review step
+(with edit links) and the claims desk (read-only). The server validates with the same parser
+the page uses, via `dist/lib/claim.js`; do not hand-write validation in `server/`.
+
 **The AI never runs in the page.** `VITE_ASSIST_URL` points at an endpoint the insurer runs and
 that holds the key (`scripts/assist-server.mjs` is a reference one); unset, no AI exists in the
 page. Positions on that wire are metres east/north of the incident, not `[lng, lat]`, because a
@@ -173,19 +196,26 @@ era that still suits it. The app itself is Tailwind (`src/app.css`).
 ## Layout
 
 ```
-src/app/          the five steps, the shell, submit
-src/claim/        the claim/1 document and the persisted store
+src/app/          the seven steps, the shell, the shared ReportDocument, submit
+src/adjuster/     the claims desk (adjuster.html), the insurer's side
+src/claim/        the claim/1 document, the persisted store, prefill, the outbox
+src/config.ts     runtime configuration and the host-page channel
 src/map/          MapLibre scene, the three.js car layer, the transform maths, styles
 src/vehicles/     model loading + paint re-authoring, body previews, the paint palette
 src/marker/       the 3D damage marker
-src/assist/      the optional assistant: the wire contract, the metric frame, the client
+src/assist/       the optional assistant: the wire contract, the metric frame, the client
 src/zones.ts models.ts schema.ts geo.ts geocode.ts   shared
+server/           the reference claim server (one file, no dependencies)
+public/embed.js   the host-side script that mounts the page in an iframe
+docs/claim-1.schema.json   the published JSON Schema, tested against the parser
 ```
 
 ## Before saying it works
 
 Run `npm run lint`, `npm test`, `npm run build`, and — for anything touching the map, the
-marker, the steps or the document — `node scripts/smoke.mjs`. Paste the real output. A
+marker, the steps or the document — `node scripts/smoke.mjs`; for anything touching config,
+submit, the embed, the server or the desk, `node scripts/integration-smoke.mjs`. Paste the
+real output. A
 screenshot that looks right is not evidence the export path works; `scripts/shoot.mjs` reads
 the pixels back.
 

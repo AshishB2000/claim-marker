@@ -4,6 +4,7 @@
  * `scripts/assist-server.mjs` for an endpoint that satisfies it.
  */
 import type { Claim, ClaimVehicle } from '../claim/schema'
+import { config } from '../config'
 import { paintLabel } from '../vehicles/paint'
 import { zoneById } from '../zones'
 import { toFrame } from './frame'
@@ -16,10 +17,8 @@ import {
   type Scene,
 } from './schema'
 
-const URL_: string | undefined = import.meta.env.VITE_ASSIST_URL
-
 /** false when no endpoint is configured, and then nothing in the page mentions AI */
-export const assistOn = !!URL_
+export const assistOn = () => !!config.assistUrl
 
 const brief = (v: ClaimVehicle): AssistVehicle => ({
   id: v.id,
@@ -32,8 +31,9 @@ const brief = (v: ClaimVehicle): AssistVehicle => ({
 })
 
 async function call<T>(body: AssistRequest, signal: AbortSignal | undefined, read: (json: unknown) => T): Promise<T> {
-  if (!URL_) throw new Error('The assistant is not switched on for this page.')
-  const res = await fetch(URL_, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal })
+  const url = config.assistUrl
+  if (!url) throw new Error('The assistant is not switched on for this page.')
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal })
   if (!res.ok) throw new Error(`The assistant could not answer (${res.status}). Please try again, or fill it in yourself.`)
   const json: unknown = await res.json()
   if (typeof json !== 'object' || json === null || (json as { schema?: unknown }).schema !== ASSIST_SCHEMA) {

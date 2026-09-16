@@ -15,9 +15,10 @@
   <a href="#-the-flow">The flow</a> ·
   <a href="#-what-makes-it-different">What makes it different</a> ·
   <a href="#-quick-start">Quick start</a> ·
-  <a href="#-configuration">Configuration</a> ·
+  <a href="#-add-it-to-your-site">Add it to your site</a> ·
+  <a href="#-the-claims-desk">The claims desk</a> ·
   <a href="#-what-the-insurer-receives">The document</a> ·
-  <a href="docs/spec-app.md">Design notes</a>
+  <a href="docs/integration.md">Integration guide</a>
 </p>
 
 <br>
@@ -119,9 +120,56 @@ npm run build    # static site in dist/
 
 <br>
 
+## 🔌 Add it to your site
+
+One script on the page your customer is logged in to. The report runs in an iframe, sized to
+fit, with a token and what you already know about them handed over at runtime:
+
+```html
+<div id="report"></div>
+<script src="https://claims.example.com/embed.js"></script>
+<script>
+  ClaimMarker.mount('#report', {
+    url: 'https://claims.example.com/',
+    submitUrl: 'https://api.example.com/claims',
+    token: session.claimToken,
+    brand: 'Acme Mutual',
+    prefill: { reporter: { name, phone, email, policy }, vehicles: policy.vehicles },
+    onSubmitted: (e) => (location.href = '/claims/' + e.reference),
+  })
+</script>
+```
+
+Your backend gets one `POST` of `claim/1` JSON with the token as a bearer and an idempotency
+key, and answers with its own claim number. If the phone has no signal the report waits on
+the device and sends itself when the signal returns. `server/claim-server.mjs` is a complete
+receiving end in one dependency-free file: it validates, files the document with the images
+unpacked, dedupes resends, and announces each report with an HMAC-signed webhook.
+
+> [!NOTE]
+> The whole contract — embed options, events, the request and response, retries, the webhook
+> and how to verify its signature — is in [docs/integration.md](docs/integration.md), and
+> `node scripts/integration-smoke.mjs` proves every part of it end to end.
+
+<br>
+
+## 🗂️ The claims desk
+
+<p align="center">
+  <img src="docs/desk.png" alt="The claims desk: the reports that have arrived, and one opened as the full document" width="100%">
+</p>
+
+The insurer's side, in the same build at `/adjuster.html`: what has arrived, and each report as
+the document it was sent as — the map with playback, the marked-up car, the photographs —
+printable to PDF, with a status the desk moves along. A claims system with its own inbox
+renders the same `ReportDocument` from wherever it keeps the JSON.
+
+<br>
+
 ## 🔧 Configuration
 
-Everything is optional, set as `VITE_*` variables in `.env`.
+Build-time defaults, as `VITE_*` variables in `.env`; the first four can also arrive at
+runtime from the host page (see above).
 
 <details>
 <summary><b>The variables</b></summary>
@@ -136,6 +184,8 @@ Everything is optional, set as `VITE_*` variables in `.env`.
 | `VITE_MAP_TILES_STREETS` · `VITE_MAP_TILES_SATELLITE` | raster tile URL templates for your own map provider |
 | `VITE_GEOCODER_URL` | a Photon-compatible geocoder for production volume |
 | `VITE_VEHICLE_PHOTO_URL` | a licensed car-image provider, templated on `{make}` `{model}` `{year}` `{color}` |
+| `VITE_ALLOWED_HOSTS` | the origins allowed to configure the embedded page, comma-separated. Set it in production. |
+| `VITE_CLAIMS_API` | where the claims desk reads reports from (default the reference server on 8788) |
 
 The page also dispatches `claim:submitted` on `window` with the document as `detail`, for a host page that would rather listen than receive a POST.
 
@@ -145,7 +195,7 @@ The page also dispatches `claim:submitted` on `window` with the document as `det
 
 ## 📦 What the insurer receives
 
-One JSON document, `claim/1`: the incident, every vehicle with its damage, the people, the police, the attestation, and as attachments the diagram and the marked-up car as PNGs and the customer's photographs as JPEGs. Positions are `[lng, lat]`, headings are compass bearings, and `export → load → export` is byte-identical.
+One JSON document, `claim/1`: the incident, every vehicle with its damage, the people, the police, the attestation, and as attachments the diagram and the marked-up car as PNGs and the customer's photographs as JPEGs. Positions are `[lng, lat]`, headings are compass bearings, and `export → load → export` is byte-identical. The shape is published as [docs/claim-1.schema.json](docs/claim-1.schema.json), a JSON Schema tested against the parser, and the parser itself ships as `dist/lib/claim.js` for a Node backend.
 
 <details>
 <summary><b>An excerpt</b></summary>
@@ -174,10 +224,12 @@ The full shape, and the reasoning behind every design decision, is in [docs/spec
 ## 🧪 Development
 
 ```bash
-npm run lint             # oxlint, must be silent
-npm test                 # vitest, ~220 tests
-node scripts/smoke.mjs   # the whole flow in a headless browser, dev server running
-node scripts/shoot.mjs   # regenerate the screenshots above
+npm run lint                         # oxlint, must be silent
+npm test                             # vitest, ~240 tests
+node scripts/smoke.mjs               # the whole flow in a headless browser, dev server running
+node scripts/integration-smoke.mjs   # embed, prefill, offline send, server, webhook, desk
+node scripts/shoot.mjs               # regenerate the screenshots above
+npm run server                       # the reference claim server, after a build
 ```
 
 <br>

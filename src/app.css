@@ -92,6 +92,20 @@
   }
 }
 
+/* the claims desk prints a report: just the document, on white, nothing that scrolls */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+  body {
+    background: #fff;
+  }
+  .card {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+}
+
 /* ── the map ────────────────────────────────────────────────────────── */
 
 .maplibregl-ctrl-attrib {

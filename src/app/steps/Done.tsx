@@ -4,7 +4,9 @@ import { Icon } from '../icons'
 
 export function Done() {
   const claim = useClaim((s) => s.claim)
+  const delivery = useClaim((s) => s.delivery)
   const reset = useClaim((s) => s.reset)
+  const queued = delivery === 'queued'
 
   const download = () => {
     const doc = toDocument(claim)
@@ -16,15 +18,19 @@ export function Done() {
 
   return (
     <div className="mx-auto max-w-xl py-8 text-center">
-      <span className="mx-auto grid size-16 place-items-center rounded-full bg-emerald-100 text-emerald-700">
+      <span className={`mx-auto grid size-16 place-items-center rounded-full ${queued ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M20 6 9 17l-5-5" />
+          {queued ? <path d="M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" /> : <path d="M20 6 9 17l-5-5" />}
         </svg>
       </span>
-      <h1 className="mt-5 text-3xl font-semibold tracking-tight">Your report is in</h1>
-      <p className="mt-2 text-slate-500">Keep this reference. You will need it if you call about the claim.</p>
+      <h1 className="mt-5 text-3xl font-semibold tracking-tight">{queued ? 'Your report is saved' : 'Your report is in'}</h1>
+      <p className="mt-2 text-slate-500">
+        {queued
+          ? 'There is no signal right now. It will send itself the moment your phone is back online — keep this page open, or come back to it.'
+          : 'Keep this reference. You will need it if you call about the claim.'}
+      </p>
       <div className="card mx-auto mt-6 inline-block px-8 py-4">
-        <div className="eyebrow">Reference</div>
+        <div className="eyebrow">{queued ? 'Reference · sending soon' : 'Reference'}</div>
         <div className="mt-1 font-mono text-3xl font-semibold tracking-wider">{claim.reference}</div>
       </div>
 

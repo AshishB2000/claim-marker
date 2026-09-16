@@ -300,12 +300,12 @@ export function Diagram() {
         <div className="card px-4 py-3">
           <Describe
             placeholder={
-              assistOn
+              assistOn()
                 ? 'For example: I was going straight through the junction on a green light and the other car turned left across me — then let us draw it.'
                 : 'For example: I was going straight through the junction on a green light and the other car turned left across me.'
             }
           >
-            {assistOn && (
+            {assistOn() && (
               <>
                 <button className="btn btn-secondary btn-sm" onClick={draw} disabled={!!busy || claim.incident.description.trim().length < 15}>
                   {busy === 'diagram' ? <Icon.spinner /> : <Icon.wand />}
@@ -318,7 +318,7 @@ export function Diagram() {
               </>
             )}
           </Describe>
-          {assistOn && (
+          {assistOn() && (
             <>
               {busy && <p className="mt-2 text-xs text-slate-500">This takes a few seconds.</p>}
               {said && !busy && (

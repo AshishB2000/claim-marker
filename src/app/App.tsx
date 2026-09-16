@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useClaim, STEP_TITLE, stepsFor, type Step } from '../claim/store'
 import { KIND_INFO, type Claim } from '../claim/schema'
-import { BRAND } from './submit'
+import { config, tell } from '../config'
 import { Icon } from './icons'
 import { WhatHappened } from './steps/Kind'
 import { Where } from './steps/Where'
@@ -59,12 +59,23 @@ export function App() {
 
   const steps = stepsFor(claim.incident.kind)
   const index = steps.indexOf(step)
+
+  // the host page follows along: which step, and how tall the page is so its iframe can fit
+  useEffect(() => {
+    tell('step', { step: done ? 'done' : step, index: done ? steps.length + 1 : index + 1, count: steps.length })
+  }, [step, done, index, steps.length])
+  useEffect(() => {
+    if (!config.embedded) return
+    const ro = new ResizeObserver(() => tell('height', { height: document.documentElement.scrollHeight }))
+    ro.observe(document.body)
+    return () => ro.disconnect()
+  }, [])
   const blocker = ready(step, claim)
   const { title, lead } = heading(step, claim)
 
   return (
-    <div className="min-h-screen pb-28">
-      <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/85 backdrop-blur">
+    <div className={config.embedded ? 'pb-4' : 'min-h-screen pb-28'}>
+      <header className={`z-30 border-b border-slate-200/70 bg-white/85 backdrop-blur ${config.embedded ? '' : 'sticky top-0'}`}>
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
           <div className="flex items-center gap-3">
             <span className="grid size-9 place-items-center rounded-xl bg-brand-600 text-white shadow-[0_6px_16px_-6px_rgba(31,86,230,0.7)]">
@@ -72,7 +83,7 @@ export function App() {
             </span>
             <div className="leading-tight">
               <div className="text-[15px] font-semibold">Report an accident</div>
-              <div className="text-xs text-slate-500">{BRAND}</div>
+              <div className="text-xs text-slate-500">{config.brand}</div>
             </div>
           </div>
           {!done && (
@@ -153,7 +164,7 @@ export function App() {
       </main>
 
       {!done && step !== 'review' && (
-        <footer className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200/70 bg-white/90 backdrop-blur">
+        <footer className={`z-30 border-t border-slate-200/70 bg-white/90 backdrop-blur ${config.embedded ? 'mt-8' : 'fixed inset-x-0 bottom-0'}`}>
           {blocker && <p className="pt-2 text-center text-xs text-slate-500 sm:hidden">{blocker}</p>}
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-5 py-3">
             <button className="btn btn-ghost" onClick={back} disabled={index === 0}>

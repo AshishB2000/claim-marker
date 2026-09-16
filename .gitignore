@@ -6,3 +6,6 @@ dist-demo
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# the reference claim server's storage
+data/
