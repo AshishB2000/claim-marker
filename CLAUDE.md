@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, ~241 tests across 17 files
+npm test               # vitest, ~242 tests across 17 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -195,6 +195,12 @@ name `UNKNOWN_DRIVER`, not a flag. Photos are downscaled to 1280 px JPEG before 
 The attestation's `at` is stamped only at send. Send is disabled until agreed and signed.
 Every sentence that names a person, a vehicle or a condition comes from `src/claim/describe.ts`
 (`personLine`, `vehicleName`, `conditionLabels`, `gaps`); do not compose those inline in a step.
+
+**Those sentences have two voices.** `describe.ts` takes a `Voice`, defaulting to `'customer'`
+everywhere, so the steps and the review are second person as they were; `ReportDocument
+voice="desk"` — which only `src/adjuster/Desk.tsx` passes — turns "your Camry" into "the
+policyholder's Camry" and "You, driving" into "The policyholder, driving". `gaps()` has no
+voice on purpose: it only runs on the customer's own review page.
 
 **Schemas are versioned and frozen.** `claim/1` embeds the `claim-marker/1` damage shape. Both
 guarantee `export → load → export` is byte-identical, which is why coordinates round on the way

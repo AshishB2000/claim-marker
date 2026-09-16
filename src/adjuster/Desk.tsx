@@ -37,7 +37,19 @@ type Receipt = {
   receivedAt: string
   status: Status
   files: Record<string, string>
-  summary: { kind: Claim['incident']['kind']; at: string; address: string; reporter: string; vehicles: number; hurt: number; damaged: number; photos: number; drivable: boolean | null }
+  summary: {
+    kind: Claim['incident']['kind']
+    at: string
+    address: string
+    reporter: string
+    vehicles: number
+    /** the plates on the report, so the desk can find it the way a caller names it */
+    plates?: string[]
+    hurt: number
+    damaged: number
+    photos: number
+    drivable: boolean | null
+  }
 }
 
 const ago = (iso: string) => {
@@ -61,6 +73,7 @@ export function Desk() {
   const [claims, setClaims] = useState<Receipt[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<Status | 'all'>('all')
+  const [query, setQuery] = useState('')
   const [ref, setRef] = useState<string | null>(() => window.location.hash.replace(/^#\/?/, '') || null)
   const [open, setOpen] = useState<{ receipt: Receipt; claim: Claim } | null>(null)
 
@@ -137,7 +150,11 @@ export function Desk() {
     a.click()
   }
 
-  const rows = (claims ?? []).filter((c) => filter === 'all' || c.status === filter)
+  // a caller says a name, a plate or a street, almost never a reference; all of them search
+  const q = query.trim().toLowerCase()
+  const matches = (c: Receipt) =>
+    !q || [c.reference, c.clientReference, c.summary.reporter, c.summary.address, ...(c.summary.plates ?? [])].some((s) => s?.toLowerCase().includes(q))
+  const rows = (claims ?? []).filter((c) => (filter === 'all' || c.status === filter) && matches(c))
   const showing = open && open.receipt.reference === ref ? open : null
 
   return (
@@ -188,6 +205,18 @@ export function Desk() {
 
         <div className={`grid gap-6 ${showing ? 'lg:grid-cols-[340px_minmax(0,1fr)]' : ''}`}>
           <aside className={`${showing ? 'hidden lg:block' : ''} print:hidden`}>
+            <input
+              type="search"
+              className="input mb-3"
+              placeholder="Reference, name, address or plate"
+              aria-label="Search reports"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && rows[0]) show(rows[0].reference)
+                if (e.key === 'Escape') setQuery('')
+              }}
+            />
             <div className="mb-3 flex flex-wrap gap-1.5">
               {(['all', ...STATUSES] as const).map((f) => (
                 <button key={f} className="chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
@@ -196,13 +225,21 @@ export function Desk() {
               ))}
             </div>
             {claims === null && !error && !askToken && <p className="text-sm text-slate-500">Loading…</p>}
-            {claims !== null && rows.length === 0 && <p className="text-sm text-slate-500">Nothing here yet. A report sent from the page lands in this list.</p>}
+            {claims !== null && rows.length === 0 && (
+              <p className="text-sm text-slate-500">
+                {q ? `Nothing matches “${query.trim()}”.` : 'Nothing here yet. A report sent from the page lands in this list.'}
+              </p>
+            )}
             <ul className={`space-y-2 ${showing ? '' : 'grid gap-3 space-y-0 sm:grid-cols-2 lg:grid-cols-3'}`}>
               {rows.map((c) => {
                 const on = c.reference === ref
                 return (
                   <li key={c.reference}>
-                    <button className={`card w-full p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md ${on ? 'ring-2 ring-brand-600' : ''}`} onClick={() => show(c.reference)}>
+                    <button
+                      className={`card w-full p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md ${on ? 'ring-2 ring-brand-600' : ''}`}
+                      aria-current={on ? 'true' : undefined}
+                      onClick={() => show(c.reference)}
+                    >
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-mono text-sm font-semibold">{c.reference}</span>
                         <StatusPill status={c.status} />
@@ -249,7 +286,7 @@ export function Desk() {
                   </button>
                 </div>
               </div>
-              <ReportDocument claim={showing.claim} badge={<StatusPill status={showing.receipt.status} />} />
+              <ReportDocument claim={showing.claim} voice="desk" badge={<StatusPill status={showing.receipt.status} />} />
             </section>
           )}
         </div>

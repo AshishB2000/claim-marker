@@ -363,9 +363,26 @@ await deskPage.goto(`${PAGE}/adjuster.html?api=http://localhost:${API_PORT}`)
 await deskPage.getByRole('textbox', { name: 'token' }).fill(DESK_TOKEN)
 await deskPage.getByRole('button', { name: 'Open' }).click()
 await deskPage.locator(`text=${shown}`).first().waitFor({ timeout: 10000 }).catch(() => fail('the desk does not list the report'))
-await deskPage.locator(`text=${shown}`).first().click()
-await deskPage.locator('text=Reported by').waitFor({ timeout: 15000 }).catch(() => fail('the desk did not open the report'))
+
+// search: a caller says a name or a plate, and Enter opens the first match
+const deskSearch = deskPage.getByRole('searchbox', { name: 'Search reports' })
+await deskSearch.fill('zzz')
+await deskPage.locator('text=Nothing matches').waitFor({ timeout: 5000 }).catch(() => fail('a search with no matches says nothing'))
+await deskSearch.fill('ABC 123')
+await deskPage.locator(`text=${shown}`).first().waitFor({ timeout: 5000 }).catch(() => fail('searching by plate does not find the report'))
+await deskSearch.fill('Sam')
+await deskPage.locator(`text=${shown}`).first().waitFor({ timeout: 5000 }).catch(() => fail('searching by the reporter does not find the report'))
+await deskSearch.press('Enter')
+await deskPage.locator('text=Reported by').waitFor({ timeout: 15000 }).catch(() => fail('Enter in the search did not open the first match'))
+ok('desk: search finds the report by plate and by name, and Enter opens it')
+
 if (!(await deskPage.locator('text=Sam Lee').count())) fail('the opened report does not show the reporter')
+
+// the desk reads about a policyholder, not to a customer about themselves
+const document_ = await deskPage.locator('article').first().innerText()
+if (!/The policyholder/.test(document_)) fail('the desk does not name the policyholder')
+if (/You, driving|Your vehicle|\byour \b/i.test(document_)) fail(`the desk still speaks to the customer: ${document_.match(/.{0,60}[Yy]our.{0,60}/)?.[0]}`)
+ok("desk: the document reads in the adjuster's voice — the policyholder, not \"you\"")
 await deskPage.getByRole('radio', { name: 'In review' }).click()
 await deskPage.waitForTimeout(500)
 await deskPage.waitForTimeout(4000)

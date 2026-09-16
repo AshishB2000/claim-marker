@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { conditionLabels, contactLine, driverName, driverShort, gaps, personLine, vehicleName, UNKNOWN_DRIVER } from '../src/claim/describe'
+import { conditionLabels, contactLine, driverName, driverShort, gaps, ownerLabel, personLine, vehicleName, whose, UNKNOWN_DRIVER } from '../src/claim/describe'
 import { emptyClaim, newPerson, newVehicle, type Claim } from '../src/claim/schema'
 
 const mine = { ...newVehicle('a', 'insured', 'sedan', '#b91c1c'), make: 'Toyota', model: 'Camry', year: 2022 }
@@ -66,6 +66,33 @@ describe('how the report names things', () => {
     const hail: Claim = { ...c, incident: { ...c.incident, kind: 'weather' }, vehicles: [mine] }
     expect(gaps(hail)[0]).toEqual({ text: 'Say what happened in your own words', step: 'damage' })
     expect(gaps(hail).some((g) => /driving/.test(g.text))).toBe(false)
+  })
+
+  it('speaks to the desk about a policyholder, not to a customer about themselves', () => {
+    const self = { ...newPerson('driver', 'a'), self: true }
+    const other = { ...newPerson('driver', 'b'), name: 'Dana Quinn' }
+
+    expect(whose(mine, 'desk')).toBe("the policyholder's")
+    expect(whose(theirs, 'desk')).toBe("the other party's")
+    expect(ownerLabel(mine, 'desk')).toBe("Policyholder's vehicle")
+    expect(ownerLabel(theirs, 'desk')).toBe("Other party's vehicle")
+    expect(personLine(self, vehicles, 'desk')).toBe("The policyholder, driving the policyholder's 2022 Toyota Camry")
+    expect(personLine(other, vehicles, 'desk')).toBe("Dana Quinn, driving the other party's black suv")
+    expect(personLine({ ...newPerson('passenger', 'a'), name: 'Sam Lee' }, vehicles, 'desk')).toBe("Sam Lee, passenger in the policyholder's 2022 Toyota Camry")
+    expect(driverShort(self, 'desk')).toBe('The policyholder, driving')
+    expect(driverShort(other, 'desk')).toBe('Dana Quinn, driving')
+    expect(driverName(self, 'desk')).toBe('The policyholder')
+    expect(driverName(other, 'desk')).toBe('Dana Quinn')
+    // someone who is not the customer reads the same whichever voice is asked for
+    expect(driverShort({ ...newPerson('driver', 'b'), name: UNKNOWN_DRIVER }, 'desk')).toBe('The driver — unknown, they left the scene')
+    expect(personLine(newPerson('witness'), vehicles, 'desk')).toBe('A witness')
+
+    // and the customer's own voice is exactly what it was
+    expect(whose(mine)).toBe('your')
+    expect(ownerLabel(mine)).toBe('Your vehicle')
+    expect(personLine(self, vehicles)).toBe('You, driving your 2022 Toyota Camry')
+    expect(driverShort(self)).toBe('You, driving')
+    expect(driverName(self)).toBe('You')
   })
 
   it('conditions as labels, skipping what was not answered', () => {

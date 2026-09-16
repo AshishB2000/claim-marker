@@ -356,6 +356,31 @@ not built or run here: Docker is not installed on the machine this was written o
 image is unverified and the server changes are proven by `scripts/integration-smoke.mjs`
 instead.
 
+## Two voices
+
+The same `claim/1` document is read by two people, and until now it spoke to both as if they
+were the customer: "You, driving your Camry", "Your vehicle". On an adjuster's screen that is
+wrong twice over — the person is not in the room, and they are one of several parties whose
+accounts the adjuster is weighing.
+
+`src/claim/describe.ts` now takes a `Voice`. Every function defaults to `'customer'`, so the
+steps and the review page are untouched by construction; `ReportDocument` takes `voice` and
+the desk is the one caller that passes `'desk'`. In that voice "your"/"their" becomes "the
+policyholder's"/"the other party's", "You, driving" becomes "The policyholder, driving", and
+the tag beside a vehicle becomes "Policyholder's vehicle". `gaps()` stays second person: it
+only ever runs on the customer's own review page.
+
+It stayed in `describe.ts` rather than becoming a prop drilled through the document because
+that is the rule the project already had — every sentence naming a person, a vehicle or a
+condition comes from one file — and the voice is exactly the kind of thing that would
+otherwise be re-decided inline in four places and disagree in a fifth.
+
+**Search on the desk** is the other half: an adjuster with a caller on the line has a name, a
+plate or a street, almost never a reference. One `<input type="search">` over the reference,
+the customer's reference, the reporter, the address and the plates, Enter opening the first
+match, Escape clearing. The server's `summarise()` gained `plates` for it, which is the only
+reason the inbox row carries them.
+
 ## The assistant
 
 Two directions across one endpoint, both optional and both off unless `VITE_ASSIST_URL` is
