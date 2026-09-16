@@ -10,8 +10,16 @@ import { config } from '../config'
 import { Icon } from '../app/icons'
 import { ReportDocument } from '../app/ReportDocument'
 
-/** the claims server: `?api=` for a desk pointed at another one, else the build-time default */
-const API: string = new URLSearchParams(window.location.search).get('api') || (import.meta.env.VITE_CLAIMS_API as string | undefined) || 'http://localhost:8788'
+/**
+ * The claims server: `?api=` for a desk pointed at another one, then the build-time default,
+ * then whatever the server serving this page injected — where an empty string means "the
+ * same origin", which is the whole-product deployment and why this is not a plain `||` chain.
+ */
+const INJECTED = (window as { CLAIM_MARKER?: { claimsApi?: unknown } }).CLAIM_MARKER?.claimsApi
+const API: string =
+  new URLSearchParams(window.location.search).get('api') ||
+  (import.meta.env.VITE_CLAIMS_API as string | undefined) ||
+  (typeof INJECTED === 'string' ? INJECTED : 'http://localhost:8788')
 const TOKEN_KEY = 'claim-marker/desk-token'
 
 type Status = 'new' | 'reviewing' | 'closed'
@@ -174,7 +182,7 @@ export function Desk() {
         )}
         {error && (
           <p className="mb-6 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
-            {error} <span className="text-red-500">Is the claims server running at {API}?</span>
+            {error} <span className="text-red-500">Is the claims server running at {API || 'this origin'}?</span>
           </p>
         )}
 

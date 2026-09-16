@@ -7,15 +7,19 @@
  *   npm run dev                          # in another shell (and `npm run build` once, for dist/lib)
  *   node scripts/integration-smoke.mjs
  *
- * Along the way it proves the parts that are hard to see: the config reaches the iframe and
- * the brand changes; the host hears each step and sizes the iframe; the policy's two vehicles
- * become a pick and fill the card; the reporter is prefilled; a report sent with no signal is
- * kept and leaves by itself when the signal returns, and the host hears both; the server's
- * reference replaces the page's; the same document sent twice is filed once; the webhook
- * carries a valid signature; and the desk lists, opens and re-files the report.
+ * Along the way it proves the parts that are hard to see: the backend mints a session for one
+ * customer and gets back a token and the prefill; the config reaches the iframe and the brand
+ * changes; the host hears each step and sizes the iframe; the policy's two vehicles become a
+ * pick and fill the card; the reporter is prefilled; a report sent with no signal is kept and
+ * leaves by itself when the signal returns, and the host hears both; the report is filed
+ * against the customer the session named; the server's reference replaces the page's; the same
+ * document sent twice is filed once; an expired or forged token is refused; a flood is rate
+ * limited; the built page is served with a CSP and its runtime config; the webhook carries a
+ * valid signature; and the desk lists, opens and re-files the report.
  */
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
+import { sign } from '../server/session.mjs'
 import { createServer } from 'node:http'
 import { createHmac } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -38,6 +42,10 @@ const HOST_PORT = await freePort()
 const CLAIM_TOKEN = 'customer-token'
 const DESK_TOKEN = 'desk-token'
 const SECRET = 'hook-secret'
+const API_KEY = 'backend-key'
+const SESSION_SECRET = 'session-secret'
+const RATE_LIMIT = 20
+const API = `http://localhost:${API_PORT}`
 
 /** the claim server, once started; killed on failure so nothing is left behind */
 let server = null
@@ -67,38 +75,26 @@ hookServer.listen(HOOK_PORT)
 
 const dir = await mkdtemp(join(tmpdir(), 'claim-marker-'))
 server = spawn(process.execPath, ['server/claim-server.mjs'], {
-  env: { ...process.env, PORT: String(API_PORT), CLAIM_DIR: dir, CLAIM_TOKEN, DESK_TOKEN, WEBHOOK_URL: `http://localhost:${HOOK_PORT}/hook`, WEBHOOK_SECRET: SECRET },
+  env: {
+    ...process.env,
+    PORT: String(API_PORT),
+    CLAIM_DIR: dir,
+    CLAIM_TOKEN,
+    DESK_TOKEN,
+    API_KEY,
+    SESSION_SECRET,
+    RATE_LIMIT: String(RATE_LIMIT),
+    // so the flood below can have a bucket of its own instead of eating the customer's
+    TRUST_PROXY: '1',
+    ALLOWED_HOSTS: `http://localhost:${HOST_PORT}`,
+    BRAND: 'Acme Mutual',
+    WEBHOOK_URL: `http://localhost:${HOOK_PORT}/hook`,
+    WEBHOOK_SECRET: SECRET,
+  },
   stdio: ['ignore', 'pipe', 'inherit'],
 })
 server.stdout.on('data', (d) => process.stdout.write(`  [server] ${d}`))
 
-const HOST_PAGE = `<!doctype html><meta charset="utf-8"><title>Acme Mutual — my policy</title>
-<h1>Acme Mutual</h1><p>Something happened? Tell us below.</p>
-<div id="report"></div>
-<script src="${PAGE}/embed.js"></script>
-<script>
-  window.events = []
-  window.widget = ClaimMarker.mount('#report', {
-    url: '${PAGE}/',
-    submitUrl: 'http://localhost:${API_PORT}/claims',
-    token: '${CLAIM_TOKEN}',
-    brand: 'Acme Mutual',
-    returnDocument: true,
-    prefill: {
-      reporter: { name: 'Sam Lee', phone: '555 0100', email: 'Sam@Example.com', policy: 'pol-9', policyholder: true },
-      vehicles: [
-        { make: 'Toyota', model: 'Camry', year: 2021, plate: 'ABC 123', plateState: 'NY', vin: '4T1BF1FK5CU123456', color: '#b91c1c' },
-        { make: 'Ford', model: 'F-150', year: 2020, plate: 'TRK 9', color: '#1c1f26' },
-      ],
-    },
-    onStep: function (e) { events.push(e) },
-    onSubmitted: function (e) { events.push(e) },
-    onQueued: function (e) { events.push(e) },
-  })
-</script>`
-const hostServer = createServer((req, res) => res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(HOST_PAGE))
-hostServer.on('error', (e) => fail(`host page: ${e.message}`))
-hostServer.listen(HOST_PORT)
 
 async function cleanup() {
   server.kill()
@@ -108,13 +104,78 @@ async function cleanup() {
 }
 
 // wait for the claim server
+let health = null
 for (let i = 0; i < 50; i++) {
   try {
-    if ((await fetch(`http://localhost:${API_PORT}/health`)).ok) break
+    const res = await fetch(`${API}/health`)
+    if (res.ok) {
+      health = await res.json()
+      break
+    }
   } catch {
     await new Promise((r) => setTimeout(r, 100))
   }
 }
+if (!health?.static) fail('the server is not serving the built page; run `npm run build`')
+
+// ── the insurer's backend mints a session for the customer who just logged in ──
+
+const mint = (headers, body) =>
+  fetch(`${API}/sessions`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) })
+
+const person = {
+  customer: { id: 'cust-1', policy: 'POL-9', name: 'Sam Lee', phone: '555 0100', email: 'Sam@Example.com' },
+  vehicles: [
+    { make: 'Toyota', model: 'Camry', year: 2021, plate: 'ABC 123', plateState: 'NY', vin: '4T1BF1FK5CU123456', color: '#b91c1c' },
+    { make: 'Ford', model: 'F-150', year: 2020, plate: 'TRK 9', color: '#1c1f26' },
+  ],
+  ttlSeconds: 1800,
+}
+if ((await mint({}, person)).status !== 401) fail('a session was minted without the API key')
+if ((await mint({ 'x-api-key': API_KEY, origin: 'https://somewhere.example' }, person)).status !== 403) fail('a browser could mint a session')
+const minted = await mint({ 'x-api-key': API_KEY }, person)
+const session = await minted.json()
+if (minted.status !== 200 || !session.token || !session.expiresAt) fail(`minting a session gave ${minted.status} ${JSON.stringify(session).slice(0, 200)}`)
+if (session.prefill?.reporter?.name !== 'Sam Lee' || session.prefill.vehicles?.length !== 2) fail(`the session's prefill is off: ${JSON.stringify(session.prefill)}`)
+if (new Date(session.expiresAt) - Date.now() > 1900_000) fail('the session lasts longer than it was asked for')
+ok(`sessions: minted for cust-1, good until ${session.expiresAt}, with the prefill ready for the embed; no key is 401, a browser is 403`)
+
+// ── a flood, on a made-up IP so the customer's own bucket is untouched ──
+
+const flood = []
+for (let i = 0; i < RATE_LIMIT + 5; i++) {
+  const res = await fetch(`${API}/claims`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${CLAIM_TOKEN}`, 'x-forwarded-for': '203.0.113.9' },
+    body: '{"schema":"claim/9"}',
+  })
+  flood.push(res.status)
+}
+if (flood.slice(0, RATE_LIMIT).includes(429)) fail(`the limit bit before ${RATE_LIMIT} requests: ${flood.join(' ')}`)
+if (!flood.includes(429)) fail(`${flood.length} requests in a second were all let through: ${flood.join(' ')}`)
+ok(`rate limit: the first ${RATE_LIMIT} POSTs are answered, the flood after them gets 429`)
+
+const HOST_PAGE = `<!doctype html><meta charset="utf-8"><title>Acme Mutual — my policy</title>
+<h1>Acme Mutual</h1><p>Something happened? Tell us below.</p>
+<div id="report"></div>
+<script src="${PAGE}/embed.js"></script>
+<script>
+  window.events = []
+  window.widget = ClaimMarker.mount('#report', {
+    url: '${PAGE}/',
+    submitUrl: '${API}/claims',
+    token: ${JSON.stringify(session.token)},
+    brand: 'Acme Mutual',
+    returnDocument: true,
+    prefill: ${JSON.stringify(session.prefill)},
+    onStep: function (e) { events.push(e) },
+    onSubmitted: function (e) { events.push(e) },
+    onQueued: function (e) { events.push(e) },
+  })
+</script>`
+const hostServer = createServer((req, res) => res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(HOST_PAGE))
+hostServer.on('error', (e) => fail(`host page: ${e.message}`))
+hostServer.listen(HOST_PORT)
 
 // ── the customer, on the insurer's page ───────────────────────────────
 
@@ -217,6 +278,7 @@ if (list.claims.length !== 1 || list.claims[0].reference !== shown) fail(`the se
 const one = await (await fetch(`http://localhost:${API_PORT}/claims/${shown}`, desk)).json()
 if (one.claim.reporter.name !== 'Sam Lee' || one.claim.vehicles[0].vin !== '4T1BF1FK5CU123456' || one.claim.attestation.name !== 'Sam Lee') fail('the stored document is not the one sent')
 if (!one.claim.attestation.at || !one.claim.submittedAt) fail('the attestation was not stamped')
+if (one.customer?.id !== 'cust-1' || one.customer.policy !== 'POL-9') fail(`the report was not filed against the session's customer: ${JSON.stringify(one.customer)}`)
 const files = await readdir(join(dir, shown))
 // no damage was marked on this walk (scripts/smoke.mjs covers that), so there is a diagram but no marked-up car
 for (const f of ['claim.json', 'receipt.json', 'scene.png']) if (!files.includes(f)) fail(`${f} was not unpacked; have ${files.join(', ')}`)
@@ -228,6 +290,46 @@ if ((await fetch(`http://localhost:${API_PORT}/claims`)).status !== 401) fail('t
 const anon = await fetch(`http://localhost:${API_PORT}/claims`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
 if (anon.status !== 401) fail(`a POST without the token got ${anon.status}`)
 ok('server: both tokens are enforced')
+
+// a session that has run out, and one signed by someone else, are not sessions
+// a document the parser will refuse, so proving the token got past the door files nothing
+const post = (token) =>
+  fetch(`${API}/claims`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: '{"schema":"claim/9"}' })
+const expired = sign({ sub: 'cust-1', policy: 'POL-9' }, SESSION_SECRET, 60, Date.now() - 120_000)
+const [body, sig] = session.token.split('.')
+const forged = `${body}.${sig[0] === 'A' ? 'B' : 'A'}${sig.slice(1)}`
+if ((await post(expired)).status !== 401) fail('an expired session token was accepted')
+if ((await post(forged)).status !== 401) fail('a token with a flipped signature was accepted')
+if ((await post(session.token)).status !== 400) fail('the live session token did not get past the door')
+ok('sessions: an expired token and a forged one are 401; the live one still works')
+
+// ── the built page, served from the same origin as the API ────────────
+
+const html = await fetch(`${API}/`)
+const served = await html.text()
+const csp = html.headers.get('content-security-policy') ?? ''
+if (html.status !== 200 || !/^text\/html/.test(html.headers.get('content-type') ?? '')) fail(`GET / gave ${html.status} ${html.headers.get('content-type')}`)
+if (!csp.includes(`frame-ancestors http://localhost:${HOST_PORT}`)) fail(`frame-ancestors is not the allowed host: ${csp}`)
+if (!/script-src [^;]*'sha256-/.test(csp)) fail(`the injected config is not in script-src: ${csp}`)
+if (html.headers.get('x-content-type-options') !== 'nosniff') fail('no nosniff on the page')
+if (!served.includes('window.CLAIM_MARKER=') || !served.includes('"submitUrl":"/claims"')) fail('the runtime config was not injected into the page')
+if (!served.includes('"brand":"Acme Mutual"')) fail('the brand was not injected into the page')
+const hashed = /src="(\/assets\/[^"]+\.js)"/.exec(served)?.[1]
+if (!hashed) fail('the page does not reference a hashed asset')
+const asset = await fetch(`${API}${hashed}`)
+if (!(asset.headers.get('cache-control') ?? '').includes('immutable')) fail(`${hashed} is not cached forever: ${asset.headers.get('cache-control')}`)
+await asset.arrayBuffer()
+const codes = {}
+for (const path of ['/%2e%2e/server/session.mjs', '/lib/claim.js', '/adjuster.html', '/nope.js']) {
+  const res = await fetch(`${API}${path}`)
+  codes[path] = res.status
+  await res.arrayBuffer()
+}
+if (codes['/%2e%2e/server/session.mjs'] !== 404) fail(`a path out of the static folder gave ${codes['/%2e%2e/server/session.mjs']}`)
+if (codes['/lib/claim.js'] !== 404) fail(`the parser is served to the browser (${codes['/lib/claim.js']})`)
+if (codes['/adjuster.html'] !== 200) fail(`the claims desk gave ${codes['/adjuster.html']}`)
+if (codes['/nope.js'] !== 404) fail(`a missing file gave ${codes['/nope.js']}`)
+ok('static: the page is served with its CSP and injected config, assets are immutable, /lib and paths outside dist are 404')
 
 // the same document again, as a bad connection would: the page's reference is the key, and it is filed once
 const again = await fetch(`http://localhost:${API_PORT}/claims`, {

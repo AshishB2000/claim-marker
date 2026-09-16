@@ -14,9 +14,10 @@
  * are chosen once per deployment, not per customer.
  *
  * Messages are a trust boundary. Config is accepted only from origins in
- * `VITE_ALLOWED_HOSTS` (comma-separated); unset, any origin is accepted and a warning says
- * so, which suits development and nothing else. Everything that arrives is parsed, never
- * trusted, and events go back only to the origin the config came from.
+ * `VITE_ALLOWED_HOSTS` (comma-separated), or in `window.CLAIM_MARKER.allowedHosts` when the
+ * server serving the page set it; unset, any origin is accepted and a warning says so, which
+ * suits development and nothing else. Everything that arrives is parsed, never trusted, and
+ * events go back only to the origin the config came from.
  */
 import { parsePrefill, type Prefill } from './claim/prefill'
 
@@ -54,10 +55,21 @@ export const config: Config = {
   hostOrigin: null,
 }
 
-const ALLOWED: string[] = ((env.VITE_ALLOWED_HOSTS as string | undefined) ?? '')
+const ENV_ALLOWED: string[] = ((env.VITE_ALLOWED_HOSTS as string | undefined) ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
+
+/**
+ * Who may configure this page: the build-time list, or — for a server that serves the page
+ * and injects its own settings — `window.CLAIM_MARKER.allowedHosts`. From the global only,
+ * never from a `config` message, or a host page could widen its own permission.
+ */
+const allowedHosts = (): string[] => {
+  if (ENV_ALLOWED.length) return ENV_ALLOWED
+  const injected = (window as { CLAIM_MARKER?: { allowedHosts?: unknown } }).CLAIM_MARKER?.allowedHosts
+  return Array.isArray(injected) ? injected.filter((h): h is string => typeof h === 'string' && !!h.trim()) : []
+}
 
 /** the tag on every message in either direction, so unrelated messages on the page are ignored */
 export const CHANNEL = 'claim-marker'
@@ -65,10 +77,20 @@ export const CHANNEL = 'claim-marker'
 const HOST_WAIT = 1500
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
-/** a submit or assist URL must be http(s); anything else — javascript:, data: — is dropped */
+/**
+ * A submit or assist URL. Absolute, or relative to this page — a server that serves the page
+ * and takes the reports says `/claims` and means its own origin. Resolved either way, and
+ * http(s) either way, so `javascript:` and `data:` are dropped.
+ */
 const url = (v: unknown): string | null => {
   const s = str(v)
-  return s && /^https?:\/\//i.test(s) ? s : null
+  if (!s) return null
+  try {
+    const u = new URL(s, window.location.href)
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null
+  } catch {
+    return null
+  }
 }
 
 /** read a config object from any of the sources; unknown keys are ignored, bad values dropped */
@@ -88,11 +110,12 @@ export function applyConfig(input: unknown): void {
 }
 
 const originAllowed = (origin: string) => {
-  if (ALLOWED.length === 0) {
+  const allowed = allowedHosts()
+  if (allowed.length === 0) {
     console.warn(`claim-marker: accepting config from ${origin}; set VITE_ALLOWED_HOSTS in production`)
     return true
   }
-  return ALLOWED.includes(origin)
+  return allowed.includes(origin)
 }
 
 /**

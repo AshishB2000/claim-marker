@@ -115,6 +115,13 @@ npm run dev      # http://localhost:5173
 npm run build    # static site in dist/
 ```
 
+Or the whole product — the page, the claims desk and the API that receives what the page
+sends — on one port:
+
+```bash
+docker compose up --build            # http://localhost:8788
+```
+
 > [!TIP]
 > It works out of the box with **no keys**: Esri for streets and satellite, Photon for addresses, the NHTSA vehicle database for makes, models and VINs, Wikimedia Commons for the photo of the car. A garage or a covered car park, which no map can see, is drawn on a parking lot or a blank sheet instead.
 
@@ -186,6 +193,11 @@ runtime from the host page (see above).
 | `VITE_VEHICLE_PHOTO_URL` | a licensed car-image provider, templated on `{make}` `{model}` `{year}` `{color}` |
 | `VITE_ALLOWED_HOSTS` | the origins allowed to configure the embedded page, comma-separated. Set it in production. |
 | `VITE_CLAIMS_API` | where the claims desk reads reports from (default the reference server on 8788) |
+
+Served by `server/claim-server.mjs`, the last four need no build at all: the server injects
+`submitUrl`, `claimsApi`, `brand`, `assistUrl` and `allowedHosts` into the page at startup, so
+one built image serves any insurer. Its own environment — tokens, sessions, rate limits, the
+CSP — is in [docs/integration.md](docs/integration.md#0-deploy-it).
 
 The page also dispatches `claim:submitted` on `window` with the document as `detail`, for a host page that would rather listen than receive a POST.
 
