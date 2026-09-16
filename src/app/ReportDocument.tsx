@@ -1,7 +1,7 @@
 import { Fragment, useRef, type ReactNode, type RefObject } from 'react'
 import { useClaim, type Step } from '../claim/store'
-import { KIND_INFO, ROLE_COLOR, type Claim, type ClaimVehicle, type Person } from '../claim/schema'
-import { conditionLabels, contactLine, driverName, driverShort, gaps, personLine, vehicleName, whose, yesNo } from '../claim/describe'
+import { KIND_INFO, ROLE_COLOR, newPerson, type Claim, type ClaimVehicle, type Person } from '../claim/schema'
+import { cap, conditionLabels, contactLine, driverName, driverShort, gaps, ownerLabel, personLine, vehicleName, whose, yesNo, type Voice } from '../claim/describe'
 import type { LngLat } from '../geo'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
 import { DamageMarker, type DamageMarkerHandle } from '../marker/DamageMarker'
@@ -110,6 +110,8 @@ export type ReportDocumentProps = {
   markers?: RefObject<Map<string, DamageMarkerHandle>>
   /** what an adjuster sees instead of the draft badge */
   badge?: ReactNode
+  /** who is reading: the customer ("your Camry") or the claims desk ("the policyholder's") */
+  voice?: Voice
 }
 
 /**
@@ -117,7 +119,7 @@ export type ReportDocumentProps = {
  * customer reads it on the review step with a way back into every section; the insurer
  * reads the same component on the claims desk with none.
  */
-export function ReportDocument({ claim, edit = false, mapRef, markers, badge }: ReportDocumentProps) {
+export function ReportDocument({ claim, edit = false, mapRef, markers, badge, voice = 'customer' }: ReportDocumentProps) {
   const ownMarkers = useRef(new Map<string, DamageMarkerHandle>())
   const marks = markers ?? ownMarkers
   const play = usePlayback(claim.vehicles)
@@ -219,7 +221,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge }: 
             ]
             if (v.role !== 'insured') {
               rows.push(
-                ['Driver', given(driverName(d) ? `${driverName(d)}${d && contactLine(d) ? ` · ${contactLine(d)}` : ''}` : null)],
+                ['Driver', given(driverName(d, voice) ? `${driverName(d, voice)}${d && contactLine(d) ? ` · ${contactLine(d)}` : ''}` : null)],
                 ['Insurer', given(v.insurer ? `${v.insurer}${v.policy ? `, policy ${v.policy}` : ''}` : null)],
                 ['Owner', v.owner || 'The driver'],
               )
@@ -240,7 +242,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge }: 
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <Tag v={v} />
                     <span className="font-semibold">{vehicleName(v)}</span>
-                    <span className="text-xs text-slate-500">{v.role === 'insured' ? 'Your vehicle' : 'Other vehicle'}</span>
+                    <span className="text-xs text-slate-500">{ownerLabel(v, voice)}</span>
                   </div>
                   <Rows items={rows} />
                 </div>
@@ -271,7 +273,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge }: 
               <div key={v.id} className="rounded-xl bg-slate-50 p-4">
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <Tag v={v} />
-                  In {whose(v)} {vehicleName(v)}
+                  In {whose(v, voice)} {vehicleName(v)}
                 </div>
                 <ul className="space-y-2 text-sm">
                   <li className="flex items-start gap-2">
@@ -281,12 +283,12 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge }: 
                     <span>
                       {d ? (
                         <>
-                          {driverShort(d)}
+                          {driverShort(d, voice)}
                           {contactLine(d) && <span className="block text-xs text-slate-500">{contactLine(d)}</span>}
                           <Hurt p={d} />
                         </>
                       ) : v.role === 'insured' ? (
-                        'You, driving'
+                        driverShort({ ...newPerson('driver', v.id), self: true }, voice)
                       ) : (
                         <span className="text-slate-400">Driver not given</span>
                       )}
@@ -318,7 +320,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge }: 
                       <Icon.person />
                     </span>
                     <span>
-                      {personLine(p, claim.vehicles)}
+                      {personLine(p, claim.vehicles, voice)}
                       {contactLine(p) && <span className="block text-xs text-slate-500">{contactLine(p)}</span>}
                       <Hurt p={p} />
                     </span>
@@ -374,7 +376,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge }: 
                 .map((v) => (
                   <span key={v.id} className="inline-flex items-center gap-1.5">
                     <span className="size-2.5 rounded-sm" style={{ background: ROLE_COLOR[v.role] }} />
-                    {v.id.toUpperCase()} · {whose(v)} {vehicleName(v)}
+                    {v.id.toUpperCase()} · {whose(v, voice)} {vehicleName(v)}
                   </span>
                 ))}
               {claim.impact && (
@@ -411,7 +413,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge }: 
                 <div className="p-4 pt-3 sm:pl-0">
                   <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                     <Tag v={v} />
-                    {whose(v) === 'your' ? 'Your' : 'Their'} {vehicleName(v)}
+                    {cap(whose(v, voice))} {vehicleName(v)}
                   </div>
                   <Marks v={v} />
                 </div>
@@ -445,7 +447,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge }: 
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl bg-slate-50 p-4">
               <div className="mb-2 text-sm font-semibold">
-                {edit ? 'Your' : 'The'} {vehicleName(mine)} now
+                {cap(whose(mine, voice))} {vehicleName(mine)} now
               </div>
               <Rows
                 items={[

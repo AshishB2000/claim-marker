@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useClaim } from '../../claim/store'
+import { useClaim, type Step } from '../../claim/store'
 import { makeReference, toDocument } from '../../claim/schema'
 import type { MapSceneHandle } from '../../map/MapScene'
 import type { DamageMarkerHandle } from '../../marker/DamageMarker'
@@ -8,6 +8,80 @@ import { Field, YesNo } from '../ui'
 import { submitClaim } from '../submit'
 import { config } from '../../config'
 import { ReportDocument } from '../ReportDocument'
+import { assistOn, checkReport } from '../../assist/client'
+import type { Check } from '../../assist/schema'
+
+/**
+ * The optional second look: the report read back by the insurer's endpoint, as questions the
+ * customer may answer or ignore. It never blocks sending — nothing here touches `canSend` —
+ * because a claim held up by a machine's doubt is worse than a claim with a gap in it.
+ */
+function SecondLook() {
+  const claim = useClaim((s) => s.claim)
+  const goto = useClaim((s) => s.goto)
+  const [busy, setBusy] = useState(false)
+  const [checks, setChecks] = useState<Check[] | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+
+  const run = async () => {
+    setBusy(true)
+    setFailed(null)
+    try {
+      setChecks(await checkReport(claim))
+    } catch (e) {
+      setFailed(e instanceof Error ? e.message : 'The assistant could not answer.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card p-6">
+      <h2 className="eyebrow">A second look</h2>
+      <p className="mt-1 text-sm text-slate-500">
+        We can read your report back and point out anything a claims handler would ring up to ask about. Nothing here stops you sending.
+      </p>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button className="btn btn-secondary btn-sm" onClick={run} disabled={busy}>
+          {busy ? <Icon.spinner /> : <Icon.wand />}
+          {busy ? 'Reading it over…' : checks ? 'Check it again' : 'Check it over for me'}
+        </button>
+        {checks && !busy && (
+          <button className="btn btn-ghost btn-sm" onClick={() => setChecks(null)}>
+            Dismiss
+          </button>
+        )}
+      </div>
+      {failed && !busy && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">{failed}</p>}
+      {checks && !busy && checks.length === 0 && (
+        <p className="mt-3 flex items-center gap-2 text-sm font-medium text-emerald-800">
+          <Icon.check /> Nothing stood out.
+        </p>
+      )}
+      {checks && !busy && checks.length > 0 && (
+        <ul className="mt-3 space-y-2 text-sm">
+          {checks.map((c) => (
+            <li key={c.text} className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2">
+              <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-brand-500" />
+              <span>
+                {c.text}
+                {c.step && (
+                  <>
+                    {' '}
+                    <button className="text-xs font-semibold text-brand-700 underline-offset-2 hover:underline" onClick={() => goto(c.step as Step)}>
+                      Go to that step
+                    </button>
+                  </>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-3 text-[11px] text-slate-400">Read by AI. It does not decide anything about your claim, and it never looks at who is at fault.</p>
+    </div>
+  )
+}
 
 export function Review({ onSubmitted }: { onSubmitted: () => void }) {
   const claim = useClaim((s) => s.claim)
@@ -77,6 +151,8 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
           <YesNo name="Are you the policyholder" value={claim.reporter.policyholder} onChange={(policyholder) => setReporter({ policyholder })} />
         </div>
       </div>
+
+      {assistOn() && <SecondLook />}
 
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">{error}</p>}
 

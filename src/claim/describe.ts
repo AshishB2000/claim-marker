@@ -2,28 +2,45 @@
  * How the report talks about its own contents — one place, so the people step, the review
  * and the summary an adjuster reads all say "Sam Lee, passenger in your 2022 Toyota Camry"
  * rather than each inventing a different fragment of it.
+ *
+ * Two voices, because the same document is read by two people. The customer is spoken to in
+ * the second person — "your Camry", "You, driving" — which is right on a form they are
+ * filling in and wrong on an adjuster's screen, where the person is not in the room and is
+ * one of several parties. `voice: 'desk'` says "the policyholder's Camry" instead. Every
+ * function defaults to `'customer'`, so the steps and the review are untouched; only
+ * `ReportDocument` with `voice="desk"` asks for the other one.
  */
 import { paintLabel } from '../vehicles/paint'
 import { VEHICLES } from '../zones'
 import { KIND_INFO, LIGHT_LABEL, type Claim, type ClaimVehicle, type Conditions, type Person } from './schema'
 
+/** who the sentence is being read by: the customer filling it in, or the desk reading it */
+export type Voice = 'customer' | 'desk'
+
+export const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+
 /** "2022 Toyota Camry", or "red sedan" when the make is not known */
 export const vehicleName = (v: ClaimVehicle): string =>
   [v.year, v.make, v.model].filter(Boolean).join(' ') || `${paintLabel(v.color).toLowerCase()} ${VEHICLES[v.body].label.toLowerCase()}`
 
-/** "your" for the customer's vehicle, "their" for anyone else's */
-export const whose = (v: ClaimVehicle) => (v.role === 'insured' ? 'your' : 'their')
+/** "your" / "their" to the customer, "the policyholder's" / "the other party's" to the desk */
+export const whose = (v: ClaimVehicle, voice: Voice = 'customer') =>
+  voice === 'desk' ? (v.role === 'insured' ? "the policyholder's" : "the other party's") : v.role === 'insured' ? 'your' : 'their'
+
+/** the tag beside a vehicle's name in a list */
+export const ownerLabel = (v: ClaimVehicle, voice: Voice = 'customer') =>
+  voice === 'desk' ? (v.role === 'insured' ? "Policyholder's vehicle" : "Other party's vehicle") : v.role === 'insured' ? 'Your vehicle' : 'Other vehicle'
 
 /** what goes in the name when the other driver drove off */
 export const UNKNOWN_DRIVER = 'Unknown — left the scene'
 
 /** one line naming a person by what they were doing there */
-export function personLine(p: Person, vehicles: ClaimVehicle[]): string {
+export function personLine(p: Person, vehicles: ClaimVehicle[], voice: Voice = 'customer'): string {
   const v = p.vehicle ? vehicles.find((x) => x.id === p.vehicle) : undefined
-  const car = v ? `${whose(v)} ${vehicleName(v)}` : 'a vehicle'
+  const car = v ? `${whose(v, voice)} ${vehicleName(v)}` : 'a vehicle'
   switch (p.role) {
     case 'driver':
-      if (p.self) return `You, driving ${car}`
+      if (p.self) return voice === 'desk' ? `The policyholder, driving ${car}` : `You, driving ${car}`
       if (p.name === UNKNOWN_DRIVER) return `The driver of ${car} — unknown, they left the scene`
       return p.name ? `${p.name}, driving ${car}` : `The driver of ${car}`
     case 'passenger':
@@ -36,14 +53,15 @@ export function personLine(p: Person, vehicles: ClaimVehicle[]): string {
 }
 
 /** the driver inside a group already headed by the vehicle: "You, driving", "Dana Quinn, driving" */
-export function driverShort(p: Person): string {
-  if (p.self) return 'You, driving'
+export function driverShort(p: Person, voice: Voice = 'customer'): string {
+  if (p.self) return voice === 'desk' ? 'The policyholder, driving' : 'You, driving'
   if (p.name === UNKNOWN_DRIVER) return 'The driver — unknown, they left the scene'
   return p.name ? `${p.name}, driving` : 'The driver — name not given'
 }
 
 /** the driver's name for a label/value row: the name, or why there is none */
-export const driverName = (p: Person | undefined): string | null => (!p ? null : p.self ? 'You' : p.name === UNKNOWN_DRIVER ? 'Unknown — left the scene' : p.name || null)
+export const driverName = (p: Person | undefined, voice: Voice = 'customer'): string | null =>
+  !p ? null : p.self ? (voice === 'desk' ? 'The policyholder' : 'You') : p.name === UNKNOWN_DRIVER ? 'Unknown — left the scene' : p.name || null
 
 /** phone and licence, whichever were given */
 export const contactLine = (p: Person): string => [p.phone, p.licence && `licence ${p.licence}`].filter(Boolean).join(' · ')
@@ -55,7 +73,8 @@ export type Gap = { text: string; step: 'where' | 'vehicles' | 'people' | 'scene
 
 /**
  * What an adjuster would ring up to ask about, in the order they would ask. None of these
- * blocks sending — a report with gaps beats no report — but each is a call saved.
+ * blocks sending — a report with gaps beats no report — but each is a call saved. Second
+ * person throughout: this only ever runs for the customer, on their own review page.
  */
 export function gaps(claim: Claim): Gap[] {
   const out: Gap[] = []
@@ -74,8 +93,6 @@ export function gaps(claim: Claim): Gap[] {
   if (!claim.reporter.phone.trim() && !claim.reporter.email.trim()) out.push({ text: 'A phone number or email so we can reach you', step: 'review' })
   return out
 }
-
-const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
 /** the conditions as short readable labels: "Rain", "Wet road", "Dark, street lights on" */
 export function conditionLabels(c: Conditions): string[] {

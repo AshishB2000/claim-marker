@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, ~241 tests across 17 files
+npm test               # vitest, ~250 tests across 17 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -43,7 +43,14 @@ node scripts/shoot.mjs     # regenerates docs/*.png and asserts the attachments 
 ```
 
 `node scripts/assist-smoke.mjs` starts its own stub endpoint and its own dev server on 5174,
-so it needs no API key: it covers this page's half of the assistant contract. The model's own
+so it needs no API key: it covers this page's half of the assistant contract, all four tasks.
+
+`node scripts/offline-smoke.mjs` needs only a build: it serves `dist/` with `vite preview` on
+a free port, waits for the shell to land, then **kills the preview process** and goes offline
+before reloading. Killing the server matters — emulated offline alone still lets a service
+worker's own fetches reach localhost, so a page quietly served by a live server would pass a
+test that proves nothing. Run it for anything touching `public/sw.js`, the offline plugin in
+`vite.config.ts`, `src/app/offline.ts` or what the build emits. The model's own
 judgement is not covered by anything — that needs a key and `scripts/assist-server.mjs`.
 
 Helpers: `scripts/probe-zones.ts <body>` proves every zone claims bodywork; `scripts/profile-body.mjs <glb>`
@@ -180,10 +187,20 @@ the page uses, via `dist/lib/claim.js`; do not hand-write validation in `server/
 
 **The AI never runs in the page.** `VITE_ASSIST_URL` points at an endpoint the insurer runs and
 that holds the key (`scripts/assist-server.mjs` is a reference one); unset, no AI exists in the
-page. Positions on that wire are metres east/north of the incident, not `[lng, lat]`, because a
-model cannot do spherical arithmetic. Treat every answer as untrusted input: `parseScene` drops
-anything malformed or naming a vehicle the customer did not enter, and `applyScene` is a no-op
-when nothing usable comes back — an earlier version re-ran the impact anyway and moved the cars.
+page. Four tasks: `diagram`, `describe`, `check` (the report back as questions, on the review
+step) and `damage` (photographs back as marked panels, on the damage step). Positions on that
+wire are metres east/north of the incident, not `[lng, lat]`, because a model cannot do
+spherical arithmetic. Treat every answer as untrusted input: `parseScene` drops anything
+malformed or naming a vehicle the customer did not enter, and `applyScene` is a no-op when
+nothing usable comes back — an earlier version re-ran the impact anyway and moved the cars.
+
+**Three rules the assistant may not break.** The second look never blocks sending — nothing in
+that card touches `canSend`. `CheckRequest` carries the shape of the accident and nothing that
+names anyone: no reporter, names, phones, licences, plates, VINs, insurers or attachments (the
+assist smoke walks every key of the request and fails on any of them). And `parseSuggestions`
+always uses the **zone's own anchor** as the point, never anything the endpoint sent, because a
+mark that misses the panel it names makes the marked-up car a lie. Nothing anywhere mentions
+fault, liability, speed or cost.
 
 **The kind of incident drives the flow** (`KIND_INFO` in `src/claim/schema.ts`, `stepsFor` in the
 store): `others` says whether other vehicles are expected, `diagram` whether the map step is shown.
@@ -196,6 +213,12 @@ The attestation's `at` is stamped only at send. Send is disabled until agreed an
 Every sentence that names a person, a vehicle or a condition comes from `src/claim/describe.ts`
 (`personLine`, `vehicleName`, `conditionLabels`, `gaps`); do not compose those inline in a step.
 
+**Those sentences have two voices.** `describe.ts` takes a `Voice`, defaulting to `'customer'`
+everywhere, so the steps and the review are second person as they were; `ReportDocument
+voice="desk"` — which only `src/adjuster/Desk.tsx` passes — turns "your Camry" into "the
+policyholder's Camry" and "You, driving" into "The policyholder, driving". `gaps()` has no
+voice on purpose: it only runs on the customer's own review page.
+
 **Schemas are versioned and frozen.** `claim/1` embeds the `claim-marker/1` damage shape. Both
 guarantee `export → load → export` is byte-identical, which is why coordinates round on the way
 in. Adding a field is fine; changing or removing one means a new schema version. `parseClaim`
@@ -207,6 +230,20 @@ appear above it has to be `<Html>` too with a higher `zIndexRange`.
 **Lint enforces React-compiler rules:** no writing refs during render (write them in an effect),
 no components defined inside components, effects list every dependency (capture mount-time
 props in `useState` when a thing is built once), no non-component exports from component files.
+
+**The offline shell is hand-written** (`public/sw.js`, a plugin in `vite.config.ts`,
+`src/app/offline.ts`). Three things in it look arbitrary and are not: no `skipWaiting` (an
+open page may still want a lazy chunk from the build it was served by), precached entries
+matched **by path** and not by the request (a reload marks its subresources `cache: 'reload'`
+and `Cache.match` then answers nothing at all, which is a blank page offline), and opaque
+responses never stored (~7 MB of quota each, and unreadable). The build patches the two
+**declarations** in `sw.js` by name, not the bare `__PRECACHE__` / `__VERSION__` tokens —
+those also appear in that file's own doc comment, and replacing the first occurrence there
+ships a worker that does nothing.
+
+**Service workers do not register in the desktop app's browser pane** — `vite preview` fails
+there too, so it is the pane, not the page. `scripts/offline-smoke.mjs` in headless Chromium
+is the only proof that counts.
 
 **A blank canvas in a screenshot is usually not a bug.** three.js skips objects whose shaders
 are still linking; under headless or software GL the lit materials take seconds. The scripts
@@ -223,10 +260,11 @@ src/app/          the seven steps, the shell, the shared ReportDocument, submit
 src/adjuster/     the claims desk (adjuster.html), the insurer's side
 src/claim/        the claim/1 document, the persisted store, prefill, the outbox
 src/config.ts     runtime configuration and the host-page channel
+public/sw.js      the offline shell; its precache list is patched in by vite.config.ts
 src/map/          MapLibre scene, the three.js car layer, the transform maths, styles
 src/vehicles/     model loading + paint re-authoring, body previews, the paint palette
 src/marker/       the 3D damage marker
-src/assist/       the optional assistant: the wire contract, the metric frame, the client
+src/assist/       the optional assistant: the wire contract and its parsers, the metric frame, the client
 src/zones.ts models.ts schema.ts geo.ts geocode.ts   shared
 server/           the reference claim server and its session tokens (no dependencies)
 Dockerfile docker-compose.yml   the same thing as one image, page included
@@ -238,8 +276,9 @@ docs/claim-1.schema.json   the published JSON Schema, tested against the parser
 
 Run `npm run lint`, `npm test`, `npm run build`, and — for anything touching the map, the
 marker, the steps or the document — `node scripts/smoke.mjs`; for anything touching config,
-submit, the embed, the server or the desk, `node scripts/integration-smoke.mjs`. Paste the
-real output. A
+submit, the embed, the server or the desk, `node scripts/integration-smoke.mjs`; for anything
+touching the assistant, `node scripts/assist-smoke.mjs`; for anything touching the service
+worker or what the build emits, `node scripts/offline-smoke.mjs`. Paste the real output. A
 screenshot that looks right is not evidence the export path works; `scripts/shoot.mjs` reads
 the pixels back.
 

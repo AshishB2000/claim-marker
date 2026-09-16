@@ -5,6 +5,7 @@ import './app.css'
 import { config, loadConfig } from './config'
 import { useClaim } from './claim/store'
 import { flushOutbox } from './app/submit'
+import { keepOffline } from './app/offline'
 import { App } from './app/App'
 
 // the configuration is settled before anything renders: a host page's prefill has to be in
@@ -14,6 +15,7 @@ loadConfig().then(() => {
   const drain = () => flushOutbox((local, reference) => useClaim.getState().delivered(local, reference))
   drain()
   window.addEventListener('online', drain)
+  keepOffline()
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <App />

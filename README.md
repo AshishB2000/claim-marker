@@ -123,6 +123,11 @@ docker compose up --build            # http://localhost:8788
 ```
 
 > [!TIP]
+> Built, it installs itself: the page, the seven car bodies, the environment map and the map
+> library go on the device, so a customer standing in a basement car park with no signal can
+> still fill the whole thing in — and the report leaves by itself when the signal returns.
+
+> [!TIP]
 > It works out of the box with **no keys**: Esri for streets and satellite, Photon for addresses, the NHTSA vehicle database for makes, models and VINs, Wikimedia Commons for the photo of the car. A garage or a covered car park, which no map can see, is drawn on a parking lot or a blank sheet instead.
 
 <br>

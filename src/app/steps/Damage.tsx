@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useClaim, insuredOf } from '../../claim/store'
-import { SCHEMA, SEVERITIES, SEVERITY_COLOR } from '../../schema'
+import { SCHEMA, SEVERITIES, SEVERITY_COLOR, type Damage as Mark } from '../../schema'
 import { VEHICLES, zoneById } from '../../zones'
 import { DamageMarker } from '../../marker/DamageMarker'
 import { KIND_INFO, MAX_PHOTOS, ROLE_COLOR } from '../../claim/schema'
@@ -8,6 +8,7 @@ import { VehiclePhoto } from '../VehiclePhoto'
 import { Field, YesNo } from '../ui'
 import { Describe } from '../Describe'
 import { Icon } from '../icons'
+import { assistOn, damageFromPhotos } from '../../assist/client'
 
 export function Damage() {
   const claim = useClaim((s) => s.claim)
@@ -25,6 +26,10 @@ export function Damage() {
   const camera = useRef<HTMLInputElement>(null)
   const [adding, setAdding] = useState(false)
   const [over, setOver] = useState(false)
+  // keyed on the vehicle, so switching cars does not leave the other one's suggestions up
+  const [suggested, setSuggested] = useState<{ id: string; marks: Mark[] } | null>(null)
+  const [looking, setLooking] = useState(false)
+  const [failed, setFailed] = useState<string | null>(null)
   const onFiles = async (list: FileList | null) => {
     if (!list?.length) return
     setAdding(true)
@@ -38,6 +43,25 @@ export function Damage() {
   }
   const full = photos.length >= MAX_PHOTOS
   const diagram = KIND_INFO[claim.incident.kind].diagram
+  const ofThis = photos.filter((p) => p.of === v.id).length
+  const marks = suggested?.id === v.id ? suggested.marks : null
+
+  const look = async () => {
+    setLooking(true)
+    setFailed(null)
+    try {
+      setSuggested({ id: v.id, marks: await damageFromPhotos(claim, v.id) })
+    } catch (e) {
+      setFailed(e instanceof Error ? e.message : 'The assistant could not answer.')
+    } finally {
+      setLooking(false)
+    }
+  }
+  // the customer pressed Add, so this vehicle's damage is now theirs — `setDamages` flips it
+  const add = (m: Mark) => {
+    setDamages(v.id, [...v.damages, m])
+    setSuggested((s) => (s && s.id === v.id ? { id: v.id, marks: s.marks.filter((x) => x !== m) } : s))
+  }
 
   return (
     <div>
@@ -110,6 +134,39 @@ export function Damage() {
               ))}
             </ul>
           </div>
+
+          {assistOn() && ofThis > 0 && (
+            <div className="card p-4">
+              <h3 className="eyebrow">From your photos</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                We can look at the {ofThis === 1 ? 'photo' : `${ofThis} photos`} of this vehicle and suggest the panels. You decide what goes on the car.
+              </p>
+              <button className="btn btn-secondary btn-sm mt-3" onClick={look} disabled={looking}>
+                {looking ? <Icon.spinner /> : <Icon.wand />}
+                {looking ? 'Looking…' : marks ? 'Look again' : 'Suggest from photos'}
+              </button>
+              {failed && !looking && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">{failed}</p>}
+              {marks && !looking && marks.length === 0 && <p className="mt-2 text-sm text-slate-500">Nothing clear enough to suggest.</p>}
+              {marks && !looking && marks.length > 0 && (
+                <ul className="mt-3 space-y-2">
+                  {marks.map((m, i) => (
+                    <li key={`${m.zone}-${i}`} className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                      <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: SEVERITY_COLOR[m.severity] }} />
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium">{zoneById(v.body, m.zone)?.label ?? m.zone}</span>
+                        <span className="text-slate-500"> · {m.severity}</span>
+                        {m.note && <span className="block text-xs text-slate-500">{m.note}</span>}
+                      </span>
+                      <button className="btn btn-ghost btn-sm shrink-0" onClick={() => add(m)} aria-label={`Add ${zoneById(v.body, m.zone)?.label ?? m.zone}`}>
+                        <Icon.plus /> Add
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-2 text-[11px] text-slate-400">Read by AI from the photos. It says what it can see, never what it would cost or who is at fault.</p>
+            </div>
+          )}
         </aside>
       </div>
 

@@ -356,6 +356,31 @@ not built or run here: Docker is not installed on the machine this was written o
 image is unverified and the server changes are proven by `scripts/integration-smoke.mjs`
 instead.
 
+## Two voices
+
+The same `claim/1` document is read by two people, and until now it spoke to both as if they
+were the customer: "You, driving your Camry", "Your vehicle". On an adjuster's screen that is
+wrong twice over — the person is not in the room, and they are one of several parties whose
+accounts the adjuster is weighing.
+
+`src/claim/describe.ts` now takes a `Voice`. Every function defaults to `'customer'`, so the
+steps and the review page are untouched by construction; `ReportDocument` takes `voice` and
+the desk is the one caller that passes `'desk'`. In that voice "your"/"their" becomes "the
+policyholder's"/"the other party's", "You, driving" becomes "The policyholder, driving", and
+the tag beside a vehicle becomes "Policyholder's vehicle". `gaps()` stays second person: it
+only ever runs on the customer's own review page.
+
+It stayed in `describe.ts` rather than becoming a prop drilled through the document because
+that is the rule the project already had — every sentence naming a person, a vehicle or a
+condition comes from one file — and the voice is exactly the kind of thing that would
+otherwise be re-decided inline in four places and disagree in a fifth.
+
+**Search on the desk** is the other half: an adjuster with a caller on the line has a name, a
+plate or a street, almost never a reference. One `<input type="search">` over the reference,
+the customer's reference, the reporter, the address and the plates, Enter opening the first
+match, Escape clearing. The server's `summarise()` gained `plates` for it, which is the only
+reason the inbox row carries them.
+
 ## The assistant
 
 Two directions across one endpoint, both optional and both off unless `VITE_ASSIST_URL` is
@@ -390,10 +415,98 @@ anything not in the diagram, and the written statement is labelled and editable 
 sent. A claimant-facing page that appeared to decide liability would be a different and much
 worse product.
 
-**What is deliberately not here:** a chat assistant (generic, and the five steps already ask
-the questions), damage assessment from photos (worth doing, but needs photo upload first) and
-a pre-submit consistency check (cheap and useful, next). Dictation into the description box
-would suit the "just tell us what happened" idea and is the Web Speech API, no key.
+## Checks and photographs
+
+Two more tasks on the same endpoint, both optional, both off with `VITE_ASSIST_URL` unset.
+
+**A second look, on the review page.** `check` sends the finished report back and gets at most
+five short questions — the kind a claims handler would ring up about: the airbags went off but
+the car is marked drivable, someone is hurt but the police were not called, no photographs at
+all. Each carries the step that answers it, so the question is one click from the field.
+
+Two decisions make it safe to ship. It **never blocks sending**: nothing in that card touches
+`canSend`, because a claim held up by a machine's doubt is worse than a claim with a gap in
+it, and a customer at the roadside with a bad signal cannot argue with it. And what goes over
+the wire is **the shape of the accident, not the people in it** — no reporter, no names,
+phones, licences, plates, VINs or insurers, and no attachments. A consistency check needs to
+know that *someone* is marked hurt and the police were not called; it does not need to know
+who. `brief()` set that precedent for the diagram and `CheckRequest` keeps it; the smoke walks
+every key of the request and fails on any of the forbidden ones, three levels down included.
+
+**Damage from the photographs, on the damage step.** `damage` sends the photographs of one
+vehicle — six at most, the ones tagged to it — along with that body's own panel list, and gets
+back rows with an "Add" button each. Nothing lands on the car until the customer presses Add,
+and pressing it flips `autoDamage` to `user`, which is correct: they confirmed it.
+
+The zone list goes on the wire because zone sets differ per body — a pickup has no rear doors —
+and `parseSuggestions` re-checks it against the body anyway. **The point is always the zone's
+own anchor**, never anything the endpoint sent: a model cannot see where a panel sits in the
+car's frame, and a mark that misses the panel it names makes the marked-up car in the report a
+lie. It picks the panel; the geometry stays ours.
+
+`parseChecks` cuts a question to 200 characters, drops anything that is not text, keeps a
+question whose `step` this page does not have (minus the link — the question may still be
+good), dedupes and caps at five. Both parsers answer `[]` to garbage, like `parseScene`.
+
+**Still deliberately not here:** a chat assistant (generic, and the steps already ask the
+questions), and anything at all about fault, liability, speeds or cost — that is out of scope
+of the contract, not just of the prompts. Dictation into the description box suits the "just
+tell us what happened" idea and is already there: the Web Speech API, no key.
+
+## Offline shell
+
+The outbox already covered a report that cannot be *sent*. It did not cover a report that
+cannot be *started*: the page had to have loaded first. At the roadside — a car park, a
+basement, a motorway with one bar — that is the more likely failure.
+
+`public/sw.js` is hand-written, sixty lines, and every rule in it is a decision:
+
+- **No `skipWaiting`.** An open page may still ask for a lazily-loaded chunk from the build it
+  was served by. A new worker taking over immediately would have deleted that build's cache
+  and the chunk would 404 in the middle of a claim. The new shell takes over when the last old
+  tab closes, which for a form someone is filling in is the right trade.
+- **Precached entries are matched by path, not by request.** A reload marks its subresources
+  `cache: 'reload'`, and `Cache.match` then answers nothing at all for them — a blank page
+  with the network gone. Found by killing the server, not by reading the spec.
+- **Opaque responses are never stored.** A cross-origin response without CORS cannot be read
+  and costs about 7 MB of quota each; the runtime cache keeps only `ok`, non-opaque responses,
+  trimmed to 400 entries.
+- **Navigations go to the network first**, so a deploy is picked up, with the cached
+  `index.html` behind it. `/adjuster*` is left alone: an adjuster with no signal has no claims
+  to work on either.
+- **Everything else is untouched** — `/claims`, `/sessions`, the assist endpoint. Delivery is
+  the outbox's job and always was.
+
+**The precache list cannot be hand-maintained**, because the asset names are content hashes.
+An inline plugin in `vite.config.ts` takes what rollup emitted — minus the claims desk, which
+is the insurer's screen and has no business on a claimant's phone — adds the files Vite copies
+straight from `public/` (the environment map, the textures, the icons, the manifest), and
+patches `dist/sw.js` in place. Vite copies `public/` at `renderStart`, so the file is already
+there to patch. The version is a hash of the finished list, so a build that changed nothing
+keeps its caches. The patch targets the two *declarations* by name rather than the bare
+tokens: those also appear in the file's own doc comment, and replacing the first occurrence
+there ships a worker that does nothing at all — which is exactly what happened first.
+
+`vite-plugin-pwa` would have generated roughly this file, plus a manifest, plus a registration
+helper, plus a configuration surface to learn. The whole of it here is one file of sixty
+lines, one plugin of thirty, and one registration of twenty.
+
+Registration is production-only (`src/app/offline.ts`): in development the worker would serve
+a stale bundle and there is nothing to patch its list with. A failed registration is swallowed
+— Safari refuses service workers in cross-site iframes, so the embedded case degrades to the
+behaviour it had before this existed. On the first install a plain-DOM `role="status"` toast
+says "Works offline now" for five seconds; plain DOM because it runs before React has anything
+on the page.
+
+**The proof is `scripts/offline-smoke.mjs`, and it kills the server.** Emulating offline is not
+enough: a service worker's own `fetch` still reaches localhost, so a page quietly served by a
+dead-but-not-dead server would pass a test that proves nothing. It waits until the whole
+precache list is on the device, kills the `vite preview` *process group* (`npx` is a wrapper;
+killing the wrapper leaves vite serving), goes offline, reloads, and then checks not that the
+HTML came back but that the claim works: the damage step renders and the 3D car is drawn,
+which needs the body, the environment map and the textures. It reads the marker's canvas
+rather than a vehicle card's, because the marker is the one kept with `preserveDrawingBuffer`
+— the card previews render fine and read back blank.
 
 ## Document
 

@@ -1,0 +1,10 @@
+<!-- the page's own mark: the car from src/app/icons.tsx, white on brand blue, with the
+     padding a maskable icon needs so a round mask does not clip the wheels -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <rect width="48" height="48" rx="11" fill="#1f56e6" />
+  <g transform="translate(12 12) scale(1)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 17h14M6 17l1.5-6h9L18 17M4 11l2-5h12l2 5" />
+    <circle cx="7.5" cy="17" r="1.5" />
+    <circle cx="16.5" cy="17" r="1.5" />
+  </g>
+</svg>

@@ -12,6 +12,7 @@ import { bearing, destination, distance, type LngLat } from '../geo'
 import {
   KIND_INFO,
   MAX_PHOTOS,
+  STEPS,
   emptyClaim,
   newPerson,
   newVehicle,
@@ -27,6 +28,7 @@ import {
   type Police,
   type Property,
   type Reporter,
+  type Step,
 } from './schema'
 import { shrink } from './photos'
 import { applyPrefill, vehicleFromPolicy, type Prefill, type PrefillVehicle } from './prefill'
@@ -35,8 +37,9 @@ import type { Scene } from '../assist/schema'
 import { SIZE } from '../vehicles/bodies'
 import { suggestDamage } from './suggest'
 
-export const STEPS = ['kind', 'where', 'vehicles', 'people', 'scene', 'damage', 'review'] as const
-export type Step = (typeof STEPS)[number]
+// the flow's own steps live in the schema, where the assistant can name one without
+// dragging the store in; everything here still imports them from the store as it did
+export { STEPS, type Step }
 
 export const STEP_TITLE: Record<Step, string> = {
   kind: 'What happened',
