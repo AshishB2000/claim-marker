@@ -1,52 +1,112 @@
-<h1 align="center">claim-marker</h1>
+<p align="center">
+  <img src="docs/banner.svg" alt="claim-marker — the accident report a customer can actually do at the roadside" width="100%">
+</p>
 
 <p align="center">
-  The page a customer lands on after tapping <b>“Tell us what happened”</b> on their insurer's site.<br>
-  A real map of where it happened, the cars they choose standing on it in 3D, the damage marked on their own car.
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-20232a?style=for-the-badge&logo=react&logoColor=61dafb">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-6-3178c6?style=for-the-badge&logo=typescript&logoColor=white">
+  <img alt="MapLibre GL" src="https://img.shields.io/badge/MapLibre_GL-396cb2?style=for-the-badge&logo=maplibre&logoColor=white">
+  <img alt="three.js" src="https://img.shields.io/badge/three.js-000000?style=for-the-badge&logo=threedotjs&logoColor=white">
+  <img alt="No API keys" src="https://img.shields.io/badge/API_keys-none-2ea44f?style=for-the-badge">
+  <img alt="MIT" src="https://img.shields.io/badge/licence-MIT-blue?style=for-the-badge">
 </p>
+
+<p align="center">
+  <a href="#-the-flow">The flow</a> ·
+  <a href="#-what-makes-it-different">What makes it different</a> ·
+  <a href="#-quick-start">Quick start</a> ·
+  <a href="#-configuration">Configuration</a> ·
+  <a href="#-what-the-insurer-receives">The document</a> ·
+  <a href="docs/spec-app.md">Design notes</a>
+</p>
+
+<br>
+
+The page a customer lands on after tapping **“Tell us what happened”** on their insurer's site. Instead of two flat icons on a clip-art junction and a grid of damage checkboxes: a real map of where it happened, the cars they choose standing on it in 3D, and the damage marked on their own car. Seven steps, one screen each, built to be finished on a phone at the roadside.
 
 <p align="center">
   <img src="docs/scene.png" alt="Two cars on satellite imagery of the junction, with the route one took and the point where they met" width="100%">
+  <br>
+  <sub><b>Show us</b> — drag each car along the route it took; the point of impact and the panels each car was hit on work themselves out</sub>
 </p>
 
-<p align="center">
-  <img alt="React 19" src="https://img.shields.io/badge/React-19-20232a?logo=react&logoColor=61dafb">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white">
-  <img alt="MapLibre GL" src="https://img.shields.io/badge/MapLibre-GL-396cb2?logo=maplibre&logoColor=white">
-  <img alt="three.js" src="https://img.shields.io/badge/three.js-r185-000000?logo=threedotjs&logoColor=white">
-  <img alt="No API keys" src="https://img.shields.io/badge/API_keys-none-2ea44f">
-  <img alt="MIT" src="https://img.shields.io/badge/licence-MIT-blue">
-</p>
+<br>
 
----
+## 🧭 The flow
 
-## Seven steps, one screen each
+```mermaid
+flowchart LR
+  A(["1 · What happened"]) --> B(["2 · Where and when"]) --> C(["3 · The vehicles"]) --> D(["4 · People and injuries"])
+  D --> E(["5 · Show us"]) --> F(["6 · The damage"]) --> G(["7 · Review and send"])
+  D -. "theft, glass, weather, fire, vandalism: nothing to diagram" .-> F
+  style E fill:#2f6bff,stroke:#1f56e6,color:#fff
+```
 
-| step | what the customer does |
-| --- | --- |
-| **1 · What happened** | picks one of eight kinds of incident; the kind decides which questions follow |
-| **2 · Where and when** | searches, uses their location, or taps the map; the pin drags to the exact spot |
-| **3 · The vehicles** | make, model and year from the vehicle database, a photo of the real car, or just the VIN |
-| **4 · People and injuries** | drivers, passengers, who was hurt, the police, witnesses |
-| **5 · Show us** | drags each car along the route it took on satellite imagery; the impact and the hit panels work themselves out; plays it back |
-| **6 · The damage** | taps the 3D car, says how bad, adds photos, says whether it still drives |
-| **7 · Review and send** | reads the report as the insurer will, fills the gaps it points out, signs |
+<table>
+  <tr>
+    <td width="50%"><img src="docs/kind.png" alt="What happened: eight kinds of incident"></td>
+    <td width="50%"><img src="docs/vehicles.png" alt="The vehicles: a photograph of the real make and model"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>What happened</b> — the kind decides which questions follow</sub></td>
+    <td align="center"><sub><b>The vehicles</b> — make, model and year, a photo of the real car, or just the VIN</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/people.png" alt="People and injuries"></td>
+    <td><img src="docs/damage.png" alt="The damage: a numbered pin on the customer's car"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>People and injuries</b> — who was driving, who was hurt, the police</sub></td>
+    <td align="center"><sub><b>The damage</b> — tap the 3D car, say how bad, add photos</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/where.png" alt="Where and when: address search and a map with a draggable pin"></td>
+    <td><img src="docs/review.png" alt="Review and send: the report as the insurer will read it"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Where and when</b> — search, use your location, or tap the map</sub></td>
+    <td align="center"><sub><b>Review and send</b> — the report as the insurer reads it, gaps pointed out, signed</sub></td>
+  </tr>
+</table>
 
-| | |
-| --- | --- |
-| <img src="docs/kind.png" alt="What happened: eight kinds of incident" width="100%"> | <img src="docs/vehicles.png" alt="The vehicles: a photograph of the real make and model" width="100%"> |
-| <img src="docs/people.png" alt="People and injuries" width="100%"> | <img src="docs/damage.png" alt="The damage: a numbered pin on the customer's car" width="100%"> |
+<br>
 
-## What makes it different
+## ✨ What makes it different
 
-- **The map is the form.** Dragging a car *is* the input: it moves, draws its path behind it and turns to face the way it went. Two cars touch and the point of impact appears; each car's hit panel is marked before the damage step is reached.
-- **Real cars.** Seven body shapes in thirteen paints, stretched to true dimensions, standing on the map as a three.js layer inside MapLibre. Pick a make and model and the card shows a photograph of that car.
-- **Play it back.** The cars drive their routes and arrive together at the moment of impact, on the diagram and again on the review page.
-- **Built for the roadside.** Phone first. Type the VIN from the insurance card and the car fills itself in. Say what happened instead of typing it. Photos straight from the camera. Progress kept on the device until it is sent. No account.
-- **Places a map cannot see.** A garage or a covered car park is drawn on a parking lot or a blank sheet instead of a roof.
-- **AI is optional and never in the page.** With an endpoint set, a sentence in the customer's words draws the diagram, and the diagram can write the statement. The key stays on the insurer's server, the answer is treated as untrusted input, and nothing it writes touches fault.
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      🧭 <b>The map is the form</b><br>
+      <sub>Dragging a car <i>is</i> the input: it moves, draws its path behind it and turns to face the way it went. Two cars touch and the point of impact appears.</sub>
+    </td>
+    <td width="33%" valign="top">
+      🚗 <b>Real cars</b><br>
+      <sub>Seven body shapes in thirteen paints at true dimensions, as a three.js layer inside MapLibre. Pick a make and model and the card shows a photograph of that car.</sub>
+    </td>
+    <td width="33%" valign="top">
+      🎯 <b>Damage that works itself out</b><br>
+      <sub>From the impact and the way each car faced, the hit panel is already marked when the customer reaches the damage step. Their own marks are never touched.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      ▶️ <b>Play it back</b><br>
+      <sub>The cars drive their routes and arrive together at the moment of impact, on the diagram and again on the review page the insurer reads.</sub>
+    </td>
+    <td valign="top">
+      📱 <b>Built for the roadside</b><br>
+      <sub>Type the VIN from the insurance card and the car fills itself in. Say what happened instead of typing it. Photos straight from the camera. Progress kept on the device. No account.</sub>
+    </td>
+    <td valign="top">
+      🤖 <b>AI is optional, never in the page</b><br>
+      <sub>With an endpoint set, a sentence in the customer's words draws the diagram and the diagram writes the statement. The key stays on the insurer's server; nothing it writes touches fault.</sub>
+    </td>
+  </tr>
+</table>
 
-## Quick start
+<br>
+
+## ⚡ Quick start
 
 ```bash
 npm install
@@ -54,11 +114,18 @@ npm run dev      # http://localhost:5173
 npm run build    # static site in dist/
 ```
 
-Works out of the box with **no keys**: Esri for streets and satellite, Photon for addresses, the NHTSA vehicle database for makes, models and VINs, Wikimedia Commons for the photo of the car.
+> [!TIP]
+> It works out of the box with **no keys**: Esri for streets and satellite, Photon for addresses, the NHTSA vehicle database for makes, models and VINs, Wikimedia Commons for the photo of the car. A garage or a covered car park, which no map can see, is drawn on a parking lot or a blank sheet instead.
 
-## Configuration
+<br>
 
-Everything is optional, set as `VITE_*` variables in `.env`:
+## 🔧 Configuration
+
+Everything is optional, set as `VITE_*` variables in `.env`.
+
+<details>
+<summary><b>The variables</b></summary>
+<br>
 
 | variable | what |
 | --- | --- |
@@ -72,9 +139,17 @@ Everything is optional, set as `VITE_*` variables in `.env`:
 
 The page also dispatches `claim:submitted` on `window` with the document as `detail`, for a host page that would rather listen than receive a POST.
 
-## What the insurer receives
+</details>
 
-One JSON document, `claim/1`: the incident, every vehicle with its damage, the people, the police, the attestation, and as attachments the diagram and the marked-up car as PNGs and the customer's photographs as JPEGs.
+<br>
+
+## 📦 What the insurer receives
+
+One JSON document, `claim/1`: the incident, every vehicle with its damage, the people, the police, the attestation, and as attachments the diagram and the marked-up car as PNGs and the customer's photographs as JPEGs. Positions are `[lng, lat]`, headings are compass bearings, and `export → load → export` is byte-identical.
+
+<details>
+<summary><b>An excerpt</b></summary>
+<br>
 
 ```jsonc
 {
@@ -90,9 +165,13 @@ One JSON document, `claim/1`: the incident, every vehicle with its damage, the p
 }
 ```
 
-Positions are `[lng, lat]`, headings compass bearings, and `export → load → export` is byte-identical. The full shape and every design decision behind it are in [docs/spec-app.md](docs/spec-app.md).
+</details>
 
-## Development
+The full shape, and the reasoning behind every design decision, is in [docs/spec-app.md](docs/spec-app.md).
+
+<br>
+
+## 🧪 Development
 
 ```bash
 npm run lint             # oxlint, must be silent
@@ -101,6 +180,10 @@ node scripts/smoke.mjs   # the whole flow in a headless browser, dev server runn
 node scripts/shoot.mjs   # regenerate the screenshots above
 ```
 
-## Credits and licence
+<br>
+
+## 📜 Credits and licence
 
 Source is **MIT** ([LICENSE](LICENSE)). The 3D bodies are Kenney's [Car Kit](https://kenney.nl/assets/car-kit), **CC0**, re-authored at load time so the paint takes the customer's colour ([src/models/LICENSE-ASSETS.md](src/models/LICENSE-ASSETS.md)). Map tiles are Esri's and carry [their terms](https://www.esri.com/en-us/legal/terms/full-master-agreement); addresses are [Photon](https://photon.komoot.io) by komoot; car photographs are Wikimedia Commons, each credited on the card. Nothing here depicts or is endorsed by any real manufacturer or insurer.
+
+<p align="center"><sub>Made for the person standing next to a dented car, wondering what to do next.</sub></p>
