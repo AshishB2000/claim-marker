@@ -453,6 +453,61 @@ questions), and anything at all about fault, liability, speeds or cost — that 
 of the contract, not just of the prompts. Dictation into the description box suits the "just
 tell us what happened" idea and is already there: the Web Speech API, no key.
 
+## Offline shell
+
+The outbox already covered a report that cannot be *sent*. It did not cover a report that
+cannot be *started*: the page had to have loaded first. At the roadside — a car park, a
+basement, a motorway with one bar — that is the more likely failure.
+
+`public/sw.js` is hand-written, sixty lines, and every rule in it is a decision:
+
+- **No `skipWaiting`.** An open page may still ask for a lazily-loaded chunk from the build it
+  was served by. A new worker taking over immediately would have deleted that build's cache
+  and the chunk would 404 in the middle of a claim. The new shell takes over when the last old
+  tab closes, which for a form someone is filling in is the right trade.
+- **Precached entries are matched by path, not by request.** A reload marks its subresources
+  `cache: 'reload'`, and `Cache.match` then answers nothing at all for them — a blank page
+  with the network gone. Found by killing the server, not by reading the spec.
+- **Opaque responses are never stored.** A cross-origin response without CORS cannot be read
+  and costs about 7 MB of quota each; the runtime cache keeps only `ok`, non-opaque responses,
+  trimmed to 400 entries.
+- **Navigations go to the network first**, so a deploy is picked up, with the cached
+  `index.html` behind it. `/adjuster*` is left alone: an adjuster with no signal has no claims
+  to work on either.
+- **Everything else is untouched** — `/claims`, `/sessions`, the assist endpoint. Delivery is
+  the outbox's job and always was.
+
+**The precache list cannot be hand-maintained**, because the asset names are content hashes.
+An inline plugin in `vite.config.ts` takes what rollup emitted — minus the claims desk, which
+is the insurer's screen and has no business on a claimant's phone — adds the files Vite copies
+straight from `public/` (the environment map, the textures, the icons, the manifest), and
+patches `dist/sw.js` in place. Vite copies `public/` at `renderStart`, so the file is already
+there to patch. The version is a hash of the finished list, so a build that changed nothing
+keeps its caches. The patch targets the two *declarations* by name rather than the bare
+tokens: those also appear in the file's own doc comment, and replacing the first occurrence
+there ships a worker that does nothing at all — which is exactly what happened first.
+
+`vite-plugin-pwa` would have generated roughly this file, plus a manifest, plus a registration
+helper, plus a configuration surface to learn. The whole of it here is one file of sixty
+lines, one plugin of thirty, and one registration of twenty.
+
+Registration is production-only (`src/app/offline.ts`): in development the worker would serve
+a stale bundle and there is nothing to patch its list with. A failed registration is swallowed
+— Safari refuses service workers in cross-site iframes, so the embedded case degrades to the
+behaviour it had before this existed. On the first install a plain-DOM `role="status"` toast
+says "Works offline now" for five seconds; plain DOM because it runs before React has anything
+on the page.
+
+**The proof is `scripts/offline-smoke.mjs`, and it kills the server.** Emulating offline is not
+enough: a service worker's own `fetch` still reaches localhost, so a page quietly served by a
+dead-but-not-dead server would pass a test that proves nothing. It waits until the whole
+precache list is on the device, kills the `vite preview` *process group* (`npx` is a wrapper;
+killing the wrapper leaves vite serving), goes offline, reloads, and then checks not that the
+HTML came back but that the claim works: the damage step renders and the 3D car is drawn,
+which needs the body, the environment map and the textures. It reads the marker's canvas
+rather than a vehicle card's, because the marker is the one kept with `preserveDrawingBuffer`
+— the card previews render fine and read back blank.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:
