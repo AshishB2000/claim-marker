@@ -415,10 +415,43 @@ anything not in the diagram, and the written statement is labelled and editable 
 sent. A claimant-facing page that appeared to decide liability would be a different and much
 worse product.
 
-**What is deliberately not here:** a chat assistant (generic, and the five steps already ask
-the questions), damage assessment from photos (worth doing, but needs photo upload first) and
-a pre-submit consistency check (cheap and useful, next). Dictation into the description box
-would suit the "just tell us what happened" idea and is the Web Speech API, no key.
+## Checks and photographs
+
+Two more tasks on the same endpoint, both optional, both off with `VITE_ASSIST_URL` unset.
+
+**A second look, on the review page.** `check` sends the finished report back and gets at most
+five short questions — the kind a claims handler would ring up about: the airbags went off but
+the car is marked drivable, someone is hurt but the police were not called, no photographs at
+all. Each carries the step that answers it, so the question is one click from the field.
+
+Two decisions make it safe to ship. It **never blocks sending**: nothing in that card touches
+`canSend`, because a claim held up by a machine's doubt is worse than a claim with a gap in
+it, and a customer at the roadside with a bad signal cannot argue with it. And what goes over
+the wire is **the shape of the accident, not the people in it** — no reporter, no names,
+phones, licences, plates, VINs or insurers, and no attachments. A consistency check needs to
+know that *someone* is marked hurt and the police were not called; it does not need to know
+who. `brief()` set that precedent for the diagram and `CheckRequest` keeps it; the smoke walks
+every key of the request and fails on any of the forbidden ones, three levels down included.
+
+**Damage from the photographs, on the damage step.** `damage` sends the photographs of one
+vehicle — six at most, the ones tagged to it — along with that body's own panel list, and gets
+back rows with an "Add" button each. Nothing lands on the car until the customer presses Add,
+and pressing it flips `autoDamage` to `user`, which is correct: they confirmed it.
+
+The zone list goes on the wire because zone sets differ per body — a pickup has no rear doors —
+and `parseSuggestions` re-checks it against the body anyway. **The point is always the zone's
+own anchor**, never anything the endpoint sent: a model cannot see where a panel sits in the
+car's frame, and a mark that misses the panel it names makes the marked-up car in the report a
+lie. It picks the panel; the geometry stays ours.
+
+`parseChecks` cuts a question to 200 characters, drops anything that is not text, keeps a
+question whose `step` this page does not have (minus the link — the question may still be
+good), dedupes and caps at five. Both parsers answer `[]` to garbage, like `parseScene`.
+
+**Still deliberately not here:** a chat assistant (generic, and the steps already ask the
+questions), and anything at all about fault, liability, speeds or cost — that is out of scope
+of the contract, not just of the prompts. Dictation into the description box suits the "just
+tell us what happened" idea and is already there: the Web Speech API, no key.
 
 ## Document
 

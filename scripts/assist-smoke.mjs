@@ -5,9 +5,11 @@
  *
  * It starts its own stub of the `claim-assist/1` endpoint and its own dev server pointed at
  * it, so it needs no API key and no network beyond the map. What it proves is this page's
- * half of the contract: the request it sends, the answer it accepts, what lands on the map,
- * and that a malicious or broken answer cannot put anything there. The model's own judgement
- * is not tested here — that needs a key and `scripts/assist-server.mjs`.
+ * half of the contract for all four tasks — the diagram, the statement, the damage read off
+ * the photographs and the second look before sending: the request it sends, the answer it
+ * accepts, what lands on the car and on the map, and that a malicious or broken answer cannot
+ * put anything there. The model's own judgement is not tested here — that needs a key and
+ * `scripts/assist-server.mjs`.
  */
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
@@ -201,6 +203,129 @@ await page.getByRole('button', { name: 'Draw this on the map' }).click()
 await page.waitForFunction(() => /could not answer \(502\)/.test(document.body.innerText), null, { timeout: 15000 })
 if (JSON.stringify((await draft()).claim.vehicles) !== before) fail('a failed call changed the claim')
 ok('assist: a failing endpoint says so and leaves the diagram alone')
+
+// ── 6 · the damage read off a photograph ───────────────────────────────
+
+await page.getByRole('button', { name: /^Continue/ }).click()
+await page.locator('.cm-root canvas').waitFor({ timeout: 30000 })
+
+// a real photograph of vehicle A, through the real input, so it is downscaled and tagged
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+await page.getByLabel('Add photos').setInputFiles({ name: 'damage.png', mimeType: 'image/png', buffer: PNG })
+await page.locator('text=From your photos').waitFor({ timeout: 15000 }).catch(() => fail('a photo of this vehicle did not offer to be read'))
+
+// one panel this body has, and one it does not: a sedan has left/right rear doors, not "rear_door"
+answer = () => [
+  200,
+  {
+    schema: 'claim-assist/1',
+    task: 'damage',
+    damages: [
+      { zone: 'hood', severity: 'dent', note: 'crumpled at the front edge', point: [99, 99, 99] },
+      { zone: 'rear_door', severity: 'crack' },
+    ],
+  },
+]
+await page.getByRole('button', { name: 'Suggest from photos' }).click()
+await page.getByRole('button', { name: /^Add Hood/ }).waitFor({ timeout: 15000 }).catch(() => fail('no suggestion came back from the photos'))
+const looked = seen.at(-1)
+if (looked.task !== 'damage' || looked.vehicle !== 'sedan') fail(`wrong damage request: ${JSON.stringify(looked).slice(0, 200)}`)
+if (!looked.zones?.some((z) => z.id === 'hood') || looked.zones.some((z) => z.id === 'rear_door')) fail("the zone list is not this body's own panels")
+if (looked.photos?.length !== 1 || !/^data:image\/jpeg;base64,/.test(looked.photos[0])) fail(`the photograph was not sent: ${JSON.stringify(looked.photos)?.slice(0, 80)}`)
+if ((await page.getByRole('button', { name: /^Add / }).count()) !== 1) fail('a panel this body does not have was offered')
+ok('assist: the photo went out with this body’s own panels; a suggestion naming a panel it does not have is dropped')
+
+const beforeAdd = (await draft()).claim.vehicles[0].damages.length
+await page.getByRole('button', { name: /^Add Hood/ }).click()
+await page.waitForFunction((n) => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.vehicles[0].damages.length > n, beforeAdd, { timeout: 5000 })
+const marked = (await draft()).claim
+const hood = marked.vehicles[0].damages.find((d) => d.zone === 'hood')
+if (!hood) fail('Add did not put the mark on the car')
+if (JSON.stringify(hood.point) !== JSON.stringify([0, 0.76, 0.78])) fail(`the mark did not land on the hood's own anchor: ${JSON.stringify(hood.point)}`)
+if (hood.severity !== 'dent' || !/crumpled/.test(hood.note)) fail(`the mark lost its severity or note: ${JSON.stringify(hood)}`)
+if ((await draft()).autoDamage.a !== 'user') fail('adding a suggestion did not make this vehicle’s damage the customer’s own')
+ok(`assist: "Add" lands the mark on the hood's measured anchor and the damage becomes the customer's`)
+
+// ── 7 · a second look before sending ───────────────────────────────────
+
+await page.getByRole('button', { name: /^Continue/ }).click()
+await page.locator('text=A second look').waitFor({ timeout: 20000 }).catch(() => fail('the review page does not offer a second look'))
+const send = page.getByRole('button', { name: 'Send my report' })
+if (!(await send.isDisabled())) fail('the review page let the report go unsigned')
+
+// the endpoint failing says so and changes nothing
+answer = () => [502, { error: 'the assistant could not answer' }]
+await page.getByRole('button', { name: 'Check it over for me' }).click()
+await page.waitForFunction(() => /could not answer \(502\)/.test(document.body.innerText), null, { timeout: 15000 })
+if (!(await send.isDisabled())) fail('a failed check changed whether the report could be sent')
+ok('assist: a failing second look says so and changes nothing')
+
+// six come back: one an essay, one naming a step this page does not have, one over the cap
+answer = () => [
+  200,
+  {
+    schema: 'claim-assist/1',
+    task: 'check',
+    checks: [
+      { text: 'x'.repeat(400) },
+      { text: 'Add a photo of the other vehicle', step: 'photos' },
+      { text: 'Were the police called?', step: 'people' },
+      { text: 'Say which way you were going.' },
+      { text: 'Is your car drivable?' },
+      { text: 'This one is over the cap.' },
+    ],
+  },
+]
+// the label only says "again" once something came back; after the 502 it still says "over for me"
+await page.getByRole('button', { name: /^Check it (over for me|again)$/ }).click()
+await page.waitForFunction(() => document.body.innerText.includes('Were the police called?'), null, { timeout: 15000 })
+const asked2 = seen.at(-1)
+if (asked2.task !== 'check') fail(`wrong task: ${asked2.task}`)
+const wire = JSON.stringify(asked2)
+// every key anywhere in the request, so this catches a field added three levels down later
+const keysOf = (v, out = new Set()) => {
+  if (Array.isArray(v)) v.forEach((x) => keysOf(x, out))
+  else if (v && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      out.add(k)
+      keysOf(x, out)
+    }
+  }
+  return out
+}
+const keys = keysOf(asked2)
+const forbidden = ['attachments', 'photos_data', 'reporter', 'attestation', 'name', 'phone', 'email', 'licence', 'plate', 'plateState', 'vin', 'insurer', 'policy', 'owner'].filter((k) => keys.has(k))
+if (forbidden.length) fail(`the check request carries identity or contact fields: ${forbidden.join(', ')}`)
+if (asked2.vehicles?.length !== 2 || asked2.people === undefined || asked2.photos !== 1) fail(`the check request is missing the shape of the accident: ${wire.slice(0, 300)}`)
+if (!asked2.vehicles[0].damage?.some((d) => /hood/i.test(d))) fail('the marked damage was not sent with the check')
+ok('assist: the second look goes out as the shape of the accident — no attachments, no names, no plates, no phone numbers')
+
+const rows = await page.evaluate(() => {
+  const card = [...document.querySelectorAll('h2')].find((h) => h.textContent === 'A second look').closest('.card')
+  const items = [...card.querySelectorAll('li')]
+  return {
+    count: items.length,
+    longest: Math.max(...items.map((li) => li.innerText.replace(/\s*Go to that step\s*$/, '').trim().length)),
+    links: [...card.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Go to that step').length,
+    text: items.map((li) => li.innerText),
+  }
+})
+if (rows.count !== 5) fail(`six answers, one over the cap, rendered ${rows.count}`)
+if (rows.longest !== 200) fail(`the over-long question was not cut to 200 characters (longest ${rows.longest})`)
+// the only "Go to that step" belongs to the one naming a step this page has
+if (rows.links !== 1) fail(`expected one step link, got ${rows.links}`)
+if (!rows.text.some((t) => /Add a photo of the other vehicle/.test(t) && !/Go to that step/.test(t))) fail('a question naming an unknown step kept its link')
+if (!(await send.isDisabled())) fail('the questions changed whether the report could be sent')
+ok('assist: five of six rendered, the essay cut to 200, no link on the unknown step, and sending is untouched')
+
+await page.getByRole('checkbox', { name: 'I confirm this report is true' }).check()
+await page.getByRole('textbox', { name: 'Signature' }).fill('Sam Lee')
+if (await send.isDisabled()) fail('signing did not enable sending')
+ok('assist: only the signature decides whether the report can go')
+
+await page.getByRole('button', { name: 'Go to that step' }).click()
+await page.waitForFunction(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.step === 'people', null, { timeout: 5000 }).catch(() => fail('"Go to that step" did not navigate'))
+ok('assist: "Go to that step" opens the step that answers the question')
 
 if (errors.length) fail(`console errors:\n${errors.join('\n')}`)
 console.log('\nall assist checks passed')

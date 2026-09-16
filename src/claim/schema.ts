@@ -20,6 +20,15 @@ import { normalizeBearing, roundLngLat, type LngLat } from '../geo'
 
 export const CLAIM_SCHEMA = 'claim/1'
 
+/**
+ * The steps the customer walks through, in order. Here rather than in the store because the
+ * assistant names one when it raises a question, and its wire contract must stay free of
+ * anything that pulls in zustand and the browser.
+ */
+export const STEPS = ['kind', 'where', 'vehicles', 'people', 'scene', 'damage', 'review'] as const
+export type Step = (typeof STEPS)[number]
+export const isStep = (v: unknown): v is Step => (STEPS as readonly string[]).includes(v as string)
+
 export const ROLES = ['insured', 'other'] as const
 export type Role = (typeof ROLES)[number]
 

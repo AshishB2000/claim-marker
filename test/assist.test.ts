@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { fromFrame, toFrame } from '../src/assist/frame'
-import { MAX_PATH, RANGE, parseScene } from '../src/assist/schema'
+import { MAX_CHECKS, MAX_PATH, MAX_SUGGESTIONS, RANGE, parseChecks, parseScene, parseSuggestions } from '../src/assist/schema'
+import { zoneById, zonesOf } from '../src/zones'
 import { bearing, destination, distance, type LngLat } from '../src/geo'
 
 const here: LngLat = [-73.9859, 40.7573]
@@ -78,5 +79,59 @@ describe('a scene coming back over the wire', () => {
     expect(parseScene({}, ids)).toEqual({ vehicles: [], impact: null, note: '' })
     expect(() => parseScene(null, ids)).toThrow(TypeError)
     expect(() => parseScene('a scene', ids)).toThrow(TypeError)
+  })
+})
+
+describe('the questions a second look comes back with', () => {
+  it('keeps short text, drops anything that is not text, and caps at five', () => {
+    expect(parseChecks([{ text: 'Were the police called?', step: 'people' }])).toEqual([{ text: 'Were the police called?', step: 'people' }])
+    expect(parseChecks([{ text: '  spaces  ' }])).toEqual([{ text: 'spaces' }])
+    expect(parseChecks([{ text: '' }, { text: '   ' }, { text: 42 }, { step: 'people' }, null, 'a string'])).toEqual([])
+    expect(parseChecks(Array.from({ length: 9 }, (_, i) => ({ text: `question ${i}` })))).toHaveLength(MAX_CHECKS)
+  })
+
+  it('keeps a question whose step this page does not have, without the link', () => {
+    expect(parseChecks([{ text: 'Add a photo', step: 'photos' }])).toEqual([{ text: 'Add a photo' }])
+    expect(parseChecks([{ text: 'Add a photo', step: 7 }])).toEqual([{ text: 'Add a photo' }])
+  })
+
+  it('cuts an essay down and drops the same question asked twice', () => {
+    const long = parseChecks([{ text: 'x'.repeat(400) }])
+    expect(long[0].text).toHaveLength(200)
+    expect(parseChecks([{ text: 'Were the police called?' }, { text: 'were the POLICE called?', step: 'people' }])).toHaveLength(1)
+  })
+
+  it('is empty for anything that is not a list of questions', () => {
+    for (const bad of [null, undefined, 42, 'checks', {}, { checks: [] }]) expect(parseChecks(bad)).toEqual([])
+  })
+})
+
+describe('damage read off the photographs', () => {
+  it('lands each mark on that zone’s own anchor, not on anything the answer sent', () => {
+    const marks = parseSuggestions([{ zone: 'front_bumper', severity: 'dent', note: 'crumpled', point: [99, 99, 99] }], 'sedan')
+    expect(marks).toHaveLength(1)
+    expect(marks[0].zone).toBe('front_bumper')
+    expect(marks[0].severity).toBe('dent')
+    expect(marks[0].note).toBe('crumpled')
+    expect(marks[0].point).toEqual(zoneById('sedan', 'front_bumper')!.anchor)
+  })
+
+  it('drops a panel this body does not have, and a severity that is not one of the four', () => {
+    // a pickup has no rear doors, and "totalled" is not a severity
+    expect(parseSuggestions([{ zone: 'rear_door', severity: 'dent' }], 'truck')).toEqual([])
+    expect(parseSuggestions([{ zone: 'left_rear_door', severity: 'dent' }], 'sedan')).toHaveLength(1)
+    expect(parseSuggestions([{ zone: 'hood', severity: 'totalled' }], 'sedan')).toEqual([])
+    expect(parseSuggestions([{ zone: 'nonsense', severity: 'dent' }], 'sedan')).toEqual([])
+  })
+
+  it('marks each panel once, caps the run, and cuts a long note', () => {
+    expect(parseSuggestions([{ zone: 'hood', severity: 'dent' }, { zone: 'hood', severity: 'crack' }], 'sedan')).toHaveLength(1)
+    const every = zonesOf('sedan').map((z) => ({ zone: z.id, severity: 'scratch' }))
+    expect(parseSuggestions(every, 'sedan')).toHaveLength(MAX_SUGGESTIONS)
+    expect(parseSuggestions([{ zone: 'hood', severity: 'dent', note: 'y'.repeat(300) }], 'sedan')[0].note).toHaveLength(120)
+  })
+
+  it('is empty for anything that is not a list of marks', () => {
+    for (const bad of [null, undefined, 42, 'damages', {}]) expect(parseSuggestions(bad, 'sedan')).toEqual([])
   })
 })

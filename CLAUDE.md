@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, ~242 tests across 17 files
+npm test               # vitest, ~250 tests across 17 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -43,7 +43,7 @@ node scripts/shoot.mjs     # regenerates docs/*.png and asserts the attachments 
 ```
 
 `node scripts/assist-smoke.mjs` starts its own stub endpoint and its own dev server on 5174,
-so it needs no API key: it covers this page's half of the assistant contract. The model's own
+so it needs no API key: it covers this page's half of the assistant contract, all four tasks. The model's own
 judgement is not covered by anything — that needs a key and `scripts/assist-server.mjs`.
 
 Helpers: `scripts/probe-zones.ts <body>` proves every zone claims bodywork; `scripts/profile-body.mjs <glb>`
@@ -180,10 +180,20 @@ the page uses, via `dist/lib/claim.js`; do not hand-write validation in `server/
 
 **The AI never runs in the page.** `VITE_ASSIST_URL` points at an endpoint the insurer runs and
 that holds the key (`scripts/assist-server.mjs` is a reference one); unset, no AI exists in the
-page. Positions on that wire are metres east/north of the incident, not `[lng, lat]`, because a
-model cannot do spherical arithmetic. Treat every answer as untrusted input: `parseScene` drops
-anything malformed or naming a vehicle the customer did not enter, and `applyScene` is a no-op
-when nothing usable comes back — an earlier version re-ran the impact anyway and moved the cars.
+page. Four tasks: `diagram`, `describe`, `check` (the report back as questions, on the review
+step) and `damage` (photographs back as marked panels, on the damage step). Positions on that
+wire are metres east/north of the incident, not `[lng, lat]`, because a model cannot do
+spherical arithmetic. Treat every answer as untrusted input: `parseScene` drops anything
+malformed or naming a vehicle the customer did not enter, and `applyScene` is a no-op when
+nothing usable comes back — an earlier version re-ran the impact anyway and moved the cars.
+
+**Three rules the assistant may not break.** The second look never blocks sending — nothing in
+that card touches `canSend`. `CheckRequest` carries the shape of the accident and nothing that
+names anyone: no reporter, names, phones, licences, plates, VINs, insurers or attachments (the
+assist smoke walks every key of the request and fails on any of them). And `parseSuggestions`
+always uses the **zone's own anchor** as the point, never anything the endpoint sent, because a
+mark that misses the panel it names makes the marked-up car a lie. Nothing anywhere mentions
+fault, liability, speed or cost.
 
 **The kind of incident drives the flow** (`KIND_INFO` in `src/claim/schema.ts`, `stepsFor` in the
 store): `others` says whether other vehicles are expected, `diagram` whether the map step is shown.
@@ -232,7 +242,7 @@ src/config.ts     runtime configuration and the host-page channel
 src/map/          MapLibre scene, the three.js car layer, the transform maths, styles
 src/vehicles/     model loading + paint re-authoring, body previews, the paint palette
 src/marker/       the 3D damage marker
-src/assist/       the optional assistant: the wire contract, the metric frame, the client
+src/assist/       the optional assistant: the wire contract and its parsers, the metric frame, the client
 src/zones.ts models.ts schema.ts geo.ts geocode.ts   shared
 server/           the reference claim server and its session tokens (no dependencies)
 Dockerfile docker-compose.yml   the same thing as one image, page included
