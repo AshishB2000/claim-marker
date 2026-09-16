@@ -205,6 +205,38 @@ report, but each gap is a call saved.
 conversation, not the report), a separate medical section (injury text on the person covers
 it), and anything about fault.
 
+## Roadside polish (v6)
+
+Passes over the page as a customer on a phone would meet it, each a small change:
+
+- **The VIN fills the card.** A full 17-character VIN in the box is decoded by the same NHTSA
+  database the model list comes from (`decodeVin`, `parseVin` in `src/vehicles/catalog.ts`)
+  and fills make, model, year and the closest shape — the VIN is on the insurance card, and
+  typing it is quicker than three dropdowns. What the customer already picked is never
+  overwritten: a VIN that says otherwise ("This VIN is a 2003 Honda Accord, not a 2021 Honda
+  CR-V") is pointed out with one tap to take its word, because a mistyped VIN and a wrongly
+  picked model look the same from here and only the customer knows which. The make is matched
+  to the picker's list case-insensitively; a make the list does not carry is kept as typed.
+  The shape is only changed when no damage has been marked on the current one, the rule
+  `guessBody` already follows.
+- **The description can be spoken.** `src/app/Describe.tsx` is the one "in your own words"
+  box, with a dictation button where the browser has speech recognition (Chrome, Safari,
+  Edge — the Web Speech API, no key, nothing sent from the page but the browser's own audio
+  handling). Dictation appends to what is typed. The box also now appears on the damage step
+  for the kinds with nothing to diagram — theft, glass, weather, fire, vandalism — which the
+  review page had been linking to for a description that was not there.
+- **A tap places the pin.** With no address to search for — a track, a field, the middle of a
+  car park — tapping the location map drops the pin; with no address to reverse-geocode, the
+  coordinates stand in. On a phone the map sits directly under the address box so the jump
+  is visible, and while it is empty it says what to do.
+- **Yes / no are buttons a thumb can hit** (`.seg`), not chips; "not sure" is stored as no
+  answer, so it clears the choice rather than lighting up as one.
+- **Photos have a zone**: take one with the camera, choose from the gallery, or drop them on
+  desktop. Two file inputs, because `capture` on one input hides the gallery on a phone.
+- **The shell says where you are** — "Step 3 of 7 · The vehicles" under the dots on a
+  phone, where the step names do not fit; the reason Continue is disabled shows there too;
+  each step eases in, unless the customer asked for reduced motion.
+
 ## The assistant
 
 Two directions across one endpoint, both optional and both off unless `VITE_ASSIST_URL` is

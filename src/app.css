@@ -28,7 +28,7 @@
     @apply rounded-2xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06),0_8px_24px_-12px_rgba(15,23,42,0.18)] ring-1 ring-slate-900/[0.06];
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition select-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition select-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40;
   }
   .btn-primary {
     @apply bg-brand-600 text-white shadow-[0_1px_2px_rgba(31,86,230,0.3),0_8px_20px_-8px_rgba(31,86,230,0.6)] hover:bg-brand-500;
@@ -57,11 +57,38 @@
   .chip[aria-pressed="true"] {
     @apply bg-ink text-white ring-ink;
   }
+  /* a yes / no / not sure answer: big enough for a thumb, obvious which one is chosen */
+  .seg {
+    @apply inline-flex min-w-20 items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 transition select-none hover:bg-slate-50 active:scale-[0.98];
+  }
+  .seg[aria-pressed="true"] {
+    @apply bg-brand-600 text-white ring-brand-600 shadow-[0_4px_12px_-4px_rgba(31,86,230,0.6)];
+  }
   .swatch {
     @apply relative size-8 rounded-full ring-2 ring-white shadow-[0_0_0_1px_rgba(15,23,42,0.15)] transition hover:scale-110;
   }
   .swatch[aria-pressed="true"] {
     @apply scale-110 shadow-[0_0_0_2px_var(--color-brand-600)];
+  }
+}
+
+/* each step eases in as it arrives, and stays put for anyone who asked for less motion */
+@keyframes step-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.step-enter {
+  animation: step-rise 0.3s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .step-enter {
+    animation: none;
   }
 }
 

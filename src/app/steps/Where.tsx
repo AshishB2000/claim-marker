@@ -84,10 +84,11 @@ export function Where() {
     )
   }
 
-  // the pin was dragged: keep the coordinates exactly, refresh the address if we can
+  // the pin was dragged, or the map tapped: keep the coordinates exactly, find the address if we can
   const dragged = async (at: LngLat) => {
     const place = await reversePlace(at).catch(() => null)
-    setLocation({ lng: at[0], lat: at[1], address: place?.address ?? incident.location?.address ?? '' })
+    // a spot with no address — a track, a field, the middle of a car park — is still a spot
+    setLocation({ lng: at[0], lat: at[1], address: place?.address ?? incident.location?.address ?? `${at[1].toFixed(5)}, ${at[0].toFixed(5)}` })
     if (place) {
       picked.current = place.address
       setQuery(place.address)
@@ -111,8 +112,8 @@ export function Where() {
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-      <div className="space-y-5">
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:grid-rows-[auto_1fr]">
+      <div className="space-y-5 lg:col-start-1">
         <div className="relative">
           <span className="label">Where did it happen?</span>
           <div className="relative">
@@ -184,7 +185,20 @@ export function Where() {
             </div>
           </div>
         )}
+      </div>
 
+      <div className="relative lg:col-start-2 lg:row-span-2 lg:row-start-1">
+        <LocationMap center={center} onDrag={dragged} className="card h-[320px] overflow-hidden sm:h-[420px] lg:h-full lg:min-h-[520px]" />
+        {!center && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-9 flex justify-center px-4">
+            <div className="rounded-full bg-ink/90 px-4 py-2 text-center text-xs font-medium text-white shadow-lg backdrop-blur">
+              Search for the address, use your location, or tap the map where it happened
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-5 lg:col-start-1">
         <Field label="When did it happen?">
           <input
             type="datetime-local"
@@ -240,8 +254,6 @@ export function Where() {
           </div>
         </div>
       </div>
-
-      <LocationMap center={center} onDrag={dragged} className="card h-[420px] overflow-hidden lg:h-[520px]" />
     </div>
   )
 }

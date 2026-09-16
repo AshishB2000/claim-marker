@@ -119,6 +119,13 @@ export function App() {
                 )
               })}
             </ol>
+            <p className="mt-2 text-xs text-slate-500 sm:hidden">
+              <span className="font-semibold text-ink">
+                Step {index + 1} of {steps.length}
+              </span>
+              {' · '}
+              {STEP_TITLE[step]}
+            </p>
           </div>
         )}
       </header>
@@ -128,23 +135,26 @@ export function App() {
           <Done />
         ) : (
           <>
-            <div className="mb-6">
-              <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
-              <p className="mt-1 text-slate-500">{lead}</p>
+            <div key={step} className="step-enter">
+              <div className="mb-6">
+                <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
+                <p className="mt-1 text-slate-500">{lead}</p>
+              </div>
+              {step === 'kind' && <WhatHappened />}
+              {step === 'where' && <Where />}
+              {step === 'vehicles' && <Vehicles />}
+              {step === 'people' && <People />}
+              {step === 'scene' && <Diagram />}
+              {step === 'damage' && <Damage />}
+              {step === 'review' && <Review onSubmitted={() => setDone(true)} />}
             </div>
-            {step === 'kind' && <WhatHappened />}
-            {step === 'where' && <Where />}
-            {step === 'vehicles' && <Vehicles />}
-            {step === 'people' && <People />}
-            {step === 'scene' && <Diagram />}
-            {step === 'damage' && <Damage />}
-            {step === 'review' && <Review onSubmitted={() => setDone(true)} />}
           </>
         )}
       </main>
 
       {!done && step !== 'review' && (
         <footer className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200/70 bg-white/90 backdrop-blur">
+          {blocker && <p className="pt-2 text-center text-xs text-slate-500 sm:hidden">{blocker}</p>}
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-5 py-3">
             <button className="btn btn-ghost" onClick={back} disabled={index === 0}>
               <Icon.back /> Back
@@ -158,9 +168,11 @@ export function App() {
           </div>
         </footer>
       )}
-      <p className="mx-auto mt-10 max-w-6xl px-5 text-center text-xs text-slate-400">
-        Your progress is saved on this device until you send the report.
-      </p>
+      {!done && (
+        <p className="mx-auto mt-10 max-w-6xl px-5 text-center text-xs text-slate-400">
+          Your progress is saved on this device until you send the report.
+        </p>
+      )}
     </div>
   )
 }

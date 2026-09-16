@@ -32,7 +32,7 @@ export function BodyPreview({ body, paint, className }: { body: Vehicle; paint: 
   return (
     <Canvas
       dpr={[1, 2]}
-      camera={{ position: [3.4, 1.55, 3.7], fov: 32, near: 0.1, far: 50 }}
+      camera={{ position: [3.6, 1.7, 3.9], fov: 34, near: 0.1, far: 50 }}
       gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, outputColorSpace: THREE.SRGBColorSpace }}
       className={className}
     >

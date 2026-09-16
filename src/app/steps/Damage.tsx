@@ -6,6 +6,7 @@ import { DamageMarker } from '../../marker/DamageMarker'
 import { KIND_INFO, MAX_PHOTOS, ROLE_COLOR } from '../../claim/schema'
 import { VehiclePhoto } from '../VehiclePhoto'
 import { Field, YesNo } from '../ui'
+import { Describe } from '../Describe'
 import { Icon } from '../icons'
 
 export function Damage() {
@@ -21,7 +22,9 @@ export function Damage() {
   const v = claim.vehicles.find((x) => x.id === id) ?? insuredOf(claim)
   const photos = claim.attachments.photos
   const files = useRef<HTMLInputElement>(null)
+  const camera = useRef<HTMLInputElement>(null)
   const [adding, setAdding] = useState(false)
+  const [over, setOver] = useState(false)
   const onFiles = async (list: FileList | null) => {
     if (!list?.length) return
     setAdding(true)
@@ -30,8 +33,11 @@ export function Damage() {
     } finally {
       setAdding(false)
       if (files.current) files.current.value = ''
+      if (camera.current) camera.current.value = ''
     }
   }
+  const full = photos.length >= MAX_PHOTOS
+  const diagram = KIND_INFO[claim.incident.kind].diagram
 
   return (
     <div>
@@ -107,23 +113,46 @@ export function Damage() {
         </aside>
       </div>
 
+      {!diagram && (
+        <div className="card mt-5 p-5">
+          <Describe placeholder="For example: I came out in the morning and the driver's window was smashed and the glovebox emptied." />
+        </div>
+      )}
+
       <div className="card mt-5 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="font-semibold">Photos</h3>
-            <p className="mt-0.5 text-sm text-slate-500">
-              The damage up close and from a step back, the other vehicle, its plate, their insurance card, the scene. Photos are the first thing a claims handler looks at.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">
-              {photos.length} of {MAX_PHOTOS}
-            </span>
-            <input ref={files} type="file" accept="image/*" multiple capture="environment" className="hidden" aria-label="Add photos" onChange={(e) => onFiles(e.target.files)} />
-            <button className="btn btn-secondary btn-sm" onClick={() => files.current?.click()} disabled={adding || photos.length >= MAX_PHOTOS}>
-              {adding ? <Icon.spinner /> : <Icon.camera />} {adding ? 'Adding…' : `Add photos of ${v.id.toUpperCase()}`}
+        <h3 className="font-semibold">Photos</h3>
+        <p className="mt-0.5 text-sm text-slate-500">
+          The damage up close and from a step back, the other vehicle, its plate, their insurance card, the scene. Photos are the first thing a claims handler looks at.
+        </p>
+        <input ref={camera} type="file" accept="image/*" capture="environment" className="hidden" aria-label="Take a photo" onChange={(e) => onFiles(e.target.files)} />
+        <input ref={files} type="file" accept="image/*" multiple className="hidden" aria-label="Add photos" onChange={(e) => onFiles(e.target.files)} />
+        <div
+          className={`mt-4 flex flex-col items-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 text-center transition ${over ? 'border-brand-500 bg-brand-50' : 'border-slate-300 bg-slate-50/60'}`}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setOver(true)
+          }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setOver(false)
+            if (!full) onFiles(e.dataTransfer.files)
+          }}
+        >
+          <span className="grid size-12 place-items-center rounded-full bg-white text-brand-600 shadow-sm ring-1 ring-slate-900/10 [&_svg]:size-6">
+            {adding ? <Icon.spinner /> : <Icon.camera />}
+          </span>
+          <div className="flex flex-wrap justify-center gap-2">
+            <button className="btn btn-primary" onClick={() => camera.current?.click()} disabled={adding || full}>
+              <Icon.camera /> Take a photo
+            </button>
+            <button className="btn btn-secondary" onClick={() => files.current?.click()} disabled={adding || full}>
+              <Icon.plus /> Choose photos
             </button>
           </div>
+          <p className="text-xs text-slate-500">
+            {adding ? 'Adding…' : full ? `That is the most we can take — ${MAX_PHOTOS} photos.` : `Photos of ${v.id.toUpperCase()} · ${photos.length} of ${MAX_PHOTOS} · or drop them here`}
+          </p>
         </div>
         {photos.length > 0 && (
           <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">

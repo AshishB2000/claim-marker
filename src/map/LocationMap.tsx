@@ -15,6 +15,7 @@ export function LocationMap({
 }: {
   /** null before a place is chosen: a world view, no pin */
   center: LngLat | null
+  /** the pin was dragged, or the map tapped while there was no pin yet */
   onDrag: (at: LngLat) => void
   className?: string
 }) {
@@ -42,6 +43,10 @@ export function LocationMap({
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
     const state = { map, pin: null as Marker | null }
     live.current = state
+    // no address to search for — a car park, a track, a spot on a road — a tap on the map is the answer
+    map.on('click', (e) => {
+      if (!state.pin) onDragRef.current([e.lngLat.lng, e.lngLat.lat])
+    })
     return () => {
       state.pin?.remove()
       map.remove()

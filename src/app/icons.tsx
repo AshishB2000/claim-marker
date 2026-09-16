@@ -98,6 +98,12 @@ export const Icon = {
       <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
     </svg>
   ),
+  mic: () => (
+    <svg {...icon}>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" />
+    </svg>
+  ),
   camera: () => (
     <svg {...icon}>
       <path d="M4 8h3l2-3h6l2 3h3v11H4z" />

@@ -8,7 +8,7 @@ import { SURFACE_LABEL } from '../../map/styles'
 import { usePlayback } from '../../map/usePlayback'
 import { VEHICLES, zoneById } from '../../zones'
 import { paintLabel } from '../../vehicles/paint'
-import { Field } from '../ui'
+import { Describe } from '../Describe'
 import { Icon } from '../icons'
 
 const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west']
@@ -298,24 +298,15 @@ export function Diagram() {
         </div>
 
         <div className="card px-4 py-3">
-          <Field label="In your own words, what happened?">
-            <textarea
-              className="input min-h-28"
-              placeholder={
-                assistOn
-                  ? 'For example: I was going straight through the junction on a green light and the other car turned left across me — then let us draw it.'
-                  : 'For example: I was going straight through the junction on a green light and the other car turned left across me.'
-              }
-              value={claim.incident.description}
-              onChange={(e) => {
-                setIncident({ description: e.target.value })
-                setSaid(null)
-              }}
-            />
-          </Field>
-          {assistOn && (
-            <>
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <Describe
+            placeholder={
+              assistOn
+                ? 'For example: I was going straight through the junction on a green light and the other car turned left across me — then let us draw it.'
+                : 'For example: I was going straight through the junction on a green light and the other car turned left across me.'
+            }
+          >
+            {assistOn && (
+              <>
                 <button className="btn btn-secondary btn-sm" onClick={draw} disabled={!!busy || claim.incident.description.trim().length < 15}>
                   {busy === 'diagram' ? <Icon.spinner /> : <Icon.wand />}
                   {busy === 'diagram' ? 'Drawing…' : 'Draw this on the map'}
@@ -324,7 +315,11 @@ export function Diagram() {
                   {busy === 'describe' ? <Icon.spinner /> : <Icon.pen />}
                   {busy === 'describe' ? 'Writing…' : 'Write it from the diagram'}
                 </button>
-              </div>
+              </>
+            )}
+          </Describe>
+          {assistOn && (
+            <>
               {busy && <p className="mt-2 text-xs text-slate-500">This takes a few seconds.</p>}
               {said && !busy && (
                 <p className="mt-2 rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-900 ring-1 ring-brand-100">

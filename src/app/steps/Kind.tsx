@@ -20,7 +20,7 @@ export function WhatHappened() {
   const setKind = useClaim((s) => s.setKind)
   return (
     <div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" role="radiogroup" aria-label="What happened">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" role="radiogroup" aria-label="What happened">
         {KINDS.map((k) => {
           const on = k === kind
           const I = ICON[k]
@@ -29,15 +29,15 @@ export function WhatHappened() {
               key={k}
               role="radio"
               aria-checked={on}
-              className={`card flex flex-col items-start gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ${on ? 'ring-2 ring-brand-600' : ''}`}
+              className={`card group flex flex-col items-start gap-3 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md sm:p-5 ${on ? 'ring-2 ring-brand-600' : ''}`}
               onClick={() => setKind(k)}
             >
-              <span className={`grid size-10 place-items-center rounded-xl ${on ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-700'}`}>
+              <span className={`grid size-11 place-items-center rounded-xl transition [&_svg]:size-6 ${on ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-700 group-hover:bg-brand-50 group-hover:text-brand-700'}`}>
                 <I />
               </span>
               <span>
-                <span className="block font-semibold">{KIND_INFO[k].label}</span>
-                <span className="mt-0.5 block text-sm text-slate-500">{KIND_INFO[k].hint}</span>
+                <span className="block text-[15px] leading-snug font-semibold sm:text-base">{KIND_INFO[k].label}</span>
+                <span className="mt-1 block text-xs text-slate-500 sm:text-sm">{KIND_INFO[k].hint}</span>
               </span>
             </button>
           )
