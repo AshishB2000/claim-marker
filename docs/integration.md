@@ -16,6 +16,51 @@ arrive at runtime.
                                                                                  the claims desk
 ```
 
+## 0. Deploy it
+
+The quickest whole product is the reference server with the built page beside it: one port,
+one origin, no CORS, and the settings read at startup, so the same image serves any insurer.
+
+```bash
+docker compose up --build            # http://localhost:8788
+```
+
+or without Docker:
+
+```bash
+npm run build
+DESK_TOKEN=desk-token SESSION_SECRET=$(openssl rand -hex 32) API_KEY=$(openssl rand -hex 32) \
+ALLOWED_HOSTS=https://portal.example.com BRAND='Acme Mutual' \
+node server/claim-server.mjs         # http://localhost:8788
+```
+
+It serves the customer's page at `/`, the claims desk at `/adjuster.html` and the API at
+`/claims`, and injects `window.CLAIM_MARKER` into both HTML pages before `</head>` so the
+page posts to its own origin and shows your brand without a rebuild. The
+Content-Security-Policy is built to match — including the SHA-256 of that one inline script —
+with `frame-ancestors` set from `ALLOWED_HOSTS`, hashed assets cached for a year and the HTML
+never cached. `dist/lib/` is not served: it is the parser this server validates with.
+
+| variable | what |
+| --- | --- |
+| `PORT` · `CLAIM_DIR` · `STATIC_DIR` | the port, where reports are filed, where the built page is |
+| `CLAIM_TOKEN` | a shared bearer token the page sends. Unset with `SESSION_SECRET` unset too, anything may post. |
+| `SESSION_SECRET` · `API_KEY` | per-customer sessions: the HMAC key, and the key your backend calls `/sessions` with |
+| `DESK_TOKEN` | what the claims desk sends to read and re-file reports |
+| `ALLOWED_HOSTS` | origins allowed to embed the page; sets `frame-ancestors` and the page's own trust list |
+| `BRAND` · `ASSIST_URL` | injected into the page |
+| `CONNECT_SRC` | extra origins the page may reach — your own tiles or geocoder — added to the CSP |
+| `RATE_LIMIT` · `TRUST_PROXY` | POSTs per minute per IP (default 30), and whether to believe `X-Forwarded-For` |
+| `WEBHOOK_URL` · `WEBHOOK_SECRET` | where new reports are announced, and the key for the signature |
+| `CLAIM_ORIGIN` | an extra origin for CORS. Leave it unset in production: a page served from here needs none. |
+
+With `NODE_ENV=production` the server refuses to start unless `CLAIM_TOKEN` or
+`SESSION_SECRET` is set, `DESK_TOKEN` is set, and `CLAIM_ORIGIN` is not `*`. Better a failed
+deploy than an open claims inbox.
+
+Hosting the static build behind your own CDN still works — `dist/` is a plain static site —
+but then the API, the CSP and the runtime config are yours to arrange.
+
 ## 1. Embed it
 
 Host the built page (`npm run build`, then serve `dist/`) at a URL of your own, say
@@ -112,6 +157,42 @@ and answer the second exactly as the first.
 (JPEG, the customer's photographs, already downscaled to 1280 px). Decode them to files on
 receipt; the reference server shows how.
 
+## 2b. Sessions: a token that names the customer
+
+A shared `CLAIM_TOKEN` is the same for everyone, so a report arrives with no idea whose it is.
+A session token is minted per customer by your backend, at the moment they are already logged
+in, and carries their id and policy number:
+
+```bash
+curl -X POST https://claims.example.com/sessions \
+  -H "x-api-key: $API_KEY" -H 'content-type: application/json' \
+  -d '{ "customer": { "id": "cust-1", "policy": "POL-9", "name": "Sam Lee",
+                      "phone": "555 0100", "email": "sam@example.com" },
+        "vehicles": [ { "make": "Toyota", "model": "Camry", "year": 2021, "plate": "ABC 123" } ],
+        "ttlSeconds": 3600 }'
+
+{ "token": "eyJzdWIiOi…", "expiresAt": "2026-09-16T04:02:47.000Z",
+  "prefill": { "reporter": { … }, "vehicles": [ … ] } }
+```
+
+Hand both straight to the embed: `ClaimMarker.mount('#report', { token, prefill, … })`. The
+report is then filed with `customer: { id, policy }` on its receipt and in the webhook.
+
+The token is `base64url(payload).base64url(hmac-sha256)` where the payload is
+`{ sub, policy, exp }` and `exp` is an epoch second, so your own backend can verify or mint
+one with six lines and no library — `server/session.mjs` is those six lines. It is
+deliberately not a JWT: a JWT carries its algorithm in the token, and an algorithm in the
+token is how `alg: none` happens. The lifetime is clamped to between a minute and a day.
+
+An expired or tampered token is `401`, which the page treats as "wait and retry" rather than
+a refusal, so the host can renew it with `widget.update({ token })` and the queued report
+leaves on the next attempt. `/sessions` is server-to-server: it wants `x-api-key`, and a
+request that carries an `Origin` header — which a browser always does — is refused with `403`.
+
+**Rate limiting.** `POST /claims` and `POST /sessions` are limited to `RATE_LIMIT` a minute
+per IP (default 30) and answer `429` with `Retry-After: 60` above that. The page already
+treats `429` as an outage, so a limited report waits in the outbox rather than being lost.
+
 ## 3. The reference server
 
 `server/claim-server.mjs` is a complete receiving end in one file with no dependencies, to
@@ -176,4 +257,8 @@ A claims system with its own inbox does not need it: `ReportDocument` in
 done) runs the whole thing: a host page embedding the report with a token and prefill, the
 customer picking a policy vehicle, sending with no signal and the report leaving by itself
 when the signal returns, the server filing it with the files unpacked, a resend filed once,
-the webhook's signature verifying, and the desk opening it and changing its status.
+the webhook's signature verifying, and the desk opening it and changing its status. It also
+mints a session and hands its token and prefill to the embed, proves an expired or forged one
+is refused, floods the server until it answers `429`, and checks the built page is served
+with its CSP, its injected config and immutable assets — with `dist/lib` and anything outside
+`dist/` unreachable.

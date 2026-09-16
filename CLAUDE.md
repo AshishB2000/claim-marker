@@ -18,16 +18,21 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, ~240 tests across 16 files
+npm test               # vitest, ~241 tests across 17 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
-npm run server         # the reference claim server on 8788; needs the build's dist/lib/claim.js
+npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
 
+`npm run server` serves `dist/` as well as the API, so http://localhost:8788 is the customer's
+page, `/adjuster.html` the desk and `/claims` the API, on one origin with no CORS. `docker
+compose up --build` is the same thing in a container. Docker is **not installed on this
+machine**: the image cannot be built or verified here, only the server itself.
+
 `node scripts/integration-smoke.mjs` needs `npm run dev` running and one build done: it
-starts its own claim server, webhook receiver and host page and proves the embed, prefill,
-the offline outbox, the server, the webhook signature and the desk. Run it for anything
-touching `src/config.ts`, `src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`,
-`server/` or `src/adjuster/`.
+starts its own claim server, webhook receiver and host page and proves sessions, the embed,
+prefill, the offline outbox, the server, the rate limit, the served page's CSP, the webhook
+signature and the desk. Run it for anything touching `src/config.ts`, `src/app/submit.ts`,
+`src/claim/prefill.ts`, `public/embed.js`, `server/` or `src/adjuster/`.
 
 Two end-to-end scripts need `npm run dev` running in another shell and reach the internet
 (map tiles, the geocoder):
@@ -147,6 +152,24 @@ env) is stale by definition: `assistOn` is a function for that reason. Config fr
 is a trust boundary — `applyConfig` and `parsePrefill` drop what they do not understand, and
 `VITE_ALLOWED_HOSTS` limits who may send it. Events to the host go through `tell()`.
 
+**The server serves the page, and injects its settings into it.** `server/claim-server.mjs`
+reads both built HTML files once at startup and inserts `window.CLAIM_MARKER` before
+`</head>`, so `VITE_*` are build-time defaults and one image serves any insurer. Two things
+in the CSP look removable and are not: `worker-src 'self' blob:` (MapLibre's worker is a
+file, three's are blobs) and **`data:` in connect-src** — the Kenney bodies carry their
+texture as a data URI and three fetches it, so without it every car loads untextured with a
+console full of CSP violations. Serving refuses anything resolving outside `dist/`, any
+directory, and `/lib/` (that is the parser the server itself imports). With
+`NODE_ENV=production` it exits unless a claim token or session secret, `DESK_TOKEN`, and a
+`CLAIM_ORIGIN` that is not `*` are all set.
+
+**Session tokens are `server/session.mjs`, not a JWT.**
+`base64url({sub,policy,exp}).base64url(hmac-sha256)`, minted by `POST /sessions` for the
+insurer's backend and carried by the page, so a report is filed against a customer rather
+than arriving anonymous. Deliberately not a JWT: an algorithm named inside the token is how
+`alg: none` happens. `tsconfig.app.json` has `allowJs` so `test/session.test.ts` can import
+the `.mjs`.
+
 **Submit never loses a report.** `submitClaim` retries, then queues into IndexedDB
 (`src/claim/outbox.ts`) and resolves `queued`; the done page says so; `flushOutbox` drains on
 load and `online`. A refusal is `Rejected` and is the only error the customer sees.
@@ -205,7 +228,8 @@ src/vehicles/     model loading + paint re-authoring, body previews, the paint p
 src/marker/       the 3D damage marker
 src/assist/       the optional assistant: the wire contract, the metric frame, the client
 src/zones.ts models.ts schema.ts geo.ts geocode.ts   shared
-server/           the reference claim server (one file, no dependencies)
+server/           the reference claim server and its session tokens (no dependencies)
+Dockerfile docker-compose.yml   the same thing as one image, page included
 public/embed.js   the host-side script that mounts the page in an iframe
 docs/claim-1.schema.json   the published JSON Schema, tested against the parser
 ```

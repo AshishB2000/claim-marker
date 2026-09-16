@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-demo
+data
+.git
+.github
+.claude
+docs
+test
+scripts
+*.tsbuildinfo
+.DS_Store
+Dockerfile
+.dockerignore
+docker-compose.yml

@@ -6,6 +6,8 @@
     "module": "esnext",
     "types": ["vite/client"],
     "skipLibCheck": true,
+    /* the server is plain .mjs and a test imports it */
+    "allowJs": true,
 
     /* Bundler mode */
     "moduleResolution": "bundler",

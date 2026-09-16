@@ -304,6 +304,58 @@ a translation layer (the copy is English throughout and would need a proper pass
 JSON file), and server-side PDF rendering (the desk prints; a system that needs PDFs
 generated has a renderer already).
 
+## Production (v8)
+
+The integration was the contract; this is the deployment. `node server/claim-server.mjs` is
+now the whole product on one port — the customer's page, the claims desk and the API — and
+what it refuses to do matters as much as what it does.
+
+**The settings are injected into the HTML, not fetched.** At startup the server reads both
+built pages once and inserts `<script>window.CLAIM_MARKER={…}</script>` before `</head>`:
+`submitUrl: '/claims'`, `claimsApi: ''` (the same origin), the brand, the assist URL, the
+allowed hosts. A `/config.js` request would have been the other option and was not taken: it
+is a second round trip before the page can render, and it cannot be covered by a script hash
+in the CSP. Because the config is injected, `src/config.ts` resolves a relative `submitUrl`
+against `location.href`, and the desk's API falls back to the injected `claimsApi` — where an
+empty string means "the same origin", which is why that chain is not a plain `||`.
+
+**One built image serves any insurer.** That is the whole point of the injection: `VITE_*`
+variables become build-time *defaults* rather than the deployment, so `docker compose up` with
+a different `BRAND` is a different insurer's page. `vite.lib.config.ts` gained
+`publicDir: false`, which had been quietly copying `public/` into `dist/lib/` as well.
+
+**The CSP is built once, with the hash of that script.** `frame-ancestors` comes from
+`ALLOWED_HOSTS` (unset: `*`, and a warning at startup); `connect-src` lists the providers the
+page ships with plus `CONNECT_SRC` extras. Two entries look like padding and are not:
+`worker-src 'self' blob:`, because MapLibre's worker is a file and three's are blobs, and
+`data:` in **connect-src**, because the Kenney bodies carry their texture as a data URI and
+three fetches it — a browser treats that as a connection, not an image, so without it every
+car loads untextured. That one was found by loading the served page, not by reading the spec.
+
+**Sessions replace the shared token** (`server/session.mjs`, `test/session.test.ts`). A
+`CLAIM_TOKEN` is the same for every customer, so a report arrives anonymous. `POST /sessions`
+— server to server, `x-api-key`, and a `403` for anything carrying an `Origin` header — mints
+`base64url({sub,policy,exp}).base64url(hmac-sha256)` and returns it with the prefill ready for
+`ClaimMarker.mount`. The receipt and the webhook then carry `customer: { id, policy }`.
+Not a JWT on purpose: a JWT names its algorithm in the token, and an algorithm in the token is
+how `alg: none` happens. An expired token is a `401`, which the page already treats as "wait",
+so the host renews it with `update({ token })` and the outbox drains.
+
+**Safe by default, or it does not start.** With `NODE_ENV=production` the server exits unless
+a token or a session secret is set, `DESK_TOKEN` is set, and `CLAIM_ORIGIN` is not `*`; an
+unset `CLAIM_ORIGIN` in production means no CORS header at all, which is right for a page it
+serves itself. `POST /claims` and `POST /sessions` are rate limited per IP before the auth
+check, because a flood of bad tokens is still a flood, and answer `429` with `Retry-After`,
+which the page treats as an outage and queues. Static serving refuses anything resolving
+outside `dist/`, any directory, and `/lib/` — that last one is the parser this server itself
+imports.
+
+**Docker is a convenience, not the product.** A multi-stage build on `node:24-alpine` copies
+`dist/` and `server/` only, runs as `node`, and keeps reports on a volume at `/data`. It was
+not built or run here: Docker is not installed on the machine this was written on, so the
+image is unverified and the server changes are proven by `scripts/integration-smoke.mjs`
+instead.
+
 ## The assistant
 
 Two directions across one endpoint, both optional and both off unless `VITE_ASSIST_URL` is
