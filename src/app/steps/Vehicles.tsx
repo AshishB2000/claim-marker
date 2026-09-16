@@ -5,6 +5,7 @@ import { VEHICLES, isVehicle, type Vehicle } from '../../zones'
 import { BODY_ORDER } from '../../vehicles/bodies'
 import { FALLBACK, MAKES, OTHER, YEARS, decodeVin, guessBody, isVin, modelsFor, type Decoded } from '../../vehicles/catalog'
 import { vehicleName } from '../../claim/describe'
+import { policyVehicleLabel, type PrefillVehicle } from '../../claim/prefill'
 import { PAINTS, paintLabel } from '../../vehicles/paint'
 import { BodyPreview } from '../../vehicles/BodyPreview'
 import { VehiclePhoto } from '../VehiclePhoto'
@@ -246,17 +247,40 @@ function VehicleCard({ vehicle: v }: { vehicle: ClaimVehicle }) {
   )
 }
 
+/** is this card already the policy vehicle: by VIN, else plate, else make and model */
+const isPolicyVehicle = (v: ClaimVehicle, p: PrefillVehicle) =>
+  p.vin ? v.vin.toUpperCase() === p.vin : p.plate ? v.plate.toUpperCase() === p.plate : !!p.make && v.make === p.make && v.model === (p.model ?? '')
+
 export function Vehicles() {
   const claim = useClaim((s) => s.claim)
+  const policy = useClaim((s) => s.policy)
+  const pickPolicyVehicle = useClaim((s) => s.pickPolicyVehicle)
   const addVehicle = useClaim((s) => s.addVehicle)
   const removeVehicle = useClaim((s) => s.removeVehicle)
+  const mine = insuredOf(claim)
   const others = othersOf(claim)
   const info = KIND_INFO[claim.incident.kind]
 
   return (
     <div>
-      <Section title="Your vehicle" hint="Pick it from the lists. The shape and colour are what you will place on the map and mark the damage on.">
-        <VehicleCard vehicle={insuredOf(claim)} />
+      <Section
+        title="Your vehicle"
+        hint={policy.length > 1 ? 'Which of the vehicles on your policy was it? Tap it and the card fills itself in.' : 'Pick it from the lists. The shape and colour are what you will place on the map and mark the damage on.'}
+      >
+        {policy.length > 1 && (
+          <div className="mb-3 flex flex-wrap gap-2" role="radiogroup" aria-label="Which of your vehicles">
+            {policy.map((p, i) => {
+              const on = isPolicyVehicle(mine, p)
+              return (
+                <button key={i} className="seg" role="radio" aria-checked={on} aria-pressed={on} onClick={() => pickPolicyVehicle(i)}>
+                  {p.color && <span className="mr-2 inline-block size-3 rounded-full ring-1 ring-black/10" style={{ background: p.color }} />}
+                  {policyVehicleLabel(p)}
+                </button>
+              )
+            })}
+          </div>
+        )}
+        <VehicleCard vehicle={mine} />
       </Section>
 
       {info.others && (

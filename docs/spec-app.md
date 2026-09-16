@@ -237,6 +237,73 @@ Passes over the page as a customer on a phone would meet it, each a small change
   phone, where the step names do not fit; the reason Continue is disabled shows there too;
   each step eases in, unless the customer asked for reduced motion.
 
+## Integration (v7)
+
+Everything before this was the customer's page. This is how an insurer puts it on their
+site and receives what it sends, in five parts, each proven by `scripts/integration-smoke.mjs`.
+
+**Settings arrive at runtime** (`src/config.ts`). An insurer does not rebuild a Vite app to
+change a URL, so the settings that differ per deployment — where to POST, the token, the
+brand, the fraud notice, the assist endpoint, prefill — come from the host page's `config`
+message when embedded, else from `window.CLAIM_MARKER`, else `?token=`, else the `VITE_*`
+defaults. Provider settings (tiles, geocoder, vehicle database) stay build-time: chosen once
+per deployment, not per customer. `main.tsx` settles the config before the first render,
+because prefill has to be in the store before the vehicles step shows and the brand before
+the header does. The assist client reads its URL at call time for the same reason.
+
+**The host page is a trust boundary.** Config is accepted only from origins listed in
+`VITE_ALLOWED_HOSTS`; unset, any origin is accepted and the console says so. Everything that
+arrives is parsed: URLs must be http(s), strings are capped, prefill goes through
+`parsePrefill`. Events go back only to the origin the config came from, and `embed.js`
+checks the iframe's own window and origin on every message.
+
+**An iframe, not a script SDK.** A script that mounts React into the insurer's page would
+share its CSS, its globals and its CSP, and would put the customer's photographs in the
+host's DOM. An iframe shares nothing, works on any stack, and costs one `postMessage`
+channel: `ready` → `config`, then `step`, `height` (so the host sizes it and there is no inner
+scrollbar), `submitted` and `queued`. `embed.js` is plain script with no build step, and sets
+`allow="geolocation; camera; microphone"` on the iframe, without which none of "use my
+location", the camera or dictation work inside it.
+
+**Prefill fills what is empty, never what was typed** (`src/claim/prefill.ts`). The portal
+knows the customer's name, contact, policy and the cars on the policy. One vehicle fills the
+insured card; several become a "which of your vehicles?" pick on the vehicles step, and only
+that explicit pick overwrites. The reporter's details land on the review page.
+
+**Delivery is one POST that cannot lose the report** (`src/app/submit.ts`). The token as a
+bearer, the document's reference as `Idempotency-Key`, three retries with backoff, and then
+the outbox: IndexedDB, because a document with photographs is megabytes and localStorage
+has five. It drains on `online` and on the next page load, with the token stored beside each
+document because the host that minted it may be gone by then. A `4xx` other than 408, 429,
+401 and 403 is a refusal shown to the customer; everything else is an outage and waits. The
+server's own reference, if it returns one, replaces the page's on the done page; a queued
+report shows the page's reference and says plainly that it is waiting for a signal.
+
+**The reference server is one dependency-free file** (`server/claim-server.mjs`), like the
+assist server, so it can be read in one sitting and copied into anything. It validates with
+the page's own parser, built to `dist/lib/claim.js` by `vite.lib.config.ts` so the two can
+never disagree. Each report is a folder: `claim.json` as received, plus every attachment
+decoded to a real file, because that is what a document store and an adjuster's screen want.
+The webhook carries the document without its attachments, links to the files, and an
+HMAC-SHA256 signature of the raw body, and is retried three times; the receiver is told to
+be idempotent on the reference. Two tokens, one for the page and one for the desk, so a leak
+of the customer-facing one exposes nothing.
+
+**The claims desk reuses the document** (`src/adjuster/`, `adjuster.html`, a second Vite
+entry). `ReportDocument` was extracted from the review step so the insurer reads exactly what
+the customer reviewed, minus the edit links: the map with playback, the 3D marks, the
+photographs, then a "reported by" block the customer never needed. Status is three values
+and a PATCH; printing is `window.print()` and a print stylesheet, which is the whole PDF story.
+
+**The schema is published and tested** (`docs/claim-1.schema.json`, `test/jsonschema.test.ts`).
+Draft 2020-12; the enums are asserted equal to the code's lists, and what `toDocument`
+produces must validate, so the schema cannot drift from the page.
+
+**Left out on purpose:** anything beyond a bearer token (the host mints it; how is theirs),
+a translation layer (the copy is English throughout and would need a proper pass, not a
+JSON file), and server-side PDF rendering (the desk prints; a system that needs PDFs
+generated has a renderer already).
+
 ## The assistant
 
 Two directions across one endpoint, both optional and both off unless `VITE_ASSIST_URL` is

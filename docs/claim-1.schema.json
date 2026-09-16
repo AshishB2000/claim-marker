@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AshishB2000/claim-marker/docs/claim-1.schema.json",
+  "title": "claim/1",
+  "description": "An accident report as the page sends it: the incident, every vehicle with its damage, the people, the police, the attestation, and the diagram, the marked-up cars and the customer's photographs as attachments. Positions are [longitude, latitude]; headings are compass bearings in degrees clockwise from north. Fields may be added in later revisions; none are removed or change meaning without a new schema name.",
+  "type": "object",
+  "required": ["schema", "reference", "submittedAt", "reporter", "incident", "vehicles", "people", "impact", "police", "property", "attestation", "attachments"],
+  "properties": {
+    "schema": { "const": "claim/1" },
+    "reference": { "type": ["string", "null"], "description": "the page's own reference, CM- and six characters; the idempotency key" },
+    "submittedAt": { "type": ["string", "null"], "format": "date-time" },
+    "reporter": {
+      "type": "object",
+      "required": ["name", "phone", "email", "policy", "policyholder"],
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "policy": { "type": "string" },
+        "policyholder": { "type": ["boolean", "null"] }
+      }
+    },
+    "incident": {
+      "type": "object",
+      "required": ["kind", "at", "location", "surface", "conditions", "description"],
+      "properties": {
+        "kind": { "enum": ["collision", "single", "parked", "theft", "vandalism", "weather", "glass", "fire"] },
+        "at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$", "description": "local date and time, no zone" },
+        "location": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["lng", "lat", "address"],
+              "properties": {
+                "lng": { "type": "number", "minimum": -180, "maximum": 180 },
+                "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+                "address": { "type": "string" }
+              }
+            }
+          ]
+        },
+        "surface": { "enum": ["satellite", "streets", "lot", "paper"], "description": "what the diagram was drawn on" },
+        "conditions": {
+          "type": "object",
+          "required": ["weather", "road", "light"],
+          "properties": {
+            "weather": { "enum": ["", "clear", "cloudy", "rain", "snow", "fog", "wind"] },
+            "road": { "enum": ["", "dry", "wet", "icy", "snow", "gravel"] },
+            "light": { "enum": ["", "daylight", "dusk", "dark_lit", "dark_unlit"] }
+          }
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "vehicles": { "type": "array", "items": { "$ref": "#/$defs/vehicle" } },
+    "people": { "type": "array", "items": { "$ref": "#/$defs/person" } },
+    "impact": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/lngLat" }] },
+    "police": {
+      "type": "object",
+      "required": ["called", "department", "report", "citations"],
+      "properties": {
+        "called": { "type": ["boolean", "null"] },
+        "department": { "type": "string" },
+        "report": { "type": "string" },
+        "citations": { "type": "string" }
+      }
+    },
+    "property": {
+      "type": "object",
+      "required": ["description", "owner"],
+      "properties": { "description": { "type": "string" }, "owner": { "type": "string" } }
+    },
+    "attestation": {
+      "type": "object",
+      "required": ["agreed", "name", "at"],
+      "properties": {
+        "agreed": { "type": "boolean" },
+        "name": { "type": "string" },
+        "at": { "type": ["string", "null"], "format": "date-time", "description": "stamped by the page at the moment of sending" }
+      }
+    },
+    "attachments": {
+      "type": "object",
+      "required": ["scene", "damage", "photos"],
+      "properties": {
+        "scene": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/png" }], "description": "the diagram: the map with the vehicles on it" },
+        "damage": { "type": "object", "additionalProperties": { "$ref": "#/$defs/png" }, "description": "the marked-up car, keyed by vehicle id" },
+        "photos": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/photo" } }
+      }
+    }
+  },
+  "$defs": {
+    "lngLat": {
+      "type": "array",
+      "prefixItems": [{ "type": "number", "minimum": -180, "maximum": 180 }, { "type": "number", "minimum": -90, "maximum": 90 }],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "png": { "type": "string", "pattern": "^data:image/png;base64," },
+    "photo": {
+      "type": "object",
+      "required": ["data", "of", "caption"],
+      "properties": {
+        "data": { "type": "string", "pattern": "^data:image/(jpeg|png|webp);base64," },
+        "of": { "type": ["string", "null"], "description": "the vehicle it shows, or null for the scene" },
+        "caption": { "type": "string" }
+      }
+    },
+    "damage": {
+      "type": "object",
+      "required": ["zone", "point", "severity", "note"],
+      "properties": {
+        "zone": { "type": "string", "description": "a zone id of the vehicle's body, e.g. front_bumper, left_front_door; the set differs per body" },
+        "point": {
+          "type": "array",
+          "prefixItems": [{ "type": "number" }, { "type": "number" }, { "type": "number" }],
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "where the tap landed in the vehicle's own frame: nose +Z, up +Y, the car's left +X, in model units"
+        },
+        "severity": { "enum": ["scratch", "dent", "crack", "missing"] },
+        "note": { "type": "string" }
+      }
+    },
+    "vehicle": {
+      "type": "object",
+      "required": ["id", "role", "body", "color", "make", "model", "year", "plate", "plateState", "vin", "owner", "insurer", "policy", "condition", "position", "heading", "path", "damages"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "role": { "enum": ["insured", "other"] },
+        "body": { "enum": ["sedan", "hatchback", "coupe", "suv", "truck", "van", "box_truck"] },
+        "color": { "type": "string", "pattern": "^#[0-9a-f]{6}$" },
+        "make": { "type": "string" },
+        "model": { "type": "string" },
+        "year": { "type": ["integer", "null"], "minimum": 1900, "maximum": 2100 },
+        "plate": { "type": "string" },
+        "plateState": { "type": "string" },
+        "vin": { "type": "string" },
+        "owner": { "type": "string" },
+        "insurer": { "type": "string" },
+        "policy": { "type": "string" },
+        "condition": {
+          "type": "object",
+          "required": ["drivable", "airbags", "towed", "location"],
+          "properties": {
+            "drivable": { "type": ["boolean", "null"] },
+            "airbags": { "type": ["boolean", "null"] },
+            "towed": { "type": ["boolean", "null"] },
+            "location": { "type": "string" }
+          }
+        },
+        "position": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/lngLat" }], "description": "where it came to rest" },
+        "heading": { "type": "integer", "minimum": 0, "maximum": 359, "description": "compass bearing of the nose" },
+        "path": { "type": "array", "items": { "$ref": "#/$defs/lngLat" }, "description": "the route it took, in travel order, ending before position" },
+        "damages": { "type": "array", "items": { "$ref": "#/$defs/damage" } }
+      }
+    },
+    "person": {
+      "type": "object",
+      "required": ["role", "vehicle", "self", "name", "phone", "licence", "injured", "injury"],
+      "properties": {
+        "role": { "enum": ["driver", "passenger", "pedestrian", "witness"] },
+        "vehicle": { "type": ["string", "null"], "description": "the vehicle they were in; null for a pedestrian, cyclist or witness" },
+        "self": { "type": "boolean", "description": "true when this is the person reporting" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "licence": { "type": "string" },
+        "injured": { "type": "boolean" },
+        "injury": { "type": "string" }
+      }
+    }
+  }
+}

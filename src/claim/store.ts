@@ -29,6 +29,7 @@ import {
   type Reporter,
 } from './schema'
 import { shrink } from './photos'
+import { applyPrefill, vehicleFromPolicy, type Prefill, type PrefillVehicle } from './prefill'
 import { fromFrame } from '../assist/frame'
 import type { Scene } from '../assist/schema'
 import { SIZE } from '../vehicles/bodies'
@@ -85,6 +86,15 @@ const nextId = (vehicles: ClaimVehicle[]) => {
 export type ClaimState = {
   claim: Claim
   step: Step
+  /** the vehicles on the policy, from the host page; more than one is a pick on the vehicles step */
+  policy: PrefillVehicle[]
+  /** how the report left: sent, or waiting in the outbox for a signal; null until it has */
+  delivery: 'sent' | 'queued' | null
+
+  /** what the host page knows already: fills what is empty, never what the customer typed */
+  prefill: (p: Prefill) => void
+  /** the customer chose which of the policy's vehicles it was */
+  pickPolicyVehicle: (index: number) => void
 
   goto: (step: Step) => void
   next: () => void
@@ -149,7 +159,9 @@ export type ClaimState = {
    */
   autoDamage: Record<string, 'auto' | 'user'>
 
-  submitted: (reference: string, submittedAt: string) => void
+  submitted: (reference: string, submittedAt: string, delivery: 'sent' | 'queued') => void
+  /** a queued report left the outbox and the server named it */
+  delivered: (local: string, reference: string) => void
   reset: () => void
 }
 
@@ -212,6 +224,14 @@ export const useClaim = create<ClaimState>()(
         step: 'kind',
         impactManual: false,
         autoDamage: {},
+        policy: [],
+        delivery: null,
+
+        prefill: (p) => set((s) => ({ policy: p.vehicles ?? [], claim: s.claim.reference ? s.claim : applyPrefill(s.claim, p) })),
+        pickPolicyVehicle: (index) => {
+          const p = get().policy[index]
+          if (p) mapVehicle(insuredOf(get().claim).id, (v) => vehicleFromPolicy(v, p, true))
+        },
 
         goto: (step) => set({ step }),
         next: () =>
@@ -391,15 +411,18 @@ export const useClaim = create<ClaimState>()(
           mapVehicle(id, (x) => ({ ...x, damages }))
         },
 
-        submitted: (reference, submittedAt) => patchClaim(() => ({ reference, submittedAt })),
-        reset: () => set({ claim: emptyClaim(), step: 'kind', impactManual: false, autoDamage: {} }),
+        submitted: (reference, submittedAt, delivery) => set((s) => ({ delivery, claim: { ...s.claim, reference, submittedAt } })),
+        delivered: (local, reference) =>
+          set((s) => (s.claim.reference === local ? { delivery: 'sent', claim: { ...s.claim, reference } } : {})),
+        reset: () => set({ claim: emptyClaim(), step: 'kind', impactManual: false, autoDamage: {}, delivery: null }),
       }
     },
     {
       name: 'claim-marker/draft',
-      version: 4,
+      version: 5,
       // every section added since a draft was saved takes its default: v3 added the ground,
-      // v4 the kind, the people, the police, the photos and the rest of the report
+      // v4 the kind, the people, the police, the photos and the rest of the report, v5 the
+      // policy's vehicles and how the report left
       migrate: (persisted) => {
         const s = persisted as { claim?: Partial<Claim> & { incident?: Partial<Incident>; vehicles?: Partial<ClaimVehicle>[] } }
         if (!s.claim) return persisted
@@ -419,6 +442,8 @@ export const useClaim = create<ClaimState>()(
         step: s.step,
         impactManual: s.impactManual,
         autoDamage: s.autoDamage,
+        policy: s.policy,
+        delivery: s.delivery,
       }),
     },
   ),
