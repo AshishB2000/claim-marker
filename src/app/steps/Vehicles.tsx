@@ -117,7 +117,7 @@ function VehicleCard({ vehicle: v }: { vehicle: ClaimVehicle }) {
       <div className="grid gap-5 p-5 sm:grid-cols-[280px_minmax(0,1fr)]">
         <div className="relative h-56 overflow-hidden rounded-xl bg-gradient-to-b from-slate-100 to-slate-200/80 ring-1 ring-slate-900/[0.06] sm:h-full sm:min-h-56">
           {/* the real car in a photograph once make and model are known; the 3D shape until then */}
-          <VehiclePhoto vehicle={v} credit className="absolute inset-0" fallback={<BodyPreview body={v.body} paint={v.color} className="!absolute inset-0" />} />
+          <VehiclePhoto vehicle={v} credit contain className="absolute inset-0" fallback={<BodyPreview body={v.body} paint={v.color} className="!absolute inset-0" />} />
           <span className="absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-white/90 px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-slate-600 backdrop-blur">
             <span className="size-2.5 rounded-full ring-1 ring-black/10" style={{ background: v.color }} />
             {[v.year, v.make, v.model].filter(Boolean).join(' ') || VEHICLES[v.body].label} · {paintLabel(v.color)}
