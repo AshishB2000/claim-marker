@@ -129,6 +129,8 @@ if (d2a.vehicles[0].body !== 'suv') fail(`a CR-V should pick the SUV shape, got 
 ok(`vehicles: ${d2a.vehicles[0].year} ${d2a.vehicles[0].make} ${d2a.vehicles[0].model} from the database, shape ${d2a.vehicles[0].body}`)
 
 await page.getByRole('textbox', { name: 'VIN' }).first().fill('1hgcm82633a004352')
+// that VIN is a real 2003 Accord: the page must say so rather than overwrite the CR-V the customer picked
+await page.waitForSelector('text=This VIN is a 2003 Honda Accord, not a 2021 Honda CR-V', { timeout: 20000 }).catch(() => fail('a VIN that disagrees with the chosen model was not pointed out'))
 await page.getByRole('textbox', { name: 'Plate state' }).first().fill('ny')
 await cards.nth(1).getByRole('radio', { name: 'Van' }).click()
 await cards.nth(0).locator('..').locator('..').getByRole('radio', { name: 'Red' }).click()

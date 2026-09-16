@@ -138,3 +138,50 @@ export function guessBody(model: string): Vehicle | null {
     return 'suv'
   return null
 }
+
+// ── the VIN ──────────────────────────────────────────────────────────
+
+/** 17 characters, no I, O or Q — the only shape a VIN has had since 1981 */
+export const isVin = (s: string) => /^[A-HJ-NPR-Z0-9]{17}$/i.test(s.trim())
+
+export type Decoded = { make: string; model: string; year: number | null; body: Vehicle | null }
+
+/** vPIC's body classes, mapped to the seven shapes; null leaves the customer's own choice standing */
+function bodyFrom(cls: string): Vehicle | null {
+  const c = cls.toLowerCase()
+  if (/cutaway|chassis|incomplete/.test(c)) return 'box_truck'
+  if (/pickup/.test(c)) return 'truck'
+  if (/van/.test(c)) return 'van'
+  if (/suv|multi-purpose|crossover/.test(c)) return 'suv'
+  if (/coupe|convertible|roadster/.test(c)) return 'coupe'
+  if (/hatchback|liftback|wagon/.test(c)) return 'hatchback'
+  if (/sedan|saloon/.test(c)) return 'sedan'
+  return null
+}
+
+/**
+ * One row of `DecodeVinValues`, as the fields a vehicle card can fill in. The make comes back
+ * shouting ("TOYOTA"); it is matched to the list the customer picks from so the dropdown
+ * shows it, and left as typed when it is a make the list does not know. Null when the
+ * database could not read the VIN at all.
+ */
+export function parseVin(row: Record<string, string | null | undefined> | undefined): Decoded | null {
+  const make = row?.Make?.trim()
+  if (!row || !make) return null
+  const known = MAKES.find((m) => m.toLowerCase() === make.toLowerCase())
+  const year = Number(row.ModelYear)
+  return {
+    make: known ?? make[0] + make.slice(1).toLowerCase(),
+    model: row.Model?.trim() ?? '',
+    year: Number.isInteger(year) && year >= 1981 ? year : null,
+    body: bodyFrom(row.BodyClass ?? '') ?? guessBody(row.Model ?? ''),
+  }
+}
+
+/** what the vehicle database knows about a VIN — the same keyless source the model list comes from */
+export async function decodeVin(vin: string, signal?: AbortSignal): Promise<Decoded | null> {
+  const res = await fetch(`${BASE}/DecodeVinValues/${encodeURIComponent(vin.trim().toUpperCase())}?format=json`, { signal })
+  if (!res.ok) throw new Error(`vehicle database: ${res.status}`)
+  const json = (await res.json()) as { Results?: Record<string, string | null>[] }
+  return parseVin(json.Results?.[0])
+}

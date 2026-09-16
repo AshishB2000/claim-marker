@@ -3,7 +3,8 @@ import { useClaim, insuredOf, othersOf } from '../../claim/store'
 import { KIND_INFO, ROLE_COLOR, type ClaimVehicle } from '../../claim/schema'
 import { VEHICLES, isVehicle, type Vehicle } from '../../zones'
 import { BODY_ORDER } from '../../vehicles/bodies'
-import { FALLBACK, MAKES, OTHER, YEARS, guessBody, modelsFor } from '../../vehicles/catalog'
+import { FALLBACK, MAKES, OTHER, YEARS, decodeVin, guessBody, isVin, modelsFor, type Decoded } from '../../vehicles/catalog'
+import { vehicleName } from '../../claim/describe'
 import { PAINTS, paintLabel } from '../../vehicles/paint'
 import { BodyPreview } from '../../vehicles/BodyPreview'
 import { VehiclePhoto } from '../VehiclePhoto'
@@ -34,6 +35,20 @@ function useModels(make: string, year: number | null) {
   return { models: state.key === key ? state.models : [], loading: !!key && state.key !== key, offline: state.key === key && state.offline }
 }
 
+/** the VIN says a different make, model or year from the one the customer picked; a blank answers to anything */
+const disagrees = (v: ClaimVehicle, d: Decoded) =>
+  (!!v.make && v.make.toLowerCase() !== d.make.toLowerCase()) ||
+  (!!v.model && !!d.model && v.model.toLowerCase() !== d.model.toLowerCase()) ||
+  (!!v.year && !!d.year && v.year !== d.year)
+
+/** take the VIN's word: make, model, year, and the shape unless damage is already marked on the current one */
+function takeVin(id: string, d: Decoded) {
+  const { claim, updateVehicle, setBody } = useClaim.getState()
+  const cur = claim.vehicles.find((x) => x.id === id)
+  updateVehicle(id, { make: d.make, model: d.model || cur?.model || '', year: d.year ?? cur?.year ?? null })
+  if (d.body && cur && cur.damages.length === 0) setBody(id, d.body)
+}
+
 function VehicleCard({ vehicle: v }: { vehicle: ClaimVehicle }) {
   const updateVehicle = useClaim((s) => s.updateVehicle)
   const setBody = useClaim((s) => s.setBody)
@@ -43,6 +58,29 @@ function VehicleCard({ vehicle: v }: { vehicle: ClaimVehicle }) {
   // "Other" turns the model dropdown into a box to type in
   const [typing, setTyping] = useState(false)
   const listed = models.includes(v.model)
+
+  // A full VIN is looked up in the vehicle database and fills in the make, model, year and
+  // shape. What the customer already chose is never overwritten: a VIN that says otherwise
+  // is pointed out instead, with one tap to take its word. `of` lags behind the key while
+  // the lookup runs; a database that cannot be reached says nothing.
+  const [vin, setVin] = useState<{ of: string; found: Decoded | null; failed?: boolean }>({ of: '', found: null })
+  const vinKey = isVin(v.vin) ? v.vin.trim().toUpperCase() : ''
+  useEffect(() => {
+    if (!vinKey) return
+    const ac = new AbortController()
+    decodeVin(vinKey, ac.signal)
+      .then((d) => {
+        if (ac.signal.aborted) return
+        setVin({ of: vinKey, found: d })
+        const cur = useClaim.getState().claim.vehicles.find((x) => x.id === v.id)
+        if (d && cur && !disagrees(cur, d)) takeVin(v.id, d)
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) setVin({ of: vinKey, found: null, failed: true })
+      })
+    return () => ac.abort()
+  }, [vinKey, v.id])
+  const vinNote = !vinKey ? null : vin.of !== vinKey ? 'busy' : vin.failed ? null : !vin.found ? 'unknown' : disagrees(v, vin.found) ? 'differs' : 'done'
 
   const chooseModel = (model: string) => {
     if (model === OTHER) {
@@ -79,7 +117,7 @@ function VehicleCard({ vehicle: v }: { vehicle: ClaimVehicle }) {
       <div className="grid gap-5 p-5 sm:grid-cols-[280px_minmax(0,1fr)]">
         <div className="relative h-56 overflow-hidden rounded-xl bg-gradient-to-b from-slate-100 to-slate-200/80 ring-1 ring-slate-900/[0.06] sm:h-full sm:min-h-56">
           {/* the real car in a photograph once make and model are known; the 3D shape until then */}
-          <VehiclePhoto vehicle={v} credit className="absolute inset-0" fallback={<BodyPreview body={v.body} paint={v.color} className="!absolute inset-0" />} />
+          <VehiclePhoto vehicle={v} credit contain className="absolute inset-0" fallback={<BodyPreview body={v.body} paint={v.color} className="!absolute inset-0" />} />
           <span className="absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-white/90 px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-slate-600 backdrop-blur">
             <span className="size-2.5 rounded-full ring-1 ring-black/10" style={{ background: v.color }} />
             {[v.year, v.make, v.model].filter(Boolean).join(' ') || VEHICLES[v.body].label} · {paintLabel(v.color)}
@@ -176,7 +214,30 @@ function VehicleCard({ vehicle: v }: { vehicle: ClaimVehicle }) {
               <input className="input uppercase" aria-label="Plate state" placeholder="NY" maxLength={3} value={v.plateState} onChange={(e) => updateVehicle(v.id, { plateState: e.target.value })} autoComplete="off" />
             </Field>
             <Field label={mine ? 'VIN — on the dashboard or your insurance card' : 'VIN (if you have it)'}>
-              <input className="input uppercase font-mono" aria-label="VIN" placeholder="17 characters" maxLength={17} value={v.vin} onChange={(e) => updateVehicle(v.id, { vin: e.target.value })} autoComplete="off" />
+              <div className="relative">
+                <input className="input pr-9 uppercase font-mono" aria-label="VIN" placeholder="17 characters" maxLength={17} value={v.vin} onChange={(e) => updateVehicle(v.id, { vin: e.target.value })} autoComplete="off" />
+                {vinNote === 'busy' && (
+                  <span className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-400">
+                    <Icon.spinner />
+                  </span>
+                )}
+                {vinNote === 'done' && (
+                  <span className="absolute top-1/2 right-3 -translate-y-1/2 text-emerald-600">
+                    <Icon.check />
+                  </span>
+                )}
+              </div>
+              {vinNote === 'done' && <span className="mt-1 block text-xs text-emerald-700">Make, model and year filled in from the VIN.</span>}
+              {vinNote === 'unknown' && <span className="mt-1 block text-xs text-slate-500">We could not read that VIN. Check it against the card, or pick the model above.</span>}
+              {vinNote === 'differs' && vin.found && (
+                <span className="mt-1 block text-xs text-amber-800">
+                  This VIN is a {[vin.found.year, vin.found.make, vin.found.model].filter(Boolean).join(' ')}, not a {vehicleName(v)}. Check the VIN, or{' '}
+                  <button className="font-semibold underline underline-offset-2" onClick={() => takeVin(v.id, vin.found!)}>
+                    use the VIN's details
+                  </button>
+                  .
+                </span>
+              )}
             </Field>
           </div>
         </div>
