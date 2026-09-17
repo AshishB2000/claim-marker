@@ -1,0 +1,36 @@
+<!doctype html>
+<!--
+  The page the customer is already logged in to, with "Report an accident" embedded in it:
+  `embed.js`, a token minted at sign-in, and what the policy already knows about them. Exactly
+  what docs/integration.md tells an insurer to write.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Acme Mutual — report an accident</title>
+    <link rel="stylesheet" href="demo.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="logo">Acme Mutual</span>
+      <span class="who">Signed in as <b id="who"></b> · policy <b id="policy"></b></span>
+    </header>
+
+    <main class="wide">
+      <h1>Something happened?</h1>
+      <p class="lead">Tell us below. It saves as you go, and works with no signal.</p>
+      <ul id="vehicles" class="vehicles"></ul>
+
+      <p id="banner" class="banner" hidden></p>
+
+      <div id="report"></div>
+
+      <p class="note">The report runs in an iframe on the same origin. Nothing you type reaches this page — the photographs go straight to the claims API.</p>
+    </main>
+
+    <script src="/embed.js"></script>
+    <script src="demo.js"></script>
+  </body>
+</html>

@@ -48,9 +48,10 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url)
 
   // the page itself: the network first so a deploy is picked up, the shell when there is none.
-  // The claims desk is deliberately not offline — an adjuster with no signal has no claims either
+  // The claims desk and the demo portal are deliberately not offline — they are the insurer's
+  // own screens, and an adjuster with no signal has no claims to work on either
   if (req.mode === 'navigate') {
-    if (url.origin !== self.location.origin || url.pathname.startsWith('/adjuster')) return
+    if (url.origin !== self.location.origin || url.pathname.startsWith('/adjuster') || url.pathname.startsWith('/demo')) return
     event.respondWith(fetch(req).catch(() => caches.match('/index.html', { cacheName: SHELL, ignoreVary: true })))
     return
   }

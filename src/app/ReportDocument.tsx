@@ -10,6 +10,7 @@ import { SCHEMA, SEVERITY_COLOR } from '../schema'
 import { PAINTS } from '../vehicles/paint'
 import { Icon } from './icons'
 import { VehiclePhoto } from './VehiclePhoto'
+import { MarkPhotos } from './MarkPhotos'
 import { usePlayback } from '../map/usePlayback'
 
 // ── the pieces the document is written in ────────────────────────────
@@ -74,7 +75,7 @@ const when = (at: string, lang: Lang) => {
 }
 
 /** the marks on one vehicle, numbered as they are on the car */
-function Marks({ v, lang }: { v: ClaimVehicle; lang: Lang }) {
+function Marks({ v, photos, lang }: { v: ClaimVehicle; photos: Claim['attachments']['photos']; lang: Lang }) {
   return (
     <ol className="space-y-1.5 text-sm">
       {v.damages.map((d, i) => (
@@ -86,6 +87,7 @@ function Marks({ v, lang }: { v: ClaimVehicle; lang: Lang }) {
             <span className="font-medium">{translate(lang, `zone.${d.zone}` as Key)}</span>
             <span className="text-slate-500"> — {translate(lang, `severity.${d.severity}` as Key)}</span>
             {d.note && <span className="block text-slate-600">“{d.note}”</span>}
+            <MarkPhotos photos={photos} of={v.id} zone={d.zone} />
           </span>
         </li>
       ))}
@@ -451,7 +453,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                     <Tag v={v} />
                     {cap(vehicleOf(v, voice, lang))}
                   </div>
-                  <Marks v={v} lang={lang} />
+                  <Marks v={v} photos={photos} lang={lang} />
                 </div>
               </div>
             ))}

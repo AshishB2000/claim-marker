@@ -1,5 +1,9 @@
 /** inline SVG icons, one object so call sites read as `Icon.check` */
 const icon = { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
+/** the line drawings on the phone's photo tiles: one shot each, drawn big enough to read at a glance */
+const art = { width: 64, height: 64, viewBox: '0 0 48 48', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
+/** the corners of a camera's viewfinder, framing each drawing */
+const FRAME = 'M5 13V7a2 2 0 0 1 2-2h6M35 5h6a2 2 0 0 1 2 2v6M43 35v6a2 2 0 0 1-2 2h-6M13 43H7a2 2 0 0 1-2-2v-6'
 
 export const Icon = {
   check: () => (
@@ -162,6 +166,47 @@ export const Icon = {
     <svg {...icon}>
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path d="M12 5l-2 5 3 2-2 5" />
+    </svg>
+  ),
+  closeUp: () => (
+    <svg {...art}>
+      <path d={FRAME} />
+      {/* a panel with a crease pushed into it */}
+      <path d="M11 30c5-1 8-4 11-9 2 4 3 6 5 6s4-3 6-7c1 4 2 7 4 9" />
+      <path d="M11 36h26M22 21l-1-5M27 27l2 4M33 20l3-3" />
+    </svg>
+  ),
+  stepBack: () => (
+    <svg {...art}>
+      <path d={FRAME} />
+      {/* the same corner of the car, further off: the dent and the panels round it */}
+      <path d="M11 31v-5l4-6h14l6 5h3v6z" />
+      <circle cx="16.5" cy="31.5" r="2.5" />
+      <circle cx="32.5" cy="31.5" r="2.5" />
+      <path d="M30 22l2 3M34 26l1-2" />
+    </svg>
+  ),
+  carSide: () => (
+    <svg {...art}>
+      {/* the whole side, nose to tail */}
+      <path d="M4 31v-6l5-2 7-7h14l7 7 6 1v7h-3M10 31H4M16 31h16" />
+      <circle cx="13" cy="31" r="3" />
+      <circle cx="35" cy="31" r="3" />
+      <path d="M23 16v7M11 23h32" />
+    </svg>
+  ),
+  plate: () => (
+    <svg {...art}>
+      {/* the back of the other car, with its plate */}
+      <path d="M9 24l4-10h22l4 10v11H9z" />
+      <path d="M11 35v4h6v-4M31 35v4h6v-4M9 24h30M12 28h4M32 28h4" />
+      <rect x="18" y="29" width="12" height="4" rx="1" />
+    </svg>
+  ),
+  gallery: () => (
+    <svg {...icon}>
+      <rect x="3" y="6" width="15" height="14" rx="2" />
+      <path d="M7 3h12a2 2 0 0 1 2 2v11M3 16l4-4 3 3 2-2 6 6" />
     </svg>
   ),
   flame: () => (

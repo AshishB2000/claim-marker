@@ -123,6 +123,8 @@ export type ClaimState = {
   addPhotos: (files: Iterable<File>, of: string | null) => Promise<number>
   captionPhoto: (index: number, caption: string) => void
   removePhoto: (index: number) => void
+  /** the panel a photo shows, set when a mark read off it is added; the caption stays the customer's */
+  tagPhoto: (index: number, zone: string) => void
   /** zone ids are per body, so a body change clears the damages marked on the old one */
   setBody: (id: string, body: Vehicle) => void
   addVehicle: () => void
@@ -319,6 +321,8 @@ export const useClaim = create<ClaimState>()(
         captionPhoto: (index, caption) =>
           patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.map((p, i) => (i === index ? { ...p, caption } : p)) } })),
         removePhoto: (index) => patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.filter((_, i) => i !== index) } })),
+        tagPhoto: (index, zone) =>
+          patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.map((p, i) => (i === index ? { ...p, shows: zone } : p)) } })),
 
         placeVehicles: () => {
           const { location } = get().claim.incident
