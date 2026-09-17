@@ -243,6 +243,11 @@ runtime from the host page (see above).
 | `VITE_ALLOWED_HOSTS` | the origins allowed to configure the embedded page, comma-separated. Set it in production. |
 | `VITE_CLAIMS_API` | where the claims desk reads reports from (default the reference server on 8788) |
 
+**The language is runtime only**, never a build variable: the host passes `lang: 'es'` to
+`ClaimMarker.mount`, or the server is started with `LANG_DEFAULT=es`. Either fixes the page to
+that language and hides its switch; with neither, the page follows the browser and lets the
+customer switch. The claims desk stays English whatever the customer chose.
+
 Served by `server/claim-server.mjs`, the last four need no build at all: the server injects
 `submitUrl`, `claimsApi`, `brand`, `assistUrl` and `allowedHosts` into the page at startup, so
 one built image serves any insurer. Its own environment — tokens, sessions, rate limits, the
