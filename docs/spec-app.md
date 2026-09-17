@@ -722,6 +722,77 @@ once before an insurer sees it**. The Spanish fraud notice is a plain-language t
 is *not* legal text; a host must supply its own state's wording, and `fraudNoticeFor()` hands
 back whatever it supplies untouched.
 
+## The scene fills itself in (v9)
+
+Every claim form in the world asks the customer what the weather was like. They were in a
+crash; they are answering from memory, at the roadside, on a phone. The place and the time are
+already in the document, and from those two facts the weather at that hour, the position of the
+sun and the road itself are all a matter of public record. So the page looks them up and the
+customer **confirms** instead of typing, and the adjuster receives facts no customer would have
+given.
+
+**The time had no zone.** `incident.at` is a bare local `YYYY-MM-DDTHH:mm`, which is a wall
+clock, not a moment — and both the weather archive and the sun need a moment.
+`incident.utcOffset` (minutes east of UTC) makes it one. It is filled by the weather lookup,
+which has to resolve the zone for the coordinates anyway; `instantOf(at, utcOffset)` is the
+pure reader and returns null without an offset. Taking the browser's own zone instead would be
+assuming the customer is standing where their phone is, which after an accident on holiday is
+exactly wrong.
+
+**Three keyless sources**, each its own pure module under `src/scene/`, each tested against
+recorded fixtures with no network in the test:
+
+- `weather.ts` — Open-Meteo. The archive (`archive-api.open-meteo.com`) for anything older
+  than five days, the forecast endpoint with `past_days=7` otherwise, `timezone=auto` so the
+  hourly timestamps come back in the incident's own local time and the hour matches `at` by
+  string. `toConditions` maps the WMO code to the `WEATHER` enum and works the road state out
+  of the last two hours: snow codes → `snow`, at or below freezing with recent precipitation →
+  `icy`, any precipitation in the last two hours → `wet`, else `dry`. That two-hour window is
+  the whole point — a road is still wet after the rain has stopped.
+- `sun.ts` — the NOAA solar-position approximation, forty lines and no dependency. Altitude
+  and azimuth, then `lightFrom(altitude, lit)` (above 6° daylight, −6°…6° dusk, below that
+  dark — lit or unlit according to the road's own `lit` tag) and `glare(sun, heading)`, true
+  when the sun was under 25° up and within 25° of straight ahead.
+- `road.ts` — Overpass, one query inside 60 m. The nearest way gives the name, class, lanes,
+  direction, posted limit and whether it is lit; the ways meeting within 25 m give the
+  junction (`none`, `T`, `cross`, `roundabout`) and the nodes give what controls it. It also
+  returns the ways as GeoJSON, which is what the diagram draws.
+
+**`incident.context` is additive and separate from `conditions` on purpose.** `conditions`
+stays the customer's own answer — it is what they signed. `context` is what the record said,
+and the two sit side by side on the desk. The lookup *fills* the three selects, and
+`autoConditions` is exactly the bargain `autoDamage` already makes for the damage marks:
+`auto` means the lookup put it there and it still follows the place and the time; touching a
+select makes it `user` and it is the customer's for good. A select the customer had already
+filled is never overwritten, whatever the record says.
+
+**"Still looking it up" is derived**, not stored: `contextKey` is the place (to four decimals,
+about eleven metres) and hour the store has an answer for, and a mismatch with `sceneKey` of
+the current incident *is* the loading state. There is no second flag to keep in step with a
+fetch, which is the same rule the photo-first suggestions follow. `contextKey` and the road
+geometry are deliberately not persisted: sixty metres of public map is cheap to ask for again
+and a cache of it can only go stale.
+
+**On the diagram**, the ways are drawn as a road under the cars — width in ground metres from
+the lane count, so it keeps its real width as the map zooms — on the satellite and street
+grounds only. On the drawn parking lot and the blank sheet there is no real road to draw and
+putting one there would be a lie. When a car is dropped within three metres of a way and
+already within thirty degrees of its line, a chip offers to line it up; accepting turns the
+car and **never moves it**, because moving a customer's car for them puts words in their mouth
+about where it stopped.
+
+**Every one of the three may fail, and nothing depends on any of them.** A blocked host, a
+429, an empty answer: the card does not appear, the selects stay empty, and the step is exactly
+what it was. `scripts/smoke.mjs` proves that path by blocking the three hosts outright.
+
+**The honest limits.** Open-Meteo's archive is a reanalysis model on a grid of a few
+kilometres, not a weather station in that street: it is right about "it was raining at five"
+and says nothing about a squall over one junction. OpenStreetMap is as good as whoever mapped
+that corner, and outside well-mapped cities the lane count and the posted limit are often
+simply absent — which is why every field is nullable and the card prints only what came back.
+Neither is evidence; both are context, and the report labels them "from public records" so
+nobody mistakes them for the customer's answer.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:

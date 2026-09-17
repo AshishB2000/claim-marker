@@ -184,6 +184,21 @@ untouched by `DEMO`. Never put `DEMO=1` on an instance taking real claims — an
 session there. Config from the page's *own* origin is always trusted (`originAllowed`), which is
 how the portal's same-origin iframe is configured at all.
 
+**The scene fills itself in from the place and the time** (`src/scene/`). `weather.ts`
+(Open-Meteo: the archive past five days, the forecast endpoint with `past_days` otherwise,
+`timezone=auto` so the hourly stamps are local and the hour matches `at` by string),
+`sun.ts` (the NOAA approximation, no dependency) and `road.ts` (Overpass inside 60 m; also
+returns the ways as GeoJSON for the diagram to draw). All three are pure apart from one
+`fetch` each, all three resolve `null` on any failure, and nothing on the page depends on
+any of them. `incident.utcOffset` is what makes `at` an instant — `instantOf(at, utcOffset)`
+— and is filled by the weather lookup, which resolves the zone anyway. `incident.context`
+is what the record said; `incident.conditions` stays the customer's answer, and
+`autoConditions` is `autoDamage`'s bargain for the three selects (`auto` follows the place
+and the time, `user` is final). "Still looking it up" is **derived** from `contextKey`
+against `sceneKey(incident)` — never a `setState` in the effect. `contextKey` and
+`roadWays` are not persisted on purpose. The roads layer draws on `satellite` and `streets`
+only; `alignToRoad` turns a dropped car to the road's line and **never moves it**.
+
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
 and friends directly; those are only the defaults `config` starts from. `main.tsx` awaits
@@ -331,6 +346,7 @@ src/claim/        the claim/1 document, the persisted store, prefill, the outbox
 src/config.ts     runtime configuration and the host-page channel
 public/sw.js      the offline shell; its precache list is patched in by vite.config.ts
 src/map/          MapLibre scene, the three.js car layer, the transform maths, styles
+src/scene/        what the place and the time say for themselves: the weather, the sun, the road
 src/vehicles/     model loading + paint re-authoring, body previews, the paint palette
 src/marker/       the 3D damage marker
 src/assist/       the optional assistant: the wire contract and its parsers, the metric frame, the client
