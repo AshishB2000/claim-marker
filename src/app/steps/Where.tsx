@@ -1,19 +1,35 @@
 import { useEffect, useRef, useState } from 'react'
-import { useClaim } from '../../claim/store'
-import { LIGHT, ROAD, WEATHER, nowLocal } from '../../claim/schema'
+import { sceneKey, useClaim } from '../../claim/store'
+import { LIGHT, ROAD, WEATHER, instantOf, nowLocal, sceneContext, type Conditions } from '../../claim/schema'
+import { lookedUpLines } from '../../claim/describe'
 import { reversePlace, searchPlaces, type Place } from '../../geocode'
 import type { LngLat } from '../../geo'
 import type { Key } from '../../i18n'
-import { useT } from '../../i18n/useT'
+import { useLang, useT } from '../../i18n/useT'
 import { LocationMap } from '../../map/LocationMap'
+import { fetchWeather, toConditions, toSceneWeather } from '../../scene/weather'
+import { fetchRoad } from '../../scene/road'
+import { lightFrom, sunPosition } from '../../scene/sun'
 import { Field, Spinner } from '../ui'
 import { Icon } from '../icons'
+
+/** who the lookup names as its source in the document; the two keyless providers it asks */
+const SOURCE = 'open-meteo+osm'
 
 export function Where() {
   const incident = useClaim((s) => s.claim.incident)
   const setIncident = useClaim((s) => s.setIncident)
+  const setConditions = useClaim((s) => s.setConditions)
   const setLocation = useClaim((s) => s.setLocation)
+  const contextKey = useClaim((s) => s.contextKey)
+  const sceneLookedUp = useClaim((s) => s.sceneLookedUp)
   const t = useT()
+  const lang = useLang()
+  const weatherSelect = useRef<HTMLSelectElement>(null)
+  // "That's right" is an acknowledgement, not an answer: it puts the card's buttons to bed and
+  // changes nothing in the document, because the values are already in the selects below it.
+  // Held as the place-and-hour it was said about, so a new place asks again.
+  const [acknowledged, setAcknowledged] = useState<string | null>(null)
 
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Place[]>([])
@@ -57,6 +73,55 @@ export function Where() {
     }, 280)
     return () => window.clearTimeout(t)
   }, [query])
+
+  /**
+   * The place and hour the looked-up scene belongs to. It not matching the one the store has an
+   * answer for is what "still looking" means — derived, so there is no second flag to keep in
+   * step with the fetch, and so a draft reopened tomorrow asks again rather than showing a
+   * cached answer it cannot date.
+   */
+  const key = sceneKey(incident)
+  const looking = key !== null && key !== contextKey
+
+  // the weather at that hour, where the sun was, and the road — from the place and the time
+  // alone. Every one of them may fail; the step then behaves exactly as it did before any of
+  // this existed, which is why nothing here throws and nothing here blocks.
+  useEffect(() => {
+    const loc = incident.location
+    if (!key || !loc || key === contextKey) return
+    const ac = new AbortController()
+    const at: LngLat = [loc.lng, loc.lat]
+    const when = incident.at
+    void (async () => {
+      const [w, r] = await Promise.all([fetchWeather(at, when, ac.signal), fetchRoad(at, ac.signal)])
+      if (ac.signal.aborted) return
+      // Open-Meteo resolves the zone for the coordinates, which is the only thing on the page
+      // that can: without it `at` is a wall clock and the sun cannot be placed at all
+      const utcOffset = w?.utcOffsetMinutes ?? null
+      const instant = instantOf(when, utcOffset)
+      const sun = instant !== null ? sunPosition(instant, at) : null
+      // only what actually came back: an empty string is an answer ("not given"), and handing
+      // one to the store would mark a select as filled-by-us and then leave it blank
+      const fill: Partial<Conditions> = {}
+      if (w) {
+        const c = toConditions(w)
+        fill.weather = c.weather
+        fill.road = c.road
+      }
+      if (sun) fill.light = lightFrom(sun.altitude, r?.road.lit ?? null)
+      const context = sceneContext({
+        weather: w ? toSceneWeather(w) : null,
+        sun,
+        road: r?.road ?? null,
+        source: SOURCE,
+        fetchedAt: new Date().toISOString(),
+      })
+      sceneLookedUp(key, context, utcOffset, fill, r?.ways ?? null)
+    })()
+    return () => ac.abort()
+  }, [key, contextKey, incident.location, incident.at, sceneLookedUp])
+
+  const looked = incident.context ? lookedUpLines(incident.context, incident.conditions, lang) : []
 
   const choose = (p: Place) => {
     setLocation({ lng: p.lng, lat: p.lat, address: p.address })
@@ -212,14 +277,45 @@ export function Where() {
           />
         </Field>
 
+        {incident.location && (looking || looked.length > 0) && (
+          <div data-looked className="rounded-xl bg-slate-50 px-4 py-3 text-sm ring-1 ring-slate-200">
+            <div className="font-medium">{t('start.where.looked.title')}</div>
+            {looking ? (
+              <p className="mt-1.5 flex items-center gap-2 text-xs text-slate-500">
+                <Spinner /> {t('start.where.looked.busy')}
+              </p>
+            ) : (
+              <>
+                <ul data-looked-lines className="mt-1.5 space-y-0.5 text-slate-700">
+                  {looked.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 text-xs text-slate-500">{t('start.where.looked.lead')}</p>
+                {acknowledged !== key && (
+                  <div className="mt-2.5 flex gap-2">
+                    <button className="btn btn-secondary btn-sm" onClick={() => setAcknowledged(key)}>
+                      {t('start.where.looked.right')}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => weatherSelect.current?.focus()}>
+                      {t('start.where.looked.wrong')}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         <div>
           <span className="label">{t('start.where.conditions')}</span>
           <div className="grid grid-cols-3 gap-2">
             <select
+              ref={weatherSelect}
               className="input"
               aria-label={t('start.where.weather')}
               value={incident.conditions.weather}
-              onChange={(e) => setIncident({ conditions: { ...incident.conditions, weather: e.target.value as typeof incident.conditions.weather } })}
+              onChange={(e) => setConditions({ weather: e.target.value as typeof incident.conditions.weather })}
             >
               <option value="">{t('start.where.pickWeather')}</option>
               {WEATHER.map((w) => (
@@ -232,7 +328,7 @@ export function Where() {
               className="input"
               aria-label={t('start.where.road')}
               value={incident.conditions.road}
-              onChange={(e) => setIncident({ conditions: { ...incident.conditions, road: e.target.value as typeof incident.conditions.road } })}
+              onChange={(e) => setConditions({ road: e.target.value as typeof incident.conditions.road })}
             >
               <option value="">{t('start.where.pickRoad')}</option>
               {ROAD.map((r) => (
@@ -245,7 +341,7 @@ export function Where() {
               className="input"
               aria-label={t('start.where.light')}
               value={incident.conditions.light}
-              onChange={(e) => setIncident({ conditions: { ...incident.conditions, light: e.target.value as typeof incident.conditions.light } })}
+              onChange={(e) => setConditions({ light: e.target.value as typeof incident.conditions.light })}
             >
               <option value="">{t('start.where.pickLight')}</option>
               {LIGHT.map((l) => (
