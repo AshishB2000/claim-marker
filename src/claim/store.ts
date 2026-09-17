@@ -8,6 +8,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { parseDamages, type Damage } from '../schema'
 import type { Vehicle } from '../zones'
+import type { FeatureCollection } from 'geojson'
 import { bearing, destination, distance, type LngLat } from '../geo'
 import {
   KIND_INFO,
@@ -20,6 +21,7 @@ import {
   type Claim,
   type ClaimVehicle,
   type Condition,
+  type Conditions,
   type Incident,
   type Kind,
   type Location,
@@ -28,6 +30,7 @@ import {
   type Police,
   type Property,
   type Reporter,
+  type SceneContext,
   type Step,
 } from './schema'
 import { shrink } from './photos'
@@ -98,6 +101,31 @@ export type ClaimState = {
   back: () => void
 
   setIncident: (patch: Partial<Omit<Incident, 'location' | 'kind'>>) => void
+  /**
+   * one of the three condition selects, answered by the customer. Separate from `setIncident`
+   * because touching a select is what takes it away from the lookup for good.
+   */
+  setConditions: (patch: Partial<Conditions>) => void
+  /**
+   * Who answered each of the three condition selects: `auto` means the lookup filled it and it
+   * still follows the place and the time; `user` means the customer has set it and it is theirs.
+   * Exactly `autoDamage`'s bargain, for the conditions.
+   */
+  autoConditions: Partial<Record<keyof Conditions, 'auto' | 'user'>>
+  /**
+   * the place and hour `incident.context` was looked up for. It not matching `sceneKey` of the
+   * incident is what "still looking it up" means — a derived flag, not a second piece of state
+   * to keep in step.
+   */
+  contextKey: string | null
+  /**
+   * The ways around the incident as GeoJSON, for the diagram to draw the road the cars are
+   * standing on. Not part of `claim/1` and not persisted: it is 60 m of public map, cheap to
+   * ask for again, and the document records the road in words instead.
+   */
+  roadWays: FeatureCollection | null
+  /** what the public record answered for `key`, the conditions to fill from it, and the ways to draw */
+  sceneLookedUp: (key: string, context: SceneContext | null, utcOffset: number | null, fill: Partial<Conditions>, ways?: FeatureCollection | null) => void
   /**
    * the kind decides who else is expected: a kind with no other party drops the other vehicles
    * and everyone in them; a collision with none listed gets one to fill in
@@ -223,6 +251,9 @@ export const useClaim = create<ClaimState>()(
         step: 'kind',
         impactManual: false,
         autoDamage: {},
+        autoConditions: {},
+        contextKey: null,
+        roadWays: null,
         policy: [],
         delivery: null,
         lang: null,
@@ -247,7 +278,34 @@ export const useClaim = create<ClaimState>()(
             return { step: steps[Math.max(steps.indexOf(s.step) - 1, 0)] }
           }),
 
-        setIncident: (patch) => patchClaim((c) => ({ incident: { ...c.incident, ...patch } })),
+        setIncident: (patch) => {
+          // a new time is a new hour to ask about, and the old answer was about the old one
+          if (patch.at !== undefined && patch.at !== get().claim.incident.at) set({ contextKey: null, roadWays: null })
+          patchClaim((c) => ({ incident: { ...c.incident, ...patch, ...(patch.at !== undefined && patch.at !== c.incident.at ? { context: null, utcOffset: null } : {}) } }))
+        },
+        setConditions: (patch) => {
+          set((s) => ({ autoConditions: { ...s.autoConditions, ...Object.fromEntries(Object.keys(patch).map((k) => [k, 'user' as const])) } }))
+          patchClaim((c) => ({ incident: { ...c.incident, conditions: { ...c.incident.conditions, ...patch } } }))
+        },
+        sceneLookedUp: (key, context, utcOffset, fill, ways = null) => {
+          const next = { ...get().autoConditions }
+          const conditions = { ...get().claim.incident.conditions }
+          // one key at a time so the union of the three value types never has to be widened
+          const take = <K extends keyof Conditions>(k: K) => {
+            const v = fill[k]
+            if (v === undefined) return
+            // never over an answer the customer gave, and never over one that was already there
+            // before anything looked anything up: a filled select is theirs unless we filled it
+            if (next[k] === 'user' || (!next[k] && conditions[k])) return
+            next[k] = 'auto'
+            conditions[k] = v
+          }
+          take('weather')
+          take('road')
+          take('light')
+          set({ contextKey: key, autoConditions: next, roadWays: ways })
+          patchClaim((c) => ({ incident: { ...c.incident, context, utcOffset, conditions } }))
+        },
         setKind: (kind) => {
           const { others } = KIND_INFO[kind]
           patchClaim((c) => {
@@ -266,8 +324,10 @@ export const useClaim = create<ClaimState>()(
           suggestDamages()
         },
         setLocation: (location) => {
+          // the looked-up scene belonged to the old spot, exactly as the vehicles' positions did
+          set({ contextKey: null, roadWays: null })
           patchClaim((c) => ({
-            incident: { ...c.incident, location },
+            incident: { ...c.incident, location, context: null, utcOffset: null },
             vehicles: c.vehicles.map((v) => ({ ...v, position: null, path: [] })),
             impact: null,
           }))
@@ -423,16 +483,19 @@ export const useClaim = create<ClaimState>()(
           set((s) => {
             const claim = emptyClaim()
             claim.incident.language = s.lang ?? 'en'
-            return { claim, step: 'kind', impactManual: false, autoDamage: {}, delivery: null }
+            return { claim, step: 'kind', impactManual: false, autoDamage: {}, autoConditions: {}, contextKey: null, roadWays: null, delivery: null }
           }),
       }
     },
     {
       name: 'claim-marker/draft',
-      version: 6,
+      version: 7,
       // every section added since a draft was saved takes its default: v3 added the ground,
       // v4 the kind, the people, the police, the photos and the rest of the report, v5 the
-      // policy's vehicles and how the report left, v6 the language (null: not chosen yet)
+      // policy's vehicles and how the report left, v6 the language (null: not chosen yet),
+      // v7 the looked-up scene. `contextKey` and `roadWays` are deliberately not persisted:
+      // a reopened draft asks the two keyless endpoints again, which redraws the roads and
+      // costs nothing, rather than carrying a cache that can only go stale
       migrate: (persisted) => {
         const s = persisted as { claim?: Partial<Claim> & { incident?: Partial<Incident>; vehicles?: Partial<ClaimVehicle>[] } }
         if (!s.claim) return persisted
@@ -452,6 +515,7 @@ export const useClaim = create<ClaimState>()(
         step: s.step,
         impactManual: s.impactManual,
         autoDamage: s.autoDamage,
+        autoConditions: s.autoConditions,
         policy: s.policy,
         delivery: s.delivery,
         lang: s.lang,
@@ -486,3 +550,12 @@ function collision(vehicles: ClaimVehicle[]): LngLat | null {
 export const insuredOf = (claim: Claim) => claim.vehicles.find((v) => v.role === 'insured') ?? claim.vehicles[0]
 export const othersOf = (claim: Claim) => claim.vehicles.filter((v) => v.role !== 'insured')
 export const vehicleLabel = (v: ClaimVehicle) => v.id.toUpperCase()
+
+/**
+ * What the looked-up scene is keyed on: the place to four decimals — about eleven metres, far
+ * finer than the weather changes and finer than a junction is wide — and the hour, because
+ * that is the resolution the archive answers in. Nudging the pin a metre does not ask again.
+ * Null when there is nothing yet to ask about.
+ */
+export const sceneKey = (incident: Pick<Incident, 'location' | 'at'>): string | null =>
+  incident.location && incident.at ? `${incident.location.lng.toFixed(4)},${incident.location.lat.toFixed(4)},${incident.at.slice(0, 13)}` : null
