@@ -87,7 +87,7 @@ function Marks({ v, photos, lang }: { v: ClaimVehicle; photos: Claim['attachment
             <span className="font-medium">{translate(lang, `zone.${d.zone}` as Key)}</span>
             <span className="text-slate-500"> — {translate(lang, `severity.${d.severity}` as Key)}</span>
             {d.note && <span className="block text-slate-600">“{d.note}”</span>}
-            <MarkPhotos photos={photos} of={v.id} zone={d.zone} />
+            <MarkPhotos photos={photos} of={v.id} zone={d.zone} lang={lang} />
           </span>
         </li>
       ))}
