@@ -14,6 +14,7 @@ import './worker'
 import { GeoJSONSource, Map as MapLibreMap, Marker, NavigationControl, ScaleControl, type LngLatLike } from 'maplibre-gl'
 import type { Feature } from 'geojson'
 import { bearing, destination, type LngLat } from '../geo'
+import { plural, translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
 import { SIZE } from '../vehicles/bodies'
 import { CarLayer, type CarPose } from './carLayer'
@@ -52,6 +53,8 @@ export type MapSceneProps = {
   onImpact?: (at: LngLat) => void
   /** a tap on the map while `tapMode` is not "none" */
   onTap?: (at: LngLat) => void
+  /** the language of the words on the map; the claims desk renders this too and stays English */
+  lang?: Lang
   className?: string
   ref?: Ref<MapSceneHandle>
 }
@@ -108,7 +111,7 @@ const DASH_STEPS: number[][] = [
   [0, 3.5, 3, 0.5],
 ]
 
-type Handles = { car: Marker; tagwrap: HTMLElement; tag: HTMLElement; ways: Marker[] }
+type Handles = { car: Marker; turn: HTMLElement; tagwrap: HTMLElement; tag: HTMLElement; ways: Marker[] }
 
 /** everything created for one map instance, so the cleanup can tear down exactly that */
 type Live = {
@@ -284,6 +287,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
 
   // ── vehicles: footprints, labels, turn handles, waypoints, paths ────
   const { vehicles, selected, interactive } = props
+  const lang = props.lang ?? 'en'
   useEffect(() => {
     const s = live.current
     if (!s) return
@@ -298,7 +302,6 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
         const root = el('mk-car', color)
         root.appendChild(el('mk-body'))
         const turn = el('mk-turn')
-        turn.title = 'Drag to turn'
         root.appendChild(turn)
         const tagwrap = el('mk-tagwrap')
         const tag = document.createElement('span')
@@ -347,14 +350,16 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
           turn.addEventListener('pointercancel', done)
         })
 
-        h = { car, tagwrap, tag, ways: [] }
+        h = { car, turn, tagwrap, tag, ways: [] }
         handles.set(v.id, h)
       }
       const damaged = v.damages.length
+      // set on every pass, not at creation: the language can change under an open map
+      h.turn.title = translate(lang, 'scene.map.turn')
       h.tag.textContent = v.id.toUpperCase()
       if (damaged) {
         const n = document.createElement('span')
-        n.textContent = `${damaged} damage${damaged === 1 ? '' : 's'}`
+        n.textContent = damageCount(damaged, lang)
         n.style.opacity = '0.85'
         n.style.fontWeight = '500'
         h.tag.appendChild(n)
@@ -385,7 +390,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
 
     if (s.styleReady) pushGeometry(map, vehicles)
     s.cars.setPoses(latest.current.poses ?? posesOf(vehicles))
-  }, [vehicles, selected, interactive])
+  }, [vehicles, selected, interactive, lang])
 
   // ── playback: the cars follow the frame, the handles step aside ─────
   const { poses } = props
@@ -410,14 +415,14 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     if (!mk) {
       const e = el('mk-impact')
       e.textContent = '✕'
-      e.title = 'Point of impact'
       const marker = new Marker({ element: e, draggable: interactive, anchor: 'center' }).setLngLat(ll(impact)).addTo(s.map)
       marker.on('drag', () => latest.current.onImpact?.(fromLL(marker.getLngLat())))
       s.impact = marker
       mk = marker
     }
+    mk.getElement().title = translate(lang, 'scene.impact.title')
     mk.setLngLat(ll(impact))
-  }, [impact, interactive])
+  }, [impact, interactive, lang])
 
   useImperativeHandle(
     ref,
@@ -425,7 +430,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       export: () => {
         const s = live.current
         if (!s) return ''
-        return compose(s.map, latest.current.vehicles, latest.current.impact)
+        return compose(s.map, latest.current.vehicles, latest.current.impact, latest.current.lang ?? 'en')
       },
       recentre: () => live.current?.map.easeTo({ center: ll(latest.current.center), zoom: ZOOM, duration: 700 }),
     }),
@@ -439,6 +444,9 @@ function removeHandles(h: Handles) {
   h.car.remove()
   for (const w of h.ways) w.remove()
 }
+
+/** "1 damage" / "3 damages", the only sentence the map itself writes */
+const damageCount = (n: number, lang: Lang) => translate(lang, plural(n, 'scene.map.damage.one', 'scene.map.damage.other'), { n })
 
 const posesOf = (vehicles: ClaimVehicle[]): CarPose[] =>
   vehicles
@@ -470,7 +478,7 @@ function pushGeometry(map: MapLibreMap, vehicles: ClaimVehicle[]) {
  * labels and the impact cross are DOM, so they are drawn on top by hand at their projected
  * positions. What comes out is what the customer saw.
  */
-function compose(map: MapLibreMap, vehicles: ClaimVehicle[], impact: LngLat | null): string {
+function compose(map: MapLibreMap, vehicles: ClaimVehicle[], impact: LngLat | null, lang: Lang): string {
   const src = map.getCanvas()
   const dpr = src.width / src.clientWidth || 1
   const out = document.createElement('canvas')
@@ -503,7 +511,7 @@ function compose(map: MapLibreMap, vehicles: ClaimVehicle[], impact: LngLat | nu
     const p = map.project(ll(v.position))
     const { w, l } = footprint(v, map)
     const damaged = v.damages.length
-    pill(p.x, p.y - (Math.max(w, l) / 2 + LABEL_GAP), damaged ? `${v.id.toUpperCase()} · ${damaged} damage${damaged === 1 ? '' : 's'}` : v.id.toUpperCase(), ROLE_COLOR[v.role])
+    pill(p.x, p.y - (Math.max(w, l) / 2 + LABEL_GAP), damaged ? `${v.id.toUpperCase()} · ${damageCount(damaged, lang)}` : v.id.toUpperCase(), ROLE_COLOR[v.role])
   }
   if (impact) {
     const p = map.project(ll(impact))
