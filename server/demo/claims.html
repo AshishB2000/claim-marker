@@ -1,0 +1,51 @@
+<!doctype html>
+<!--
+  Where the host page sends the customer after `onSubmitted`: their claim number, what happens
+  next, and — because this is a demonstration — the claims desk the very same report landed on.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Acme Mutual — your claim</title>
+    <link rel="stylesheet" href="demo.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="logo">Acme Mutual</span>
+      <span class="tag">Demonstration</span>
+    </header>
+
+    <main>
+      <h1>Your claim is with us</h1>
+      <p class="lead">Keep this number. We have sent it to you as well.</p>
+      <p id="reference" class="reference"></p>
+
+      <h2>What happens next</h2>
+      <ol class="next">
+        <li>An adjuster reads your report — the map, the marked-up car and your photographs — today or tomorrow.</li>
+        <li>They call you on the number on the report to agree the repair and the excess.</li>
+        <li>If the other driver's insurer disputes it, the diagram and the photographs are what we send them.</li>
+      </ol>
+
+      <h2>See what the claims team sees</h2>
+      <p class="lead">
+        The report you just sent, in the adjuster's own screen: the same document, read about the policyholder rather than to them.
+      </p>
+      <p><a id="desk" class="button" href="/adjuster.html">Open the claims desk</a></p>
+      <details>
+        <summary>The token that desk uses</summary>
+        <p class="note">
+          Your own session — the one this page filed the report with. It opens the report you just sent and nothing else, so no visitor
+          reads another's. It is already in this tab; the desk will not ask.
+        </p>
+        <p id="token" class="token"></p>
+      </details>
+
+      <p class="note">A demonstration: none of this is a real claim, and it is deleted within a day. <a href="./">Start again</a></p>
+    </main>
+
+    <script src="demo.js"></script>
+  </body>
+</html>

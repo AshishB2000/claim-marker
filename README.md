@@ -12,6 +12,7 @@
 </p>
 
 <p align="center">
+  <a href="#-try-it">Try it</a> ·
   <a href="#-the-flow">The flow</a> ·
   <a href="#-what-makes-it-different">What makes it different</a> ·
   <a href="#-quick-start">Quick start</a> ·
@@ -19,6 +20,13 @@
   <a href="#-the-claims-desk">The claims desk</a> ·
   <a href="#-what-the-insurer-receives">The document</a> ·
   <a href="docs/integration.md">Integration guide</a>
+</p>
+
+<!-- TODO(live URL): once `fly deploy` has run, point this at https://<app>.fly.dev/demo/ -->
+<p align="center">
+  <a href="docs/integration.md#deploy-to-fly">
+    <img alt="Try the demo — not deployed yet" src="https://img.shields.io/badge/Try_the_demo-TODO%3A_not_deployed_yet-64748b?style=for-the-badge">
+  </a>
 </p>
 
 <br>
@@ -104,6 +112,29 @@ flowchart LR
     </td>
   </tr>
 </table>
+
+<br>
+
+## 🎬 Try it
+
+<p align="center">
+  <img src="docs/demo.gif" alt="Signing in to a sample policy, reporting the accident in the embedded page, the claim number, and the claims desk the report landed on" width="100%">
+  <br>
+  <sub><b>The demo portal</b> — sign in as a sample customer of "Acme Mutual", report the accident in the page embedded on their policy screen, get a claim number, then open the desk the report landed on</sub>
+</p>
+
+`server/demo/` is an insurer's portal in a few hundred lines of plain HTML — deliberately a
+different stack from the React page it embeds. The claim server serves it at `/demo/` when it
+is started with `DEMO=1`:
+
+```bash
+npm run build
+SESSION_SECRET=$(openssl rand -hex 32) DESK_TOKEN=desk-token DEMO=1 BRAND='Acme Mutual' \
+node server/claim-server.mjs         # http://localhost:8788/demo/
+```
+
+Reports filed through it are deleted within a day, and a visitor's own session opens the report
+they filed and nobody else's. `node scripts/record-demo.mjs` records the GIF above.
 
 <br>
 
@@ -254,6 +285,7 @@ npm test                             # vitest, ~250 tests
 node scripts/smoke.mjs               # the whole flow in a headless browser, dev server running
 node scripts/integration-smoke.mjs   # embed, prefill, offline send, server, webhook, desk
 node scripts/live-check.mjs <url>    # a deployed instance, from outside: page, CSP, sessions, claims, desk
+node scripts/record-demo.mjs         # re-records docs/demo.gif from the demo portal
 node scripts/shoot.mjs               # regenerate the screenshots above
 npm run server                       # the reference claim server, after a build
 ```

@@ -560,6 +560,50 @@ reference and sent again is a `200` duplicate; the desk is 401 without its token
 report with it; and the report is then PATCHed `closed`, so the inbox a prospect opens is not a
 wall of test reports.
 
+## The demo portal
+
+A prospect could not see the product without cloning the repo, and a live URL on its own would
+have dropped them on an empty form with no policy, no token and no idea what the insurer's side
+looks like. `server/demo/` is the missing half: Acme Mutual's own site, served by the claim
+server at `/demo/` when `DEMO=1`.
+
+**Plain HTML on purpose.** Three pages, one stylesheet, one script, no build step — because the
+thing being demonstrated is that the report embeds into *someone else's* stack. A React demo
+portal would have proved nothing. The sign-in cards are rendered into `index.html` at startup
+from `customers.mjs`, the same way the page's config is injected, so the sample customers live
+in one file and a static page still shows them without a fetch.
+
+**Sign-in is the insurer's backend, minus the hop.** `POST /demo/login` calls the same
+`createSession(customer, vehicles, ttl)` that `POST /sessions` does — the refactor is the whole
+change to minting — and answers the token and prefill that `ClaimMarker.mount` wants. There is
+nobody to authenticate, so each sign-in mints a customer id of its own (`demo-<who>-<random>`):
+two visitors who pick the same sample customer must not end up reading each other's reports.
+
+**What a public demonstration must not do.** People will type real names into it. So: a receipt
+minted from a demo session is tagged `demo: true` and swept after a day whatever `RETAIN_DAYS`
+says; the desk's reader is scoped — `DESK_TOKEN` still reads everything, but a demo visitor
+reads reports filed under their own id and nothing else, with the very session that filed them
+(`claims.html` puts it where the desk looks, so the "see what the claims team sees" link just
+opens). The plan had that link show the instance's `DESK_TOKEN`, which would have handed every
+visitor every other visitor's photographs. The production guard is untouched: `DEMO=1` relaxes
+nothing, and the portal has no business on an instance taking real claims.
+
+**Two lines elsewhere.** `src/config.ts` now trusts a `config` message from its *own* origin: a
+page on the same origin can already reach into the iframe directly, so the message grants it
+nothing new, and without it the portal's iframe would have been ignored whenever `ALLOWED_HOSTS`
+was set. That is why there is no `PUBLIC_ORIGIN` variable — the only thing left needing the
+server's own origin is `frame-ancestors`, which gains `'self'` when `DEMO=1`. And `public/sw.js`
+leaves `/demo` to the network as it already leaves `/adjuster`: the insurer's own screens are
+not part of a claimant's offline shell.
+
+**The proof is a second walk in `scripts/integration-smoke.mjs`**, which is also the first time
+anything drove the *built* page rather than the dev server: `/demo` redirects to `/demo/`,
+signing in as the two-vehicle customer makes the policy pick show two vehicles, the report is
+filed with an `INS-` reference on `claims.html`, its link opens the desk on that report in the
+adjuster's voice, and that visitor's own token lists exactly one report. `scripts/record-demo.mjs`
+is the one-off that records `docs/demo.gif` from the same journey, sped up and palette-mapped
+through ffmpeg.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:

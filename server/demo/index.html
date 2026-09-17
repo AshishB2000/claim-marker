@@ -1,0 +1,41 @@
+<!doctype html>
+<!--
+  The insurer's own site, as a prospect would meet it: sign in, then report an accident in the
+  page embedded on the next screen. Plain HTML and one script, deliberately a different stack
+  from the React page it embeds — that is the point being demonstrated.
+  Served by server/claim-server.mjs under /demo when DEMO=1.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Acme Mutual — my policy</title>
+    <link rel="stylesheet" href="demo.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="logo">Acme Mutual</span>
+      <span class="tag">Demonstration</span>
+    </header>
+
+    <main>
+      <h1>Sign in to your policy</h1>
+      <p class="lead">
+        Acme Mutual is not a real insurer and these are not real customers. Pick one and you are signed in as them — the same thing the
+        insurer's backend does when it mints a session for someone who has just logged in.
+      </p>
+
+      <div class="customers"><!--customers--></div>
+
+      <p id="banner" class="banner" hidden></p>
+
+      <p class="note">
+        Anything you type here is a demonstration, is visible only to you, and is deleted within a day. Do not put real personal details,
+        real registration numbers or photographs of a real accident into it.
+      </p>
+    </main>
+
+    <script src="demo.js"></script>
+  </body>
+</html>

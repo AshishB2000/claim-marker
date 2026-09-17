@@ -17,6 +17,11 @@
  * limited; the built page is served with a CSP and its runtime config; the webhook carries a
  * valid signature; the desk lists, opens and re-files the report; and a report older than
  * RETAIN_DAYS is gone by the time the server is up.
+ *
+ * Then a second, shorter walk through the demo portal the same server serves at /demo: sign in
+ * as a sample customer, report an accident in the *built* page it embeds — not the dev page —
+ * land on the portal's claim page with the server's reference, and follow its link into the
+ * claims desk, which opens that report and nothing else.
  */
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
@@ -98,6 +103,7 @@ server = spawn(process.execPath, ['server/claim-server.mjs'], {
     WEBHOOK_URL: `http://localhost:${HOOK_PORT}/hook`,
     WEBHOOK_SECRET: SECRET,
     RETAIN_DAYS: '7',
+    DEMO: '1',
   },
   stdio: ['ignore', 'pipe', 'inherit'],
 })
@@ -402,6 +408,71 @@ await deskPage.screenshot({ path: 'docs/desk.png' })
 const after = await (await fetch(`http://localhost:${API_PORT}/claims/${shown}`, desk)).json()
 if (after.status !== 'reviewing') fail(`the desk's status change did not reach the server: ${after.status}`)
 ok('desk: lists the report, opens the document, moves it to "in review"')
+
+// ── the demo portal, on the same server, embedding the built page ─────
+
+const demo = await browser.newContext({ viewport: { width: 1280, height: 1000 } })
+const portal = await demo.newPage()
+const portalErrors = []
+portal.on('pageerror', (e) => portalErrors.push(String(e)))
+await portal.goto(`${API}/demo`)
+if (!/\/demo\/$/.test(portal.url())) fail(`/demo did not land on /demo/: ${portal.url()}`)
+await portal.getByRole('button', { name: /Alex Rivera/ }).click()
+await portal.waitForURL(/policy\.html$/, { timeout: 10000 }).catch(() => fail('signing in did not reach the policy page'))
+await portal.locator('text=Signed in as').waitFor({ timeout: 5000 })
+const report = portal.frameLocator('iframe')
+await report
+  .locator('text=Acme Mutual')
+  .first()
+  .waitFor({ timeout: 20000 })
+  .catch(() => fail('the built page never took the portal\'s config'))
+ok('demo: /demo redirects to /demo/, signing in mints a session, and the built page takes its config')
+
+const go = () => report.getByRole('button', { name: /^Continue/ }).click()
+await go()
+const demoSearch = report.getByRole('combobox', { name: 'Where did it happen?' })
+await demoSearch.fill('Times Square, New York')
+const demoOption = report.getByRole('option').first()
+await demoOption.waitFor({ timeout: 20000 }).catch(() => fail('no address suggestions in the demo walk'))
+await demoOption.click()
+await report.locator('text=Drag the pin on the map').waitFor({ timeout: 10000 })
+await go()
+const demoPicks = report.getByRole('radiogroup', { name: 'Which of your vehicles' }).getByRole('radio')
+if ((await demoPicks.count()) !== 2) fail(`the policy's two vehicles are not a pick: ${await demoPicks.count()}`)
+await demoPicks.nth(0).click()
+ok("demo: the sample customer's two policy vehicles are a pick, filled from the session's prefill")
+await go()
+await report.locator('text=Who was driving?').waitFor()
+await go()
+await report.locator('.mk-car').first().waitFor({ timeout: 30000 })
+await portal.waitForTimeout(3000)
+await go()
+await report.locator('.cm-root canvas').waitFor({ timeout: 30000 })
+await portal.waitForTimeout(3000)
+await go()
+await report.getByRole('checkbox', { name: 'I confirm this report is true' }).check()
+await report.getByRole('textbox', { name: 'Signature' }).fill('Alex Rivera')
+await report.getByRole('button', { name: 'Send my report' }).click()
+await portal.waitForURL(/claims\.html#/, { timeout: 60000 }).catch(() => fail('the portal never took the customer to its claim page'))
+const demoRef = await portal.locator('#reference').textContent()
+if (!/^INS-\d{4}-[A-Z2-9]{6}$/.test(demoRef ?? '')) fail(`the portal shows ${demoRef}, not the server's reference`)
+ok(`demo: the report was filed from the portal as ${demoRef}`)
+
+const filedDemo = await (await fetch(`${API}/claims/${demoRef}`, desk)).json()
+if (filedDemo.demo !== true || !filedDemo.customer?.id?.startsWith('demo-')) fail(`the demo report is not tagged: ${JSON.stringify(filedDemo.customer)} ${filedDemo.demo}`)
+
+await portal.getByRole('link', { name: 'Open the claims desk' }).click()
+await portal.waitForURL(/adjuster\.html#/, { timeout: 10000 })
+await portal.locator('text=Reported by').waitFor({ timeout: 20000 }).catch(() => fail('the desk link did not open the report'))
+const deskText = await portal.locator('article').first().innerText()
+if (!/The policyholder/.test(deskText)) fail('the desk does not read in the adjuster\'s voice')
+// the visitor's own session opened their report; it must not open anyone else's
+const others = await (await fetch(`${API}/claims`, { headers: { authorization: `Bearer ${await portal.evaluate(() => sessionStorage.getItem('claim-marker/desk-token'))}` } })).json()
+if (others.claims.length !== 1 || others.claims[0].reference !== demoRef) fail(`the demo visitor sees ${others.claims.length} reports, not only their own`)
+ok('demo: its link opens the desk on that report, in the adjuster\'s voice, and that visitor sees no other report')
+
+const portalReal = portalErrors.filter((e) => !/WebGL|GPU|ResizeObserver/.test(e))
+if (portalReal.length) fail(`demo portal page errors: ${portalReal.join(' | ')}`)
 
 const real = errors.filter((e) => !/WebGL|GPU|ResizeObserver/.test(e))
 if (real.length) fail(`page errors: ${real.join(' | ')}`)
