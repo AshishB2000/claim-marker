@@ -22,7 +22,15 @@ const full = () =>
     incident: {
       kind: 'collision',
       at: '2026-09-06T17:30',
+      utcOffset: -240,
       location: { lng: -73.9859, lat: 40.7573, address: 'Times Square' },
+      context: {
+        weather: { code: 61, label: 'Light rain', tempC: 11.4, precipMm: 0.3, windKph: 12.6 },
+        sun: { altitude: 8.42, azimuth: 271.3 },
+        road: { name: '5th Avenue', class: 'primary', lanes: 2, oneway: true, maxspeed: '25 mph', lit: true, junction: 'cross', controls: ['crossing', 'traffic_signals'] },
+        source: 'open-meteo+osm',
+        fetchedAt: '2026-09-07T22:10:00.000Z',
+      },
       surface: 'satellite',
       conditions: { weather: 'rain', road: 'wet', light: 'dark_lit' },
       description: 'The van pulled out across me.',

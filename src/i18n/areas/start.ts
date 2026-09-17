@@ -23,6 +23,23 @@ export const en = {
   'start.where.pickRoad': 'Road…',
   'start.where.pickLight': 'Light…',
 
+  // ── what the page looked up for itself: the weather at that hour, the sun, the road
+  'start.where.looked.title': 'We looked this up',
+  'start.where.looked.lead': 'From where and when it happened — public records, not your answers. We filled the boxes below with it.',
+  'start.where.looked.busy': 'Looking up the weather and the road…',
+  'start.where.looked.right': "That's right",
+  'start.where.looked.wrong': 'Not quite',
+  /** "dusk, the sun low in the west" */
+  'start.where.looked.sun': '{light}, the sun low in the {dir}',
+  'start.where.looked.windy': 'wind {kph} km/h',
+  'start.where.looked.lane': '1 lane',
+  'start.where.looked.lanes': '{n} lanes',
+  'start.where.looked.oneway': 'one-way',
+  'start.where.looked.unnamedRoad': 'An unnamed road',
+  /** on the desk's copy of the report, beside a vehicle the low sun was ahead of */
+  'start.where.looked.glare': 'The sun was low and ahead of this vehicle',
+  'start.where.looked.source': 'from public records',
+
   // ── the vehicles
   'start.vehicles.onPolicy': 'The one on your policy',
   'start.vehicles.asYouCanTell': 'As best you can tell',
@@ -146,6 +163,20 @@ export const es: Record<keyof typeof en, string> = {
   'start.where.pickWeather': 'Clima…',
   'start.where.pickRoad': 'Camino…',
   'start.where.pickLight': 'Luz…',
+
+  'start.where.looked.title': 'Esto lo buscamos nosotros',
+  'start.where.looked.lead': 'Sale de dónde y cuándo pasó — de registros públicos, no de tus respuestas. Con eso llenamos las casillas de abajo.',
+  'start.where.looked.busy': 'Buscando el clima y la calle…',
+  'start.where.looked.right': 'Así fue',
+  'start.where.looked.wrong': 'No exactamente',
+  'start.where.looked.sun': '{light}, con el sol bajo hacia el {dir}',
+  'start.where.looked.windy': 'viento {kph} km/h',
+  'start.where.looked.lane': '1 carril',
+  'start.where.looked.lanes': '{n} carriles',
+  'start.where.looked.oneway': 'sentido único',
+  'start.where.looked.unnamedRoad': 'Una vía sin nombre',
+  'start.where.looked.glare': 'El sol estaba bajo y de frente a este vehículo',
+  'start.where.looked.source': 'de registros públicos',
 
   'start.vehicles.onPolicy': 'El que está en tu póliza',
   'start.vehicles.asYouCanTell': 'Lo que puedas saber de él',

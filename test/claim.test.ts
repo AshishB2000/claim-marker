@@ -8,7 +8,9 @@ const sample = (): Claim => ({
   incident: {
     kind: 'collision',
     at: '2026-09-06T17:30',
+    utcOffset: -240,
     location: { lng: -73.9859, lat: 40.7573, address: 'Times Square, New York' },
+    context: null,
     surface: 'satellite',
     conditions: { weather: 'rain', road: 'wet', light: 'dark_lit' },
     description: 'He turned across me',

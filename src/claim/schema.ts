@@ -72,6 +72,56 @@ export const LIGHT_LABEL: Record<(typeof LIGHT)[number], string> = {
 /** empty string means not given; the form does not insist */
 export type Conditions = { weather: (typeof WEATHER)[number] | ''; road: (typeof ROAD)[number] | ''; light: (typeof LIGHT)[number] | '' }
 
+// ── what the public record says ──────────────────────────────────────
+
+/**
+ * The scene as the public record has it: the weather at that hour, where the sun was, and the
+ * road itself. Looked up from the place and the time, never typed — `conditions` above stay
+ * the customer's own answer, and this sits beside them so an adjuster can see both.
+ *
+ * Every number is rounded on the way in, like every coordinate, so export → load → export is
+ * byte-identical.
+ */
+export const JUNCTIONS = ['none', 'T', 'cross', 'roundabout'] as const
+export type Junction = (typeof JUNCTIONS)[number]
+
+export type SceneWeather = {
+  /** the WMO present-weather code the archive gave */
+  code: number
+  /** the code in words, English, as the lookup named it */
+  label: string
+  tempC: number | null
+  precipMm: number | null
+  windKph: number | null
+}
+
+/** degrees: altitude above the horizon (negative below it), azimuth clockwise from north */
+export type SceneSun = { altitude: number; azimuth: number }
+
+export type SceneRoad = {
+  name: string
+  /** the OSM `highway` value: residential, primary, motorway… */
+  class: string
+  lanes: number | null
+  oneway: boolean
+  /** as posted, in the units the record uses: "25 mph", "50" */
+  maxspeed: string
+  /** whether it is lit at night; null when the record does not say */
+  lit: boolean | null
+  junction: Junction
+  /** traffic_signals, stop, give_way, crossing — whichever are within the junction */
+  controls: string[]
+}
+
+/** the whole lookup, or null when nothing came back; `source` names who was asked */
+export type SceneContext = {
+  weather: SceneWeather | null
+  sun: SceneSun | null
+  road: SceneRoad | null
+  source: string
+  fetchedAt: string
+}
+
 // ── people ───────────────────────────────────────────────────────────
 
 /**
@@ -209,7 +259,15 @@ export type Incident = {
   kind: Kind
   /** local date and time, `YYYY-MM-DDTHH:mm`, as the form field holds it */
   at: string
+  /**
+   * minutes east of UTC at the place and moment above, so `at` names an instant rather than a
+   * wall clock. Filled by the weather lookup, which has to resolve the zone anyway; null when
+   * nothing looked it up, which is how every document written before this existed reads.
+   */
+  utcOffset: number | null
   location: Location | null
+  /** what the public record says about that place at that time; null until it is looked up */
+  context: SceneContext | null
   surface: Surface
   conditions: Conditions
   description: string
@@ -262,6 +320,70 @@ const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
 const bool = (v: unknown) => v === true
 const bool3 = (v: unknown) => (typeof v === 'boolean' ? v : null)
 const oneOf = <T extends string>(list: readonly T[], v: unknown): T | '' => ((list as readonly string[]).includes(v as string) ? (v as T) : '')
+const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {})
+
+/** minutes east of UTC; no zone on earth is further out than this, so anything else is not one */
+const offsetMinutes = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 16 * 60 ? Math.round(v) : null)
+
+const roundTo = (v: unknown, places: number): number | null => {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null
+  const f = 10 ** places
+  return Math.round(v * f) / f
+}
+
+/** enough of a junction's furniture to read at a glance, not a survey of it */
+const MAX_CONTROLS = 6
+
+/**
+ * `at` as an instant: the wall clock the customer gave, read in the zone the lookup found.
+ * Null without an offset — a bare local time is not a moment, and taking the browser's own
+ * zone would be assuming the customer is standing where their phone is, which after an
+ * accident on holiday is exactly wrong.
+ */
+export function instantOf(at: string, utcOffset: number | null): number | null {
+  if (utcOffset === null || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at)) return null
+  const ms = Date.parse(`${at.slice(0, 16)}Z`)
+  return Number.isFinite(ms) ? ms - utcOffset * 60_000 : null
+}
+
+/**
+ * The looked-up scene, normalised and capped. A lookup that came back with nothing usable is
+ * no context at all, so it is null rather than an object full of nulls.
+ */
+export const sceneContext = (v: unknown): SceneContext | null => {
+  const c = obj(v)
+  const w = obj(c.weather)
+  const sun = obj(c.sun)
+  const r = obj(c.road)
+  const weather: SceneWeather | null =
+    typeof w.code === 'number' && Number.isFinite(w.code)
+      ? { code: Math.round(w.code), label: str(w.label), tempC: roundTo(w.tempC, 1), precipMm: roundTo(w.precipMm, 2), windKph: roundTo(w.windKph, 1) }
+      : null
+  const altitude = roundTo(sun.altitude, 2)
+  const azimuth = roundTo(sun.azimuth, 2)
+  const road: SceneRoad | null = str(r.class)
+    ? {
+        name: str(r.name),
+        class: str(r.class),
+        lanes: Number.isInteger(r.lanes) && (r.lanes as number) > 0 && (r.lanes as number) <= 12 ? (r.lanes as number) : null,
+        oneway: bool(r.oneway),
+        maxspeed: str(r.maxspeed),
+        lit: typeof r.lit === 'boolean' ? r.lit : null,
+        junction: (JUNCTIONS as readonly string[]).includes(r.junction as string) ? (r.junction as Junction) : 'none',
+        controls: Array.isArray(r.controls)
+          ? [...new Set(r.controls.filter((x): x is string => typeof x === 'string' && !!x.trim()).map((x) => x.trim()))].sort().slice(0, MAX_CONTROLS)
+          : [],
+      }
+    : null
+  if (!weather && !road && (altitude === null || azimuth === null)) return null
+  return {
+    weather,
+    sun: altitude !== null && azimuth !== null ? { altitude, azimuth } : null,
+    road,
+    source: str(c.source) || 'open-meteo+osm',
+    fetchedAt: str(c.fetchedAt),
+  }
+}
 
 /** the current local minute in the shape `<input type="datetime-local">` holds */
 export function nowLocal(now = new Date()): string {
@@ -348,7 +470,7 @@ export const emptyClaim = (): Claim => ({
   reference: null,
   submittedAt: null,
   reporter: { name: '', phone: '', email: '', policy: '', policyholder: null },
-  incident: { kind: 'collision', at: nowLocal(), location: null, surface: 'satellite', conditions: { weather: '', road: '', light: '' }, description: '', language: 'en' },
+  incident: { kind: 'collision', at: nowLocal(), utcOffset: null, location: null, context: null, surface: 'satellite', conditions: { weather: '', road: '', light: '' }, description: '', language: 'en' },
   vehicles: [newVehicle('a', 'insured', 'sedan', '#b9bec6'), newVehicle('b', 'other', 'suv', '#1c1f26')],
   people: [],
   impact: null,
@@ -388,6 +510,7 @@ export const toDocument = (claim: Claim): Claim => {
     incident: {
       kind: claim.incident.kind,
       at: claim.incident.at,
+      utcOffset: offsetMinutes(claim.incident.utcOffset),
       location: claim.incident.location
         ? {
             lng: roundLngLat([claim.incident.location.lng, claim.incident.location.lat])[0],
@@ -395,6 +518,7 @@ export const toDocument = (claim: Claim): Claim => {
             address: str(claim.incident.location.address),
           }
         : null,
+      context: sceneContext(claim.incident.context),
       surface: claim.incident.surface,
       conditions: {
         weather: oneOf(WEATHER, claim.incident.conditions.weather),
@@ -440,8 +564,6 @@ export function makeReference(random: () => number = Math.random): string {
   for (let i = 0; i < 6; i++) s += ALPHABET[Math.floor(random() * ALPHABET.length)]
   return s
 }
-
-const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {})
 
 /**
  * Validate a stored or received document. Structural problems throw — "you handed me the
@@ -545,7 +667,9 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
     incident: {
       kind: isKind(inc.kind) ? inc.kind : base.incident.kind,
       at: typeof inc.at === 'string' ? inc.at : nowLocal(),
+      utcOffset: typeof inc.utcOffset === 'number' ? inc.utcOffset : null,
       location,
+      context: sceneContext(inc.context),
       surface: isSurface(inc.surface) ? inc.surface : 'satellite',
       conditions: { weather: oneOf(WEATHER, cond.weather), road: oneOf(ROAD, cond.road), light: oneOf(LIGHT, cond.light) },
       description: str(inc.description),

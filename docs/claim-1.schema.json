@@ -26,6 +26,7 @@
       "properties": {
         "kind": { "enum": ["collision", "single", "parked", "theft", "vandalism", "weather", "glass", "fire"] },
         "at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$", "description": "local date and time, no zone" },
+        "utcOffset": { "type": ["integer", "null"], "minimum": -960, "maximum": 960, "description": "minutes east of UTC at that place and time, so `at` names an instant; null when nothing looked it up" },
         "location": {
           "oneOf": [
             { "type": "null" },
@@ -41,6 +42,68 @@
           ]
         },
         "surface": { "enum": ["satellite", "streets", "lot", "paper"], "description": "what the diagram was drawn on" },
+        "context": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["weather", "sun", "road", "source", "fetchedAt"],
+              "description": "what the public record says about that place at that time; looked up, never typed. `conditions` stays the customer's own answer.",
+              "properties": {
+                "weather": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "required": ["code", "label", "tempC", "precipMm", "windKph"],
+                      "properties": {
+                        "code": { "type": "integer", "description": "the WMO present-weather code" },
+                        "label": { "type": "string" },
+                        "tempC": { "type": ["number", "null"] },
+                        "precipMm": { "type": ["number", "null"] },
+                        "windKph": { "type": ["number", "null"] }
+                      }
+                    }
+                  ]
+                },
+                "sun": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "required": ["altitude", "azimuth"],
+                      "properties": {
+                        "altitude": { "type": "number", "minimum": -90, "maximum": 90 },
+                        "azimuth": { "type": "number", "minimum": 0, "maximum": 360 }
+                      }
+                    }
+                  ]
+                },
+                "road": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "required": ["name", "class", "lanes", "oneway", "maxspeed", "lit", "junction", "controls"],
+                      "properties": {
+                        "name": { "type": "string" },
+                        "class": { "type": "string", "description": "the OpenStreetMap `highway` value" },
+                        "lanes": { "type": ["integer", "null"], "minimum": 1, "maximum": 12 },
+                        "oneway": { "type": "boolean" },
+                        "maxspeed": { "type": "string", "description": "as posted, in the units the record uses" },
+                        "lit": { "type": ["boolean", "null"] },
+                        "junction": { "enum": ["none", "T", "cross", "roundabout"] },
+                        "controls": { "type": "array", "items": { "type": "string" }, "maxItems": 6 }
+                      }
+                    }
+                  ]
+                },
+                "source": { "type": "string", "description": "who was asked" },
+                "fetchedAt": { "type": "string" }
+              }
+            }
+          ]
+        },
         "conditions": {
           "type": "object",
           "required": ["weather", "road", "light"],

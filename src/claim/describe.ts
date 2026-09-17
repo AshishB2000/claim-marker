@@ -22,7 +22,7 @@
 import { translate, type Key, type Lang } from '../i18n'
 import { paintId, paintLabel } from '../vehicles/paint'
 import { VEHICLES } from '../zones'
-import { KIND_INFO, LIGHT_LABEL, type Claim, type ClaimVehicle, type Conditions, type Person } from './schema'
+import { KIND_INFO, LIGHT_LABEL, type Claim, type ClaimVehicle, type Conditions, type Person, type SceneContext } from './schema'
 
 /** who the sentence is being read by: the customer filling it in, or the desk reading it */
 export type Voice = 'customer' | 'desk'
@@ -193,6 +193,14 @@ export function gaps(claim: Claim, lang: Lang = 'en'): Gap[] {
   return out
 }
 
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'] as const
+
+/** a bearing as the nearest of eight compass words; the diagram's facing card reads the same key */
+export const compassKey = (deg: number): Key => `scene.compass.${COMPASS[Math.round((((deg % 360) + 360) % 360) / 45) % 8]}` as Key
+
+/** the sun is low enough to be in someone's eyes, and high enough to still be up */
+const SUN_LOW = 25
+
 /** the conditions as short readable labels: "Rain", "Wet road", "Dark, street lights on" */
 export function conditionLabels(c: Conditions, lang: Lang = 'en'): string[] {
   if (lang === 'es') {
@@ -203,4 +211,59 @@ export function conditionLabels(c: Conditions, lang: Lang = 'en'): string[] {
     ].filter((s): s is string => !!s)
   }
   return [c.weather && cap(c.weather), c.road && `${cap(c.road)} road`, c.light && LIGHT_LABEL[c.light]].filter((s): s is string => !!s)
+}
+
+/**
+ * What the public record said about the place and the hour, as the short lines the "we looked
+ * this up" card on the Where step and the report's "Looked up" rows both read out.
+ *
+ * The customer's own `conditions` come with it because two of the three — the state of the
+ * road and the light — are exactly what the lookup filled those selects with, so the card is
+ * showing them what it put there. When they have since changed one, the line follows their
+ * answer, not the record: the card is a receipt, not an argument.
+ */
+export function lookedUpLines(ctx: SceneContext, c: Conditions, lang: Lang = 'en'): string[] {
+  const es = lang === 'es'
+  const t = (key: Key, vars?: Record<string, string | number>) => translate(lang, key, vars)
+  const out: string[] = []
+
+  if (ctx.weather) {
+    // the enum word when the lookup filled it, the archive's own English label when it did not
+    const parts = [c.weather ? t(`weather.${c.weather}` as Key) : ctx.weather.label]
+    if (ctx.weather.tempC !== null) parts.push(`${Math.round(ctx.weather.tempC)} °C`)
+    if (ctx.weather.windKph !== null && ctx.weather.windKph >= 30) parts.push(t('start.where.looked.windy', { kph: Math.round(ctx.weather.windKph) }))
+    out.push(parts.join(', '))
+  }
+
+  if (c.road) out.push(es ? t('road.phrase', { road: t(`road.${c.road}` as Key).toLowerCase() }) : `${cap(c.road)} road`)
+
+  if (c.light) {
+    const light = es ? t(`light.${c.light}` as Key) : LIGHT_LABEL[c.light]
+    // where the sun was only says anything while it is low: at noon it is simply up
+    out.push(
+      ctx.sun && ctx.sun.altitude > -6 && ctx.sun.altitude < SUN_LOW
+        ? t('start.where.looked.sun', { light: uncap(light), dir: t(compassKey(ctx.sun.azimuth)) })
+        : light,
+    )
+  }
+
+  if (ctx.road) {
+    const r = ctx.road
+    const bits = [r.name || t('start.where.looked.unnamedRoad')]
+    if (r.lanes !== null) bits.push(r.lanes === 1 ? t('start.where.looked.lane') : t('start.where.looked.lanes', { n: r.lanes }))
+    if (r.oneway) bits.push(t('start.where.looked.oneway'))
+    if (r.maxspeed) bits.push(r.maxspeed)
+    if (r.junction !== 'none') bits.push(t(`junction.${r.junction}` as Key))
+    for (const control of r.controls) bits.push(t(`control.${control}` as Key))
+    out.push(bits.join(', '))
+  }
+
+  return out
+}
+
+/** the sun was low and ahead of this vehicle, as the desk reads it; null when it was not */
+export function glareLine(ctx: SceneContext | null, heading: number, lang: Lang = 'en'): string | null {
+  if (!ctx?.sun || ctx.sun.altitude < 0 || ctx.sun.altitude > SUN_LOW) return null
+  const off = Math.abs((((ctx.sun.azimuth - heading + 540) % 360) - 180))
+  return off > 155 ? translate(lang, 'start.where.looked.glare') : null
 }

@@ -263,6 +263,10 @@ const CONNECT = [
   'https://photon.komoot.io',
   'https://vpic.nhtsa.dot.gov',
   'https://en.wikipedia.org',
+  // the scene the page looks up for itself: the weather at that hour, and the road it happened on
+  'https://api.open-meteo.com',
+  'https://archive-api.open-meteo.com',
+  'https://overpass-api.de',
   ...(process.env.ASSIST_URL ? [new URL(process.env.ASSIST_URL).origin] : []),
   ...(process.env.CONNECT_SRC ?? '').split(',').map((s) => s.trim()).filter(Boolean),
 ]
