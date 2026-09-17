@@ -11,6 +11,7 @@ const sample = (): Claim => ({
     surface: 'satellite',
     conditions: { weather: 'rain', road: 'wet', light: 'dark_lit' },
     description: 'He turned across me',
+    language: 'en',
   },
   vehicles: [
     {

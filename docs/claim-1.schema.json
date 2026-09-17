@@ -50,7 +50,8 @@
             "light": { "enum": ["", "daylight", "dusk", "dark_lit", "dark_unlit"] }
           }
         },
-        "description": { "type": "string" }
+        "description": { "type": "string" },
+        "language": { "enum": ["en", "es"], "description": "the language the customer wrote the free text in; absent in documents from before there was a choice, which means en" }
       }
     },
     "vehicles": { "type": "array", "items": { "$ref": "#/$defs/vehicle" } },

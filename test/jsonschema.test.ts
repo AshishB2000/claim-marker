@@ -26,6 +26,7 @@ const full = () =>
       surface: 'satellite',
       conditions: { weather: 'rain', road: 'wet', light: 'dark_lit' },
       description: 'The van pulled out across me.',
+      language: 'en',
     },
     vehicles: [
       { ...newVehicle('a', 'insured', 'sedan', '#b91c1c'), make: 'Honda', model: 'Civic', year: 2019, position: [-73.98592, 40.75731], heading: 12, path: [[-73.98601, 40.75712]], damages: [damage('front_bumper', [0.18, 0.32, 1.24], 'dent')] },
