@@ -20,10 +20,14 @@ ENV NODE_ENV=production
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/package.json ./package.json
-RUN mkdir -p /data/claims && chown -R node:node /data
-USER node
+RUN apk add --no-cache su-exec && mkdir -p /data/claims && chown -R node:node /data
 ENV PORT=8788 CLAIM_DIR=/data/claims
 EXPOSE 8788
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8788)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "server/claim-server.mjs"]
+# Starts as root for one reason: a Fly volume or a Render disk is mounted over /data owned by
+# root, which the node user cannot write to (a named Docker volume copies the image's owner and
+# would not need this). Take the reports folder for node, then become node for good — the same
+# two steps the official postgres and redis images take. Not recursive: everything inside it
+# was written by node.
+CMD ["sh", "-c", "mkdir -p \"$CLAIM_DIR\" && chown node:node /data \"$CLAIM_DIR\" && exec su-exec node node server/claim-server.mjs"]

@@ -38,7 +38,7 @@
  *   API_KEY          the key the insurer's backend sends to POST /sessions
  *   DESK_TOKEN       if set, GET and PATCH need it — what the claims desk sends
  *   RATE_LIMIT       POSTs per minute per IP, default 30
- *   TRUST_PROXY      1 when something in front sets X-Forwarded-For
+ *   TRUST_PROXY      1 when something in front sets X-Forwarded-For (or Fly-Client-IP)
  *   ALLOWED_HOSTS    origins allowed to embed the page, comma-separated; sets frame-ancestors
  *   BRAND            the insurer's name, injected into the page
  *   ASSIST_URL       an endpoint speaking `claim-assist/1`, injected into the page
@@ -46,16 +46,18 @@
  *   WEBHOOK_URL      where to announce a new report
  *   WEBHOOK_SECRET   the HMAC key for X-Claim-Signature
  *   CLAIM_ORIGIN     an extra origin for CORS; * in development, unset in production
+ *   RETAIN_DAYS      forget reports older than this many days; unset keeps them for ever
  *
  * No dependencies: node's own http, fs and crypto.
  */
 import { createServer } from 'node:http'
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verify as verifySession, sign as signSession } from './session.mjs'
+import { expired } from './retention.mjs'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const LIB = resolve(here, '../dist/lib/claim.js')
@@ -66,16 +68,18 @@ if (!existsSync(LIB)) {
 const { parseClaim, CLAIM_SCHEMA } = await import(LIB)
 
 const PRODUCTION = process.env.NODE_ENV === 'production'
-const PORT = Number(process.env.PORT ?? 8788)
-const DIR = resolve(process.env.CLAIM_DIR ?? 'data/claims')
-const STATIC = resolve(process.env.STATIC_DIR ?? resolve(here, '../dist'))
+// `||`, not `??`: an empty line in .env or compose's ${X:-} must not mean port 0, the current
+// directory, or zero requests a minute
+const PORT = Number(process.env.PORT || 8788)
+const DIR = resolve(process.env.CLAIM_DIR || 'data/claims')
+const STATIC = resolve(process.env.STATIC_DIR || resolve(here, '../dist'))
 const CLAIM_TOKEN = process.env.CLAIM_TOKEN
 const SESSION_SECRET = process.env.SESSION_SECRET
 const API_KEY = process.env.API_KEY
 const DESK_TOKEN = process.env.DESK_TOKEN
 const WEBHOOK_URL = process.env.WEBHOOK_URL
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET ?? ''
-const RATE_LIMIT = Number(process.env.RATE_LIMIT ?? 30)
+const RATE_LIMIT = Number(process.env.RATE_LIMIT || 30)
 const TRUST_PROXY = process.env.TRUST_PROXY === '1'
 const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS ?? '').split(',').map((s) => s.trim()).filter(Boolean)
 /** in production an unset CLAIM_ORIGIN means no CORS header at all: the page it serves needs none */
@@ -83,6 +87,8 @@ const ORIGIN = process.env.CLAIM_ORIGIN ?? (PRODUCTION ? '' : '*')
 /** a document with twelve photographs is a few MB; this is far above any real one */
 const MAX_BODY = 40 * 1024 * 1024
 const STATUSES = ['new', 'reviewing', 'closed']
+/** null keeps every report for ever */
+const RETAIN_DAYS = Number(process.env.RETAIN_DAYS) > 0 ? Number(process.env.RETAIN_DAYS) : null
 
 // ── what an insurer must have decided before this faces the internet ──
 
@@ -136,8 +142,15 @@ function whoSent(req) {
   return null
 }
 
+/**
+ * Fly's proxy sets `Fly-Client-IP` to the address it saw. `X-Forwarded-For` is a list a
+ * client can start itself, and a proxy that appends to it leaves the made-up entry first — a
+ * flood carrying a new one on every request would never run out of tokens.
+ */
 const ipOf = (req) =>
-  (TRUST_PROXY ? String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() : '') || req.socket.remoteAddress || 'unknown'
+  (TRUST_PROXY ? String(req.headers['fly-client-ip'] ?? req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() : '') ||
+  req.socket.remoteAddress ||
+  'unknown'
 
 /**
  * A token bucket per IP, refilling to RATE_LIMIT a minute.
@@ -411,6 +424,21 @@ async function list() {
   return receipts.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1))
 }
 
+/**
+ * Forget what is older than RETAIN_DAYS: the report's folder, photographs and all, and the
+ * page's reference that pointed at it. A public instance that keeps strangers' photographs for
+ * ever is a liability, not an archive.
+ */
+async function sweep() {
+  for (const r of await list()) {
+    // the reference names the folder to delete; one that is not a reference names nothing
+    if (!safeRef(r.reference) || !expired(r.receivedAt, RETAIN_DAYS)) continue
+    await rm(folder(r.reference), { recursive: true, force: true })
+    if (r.clientReference && safeRef(r.clientReference)) await rm(join(DIR, 'by-client', r.clientReference), { force: true })
+    console.log(`swept ${r.reference}, received ${r.receivedAt}`)
+  }
+}
+
 // ── the webhook ──────────────────────────────────────────────────────
 
 async function announce(receipt, doc, base) {
@@ -519,7 +547,7 @@ async function route(req, res) {
   const url = new URL(req.url, 'http://x')
   const parts = url.pathname.split('/').filter(Boolean)
   if (req.method === 'OPTIONS') return cors(res), res.end()
-  if (parts[0] === 'health') return json(res, 200, { ok: true, schema: CLAIM_SCHEMA, static: !!PAGES })
+  if (parts[0] === 'health') return json(res, 200, { ok: true, schema: CLAIM_SCHEMA, static: !!PAGES, retainDays: RETAIN_DAYS })
 
   if (parts[0] === 'sessions' && parts.length === 1) {
     if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
@@ -568,6 +596,12 @@ async function route(req, res) {
 }
 
 await mkdir(DIR, { recursive: true })
+if (RETAIN_DAYS) {
+  const sweepNow = () => sweep().catch((e) => console.error(`sweep: ${e.message}`))
+  sweepNow()
+  // unref: a timer is no reason to keep the process alive
+  setInterval(sweepNow, 6 * 3_600_000).unref()
+}
 createServer((req, res) => {
   route(req, res).catch((e) => {
     console.error(e)
@@ -579,6 +613,7 @@ createServer((req, res) => {
     PAGES ? `serving the page from ${STATIC}` : 'API only',
     SESSION_SECRET ? 'sessions on' : CLAIM_TOKEN ? 'POST needs a token' : 'POST is open',
     `${RATE_LIMIT}/min per IP`,
+    RETAIN_DAYS ? `reports kept ${RETAIN_DAYS} days` : 'reports kept for ever',
   ]
   if (WEBHOOK_URL) bits.push(`announcing to ${WEBHOOK_URL}`)
   console.log(`claim-server on http://localhost:${PORT} — ${bits.join(', ')}`)

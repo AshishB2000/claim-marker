@@ -1,0 +1,37 @@
+# Render: the same image as fly.toml, as a Blueprint (Dashboard → New → Blueprint → this repo).
+#
+# A disk needs a paid instance; a free one has no disk and would lose every report on each
+# deploy. Render sets PORT itself, and the server reads it. Not deployed from here: nothing in
+# this file has been run against Render yet.
+services:
+  - type: web
+    name: claim-marker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    disk:
+      name: claims
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLAIM_DIR
+        value: /data/claims
+      - key: TRUST_PROXY
+        value: '1'
+      - key: RETAIN_DAYS
+        value: '7'
+      # generated once by Render; read them back from the dashboard for scripts/live-check.mjs
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: API_KEY
+        generateValue: true
+      - key: DESK_TOKEN
+        generateValue: true
+      # asked for when the Blueprint is created
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: BRAND
+        sync: false

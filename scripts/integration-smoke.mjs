@@ -15,7 +15,8 @@
  * against the customer the session named; the server's reference replaces the page's; the same
  * document sent twice is filed once; an expired or forged token is refused; a flood is rate
  * limited; the built page is served with a CSP and its runtime config; the webhook carries a
- * valid signature; and the desk lists, opens and re-files the report.
+ * valid signature; the desk lists, opens and re-files the report; and a report older than
+ * RETAIN_DAYS is gone by the time the server is up.
  */
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
@@ -23,7 +24,7 @@ import { sign } from '../server/session.mjs'
 import { createServer } from 'node:http'
 import { createHmac } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -74,6 +75,12 @@ hookServer.on('error', (e) => fail(`webhook receiver: ${e.message}`))
 hookServer.listen(HOOK_PORT)
 
 const dir = await mkdtemp(join(tmpdir(), 'claim-marker-'))
+// a report filed long ago, with the page's reference pointing at it: RETAIN_DAYS should forget both
+const OLD = 'INS-2000-OLDONE'
+await mkdir(join(dir, OLD))
+await writeFile(join(dir, OLD, 'receipt.json'), JSON.stringify({ reference: OLD, clientReference: 'CM-OLDONE', receivedAt: '2000-01-01T00:00:00.000Z', status: 'new', files: {} }))
+await mkdir(join(dir, 'by-client'))
+await writeFile(join(dir, 'by-client', 'CM-OLDONE'), OLD)
 server = spawn(process.execPath, ['server/claim-server.mjs'], {
   env: {
     ...process.env,
@@ -90,6 +97,7 @@ server = spawn(process.execPath, ['server/claim-server.mjs'], {
     BRAND: 'Acme Mutual',
     WEBHOOK_URL: `http://localhost:${HOOK_PORT}/hook`,
     WEBHOOK_SECRET: SECRET,
+    RETAIN_DAYS: '7',
   },
   stdio: ['ignore', 'pipe', 'inherit'],
 })
@@ -117,6 +125,10 @@ for (let i = 0; i < 50; i++) {
   }
 }
 if (!health?.static) fail('the server is not serving the built page; run `npm run build`')
+if (health.retainDays !== 7) fail(`/health says reports are kept ${health.retainDays} days`)
+for (let i = 0; i < 30 && (existsSync(join(dir, OLD)) || existsSync(join(dir, 'by-client', 'CM-OLDONE'))); i++) await new Promise((r) => setTimeout(r, 100))
+if (existsSync(join(dir, OLD)) || existsSync(join(dir, 'by-client', 'CM-OLDONE'))) fail('a report older than RETAIN_DAYS survived startup')
+ok('retention: a report from 2000 and its client reference are swept at startup; /health says 7 days')
 
 // ── the insurer's backend mints a session for the customer who just logged in ──
 

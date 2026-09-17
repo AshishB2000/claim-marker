@@ -1,0 +1,40 @@
+# Fly.io: the page, the claims desk and the API from the Dockerfile in this repo, built on
+# Fly's own builders, with reports on a volume and TLS on a fly.dev hostname.
+#
+# The steps, and the secrets this file deliberately does not hold, are in
+# docs/integration.md under "Deploy to Fly". Not deployed from here: nothing in this file has
+# been run against Fly yet.
+
+# `fly launch` offers to rename this; the URL is https://<app>.fly.dev
+app = 'claim-marker'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  PORT = '8788'
+  CLAIM_DIR = '/data/claims'
+  # Fly's proxy is in front and sets Fly-Client-IP, which the rate limit keys on
+  TRUST_PROXY = '1'
+  NODE_ENV = 'production'
+
+[http_service]
+  internal_port = 8788
+  force_https = true
+  # a demo nobody is looking at costs nothing; the first visitor waits a second or two
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = '10s'
+    interval = '30s'
+    method = 'GET'
+    path = '/health'
+    timeout = '5s'
+
+# one volume, so one machine: the reports are files on it
+[mounts]
+  source = 'claims'
+  destination = '/data'
