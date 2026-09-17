@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { conditionLabels, contactLine, driverName, driverShort, gaps, ownerLabel, personLine, vehicleName, whose, UNKNOWN_DRIVER } from '../src/claim/describe'
+import {
+  cap,
+  conditionLabels,
+  contactLine,
+  displayName,
+  driverName,
+  driverShort,
+  gaps,
+  ownerLabel,
+  personLine,
+  vehicleName,
+  vehicleOf,
+  whose,
+  yesNo,
+  UNKNOWN_DRIVER,
+} from '../src/claim/describe'
 import { emptyClaim, newPerson, newVehicle, type Claim } from '../src/claim/schema'
 
 const mine = { ...newVehicle('a', 'insured', 'sedan', '#b91c1c'), make: 'Toyota', model: 'Camry', year: 2022 }
@@ -99,5 +114,92 @@ describe('how the report names things', () => {
     expect(conditionLabels({ weather: 'rain', road: 'wet', light: 'dark_lit' })).toEqual(['Rain', 'Wet road', 'Dark, street lights on'])
     expect(conditionLabels({ weather: '', road: 'icy', light: '' })).toEqual(['Icy road'])
     expect(conditionLabels({ weather: '', road: '', light: '' })).toEqual([])
+  })
+})
+
+/**
+ * The same sentences in Spanish, written out in full rather than composed by the test, so a
+ * change to any of them has to be made here on purpose. Spanish is not English with the words
+ * swapped: the year follows the model, "de el" contracts to "del", and nothing about a person
+ * is gendered.
+ */
+describe('how the report names things in Spanish', () => {
+  it('a vehicle by make, model and year, or by shape and colour', () => {
+    expect(vehicleName(mine, 'es')).toBe('Toyota Camry 2022')
+    expect(vehicleName(theirs, 'es')).toBe('camioneta SUV de color negro')
+  })
+
+  it('whose it is, and the vehicle with its owner in front', () => {
+    expect(whose(mine, 'customer', 'es')).toBe('tu')
+    expect(whose(theirs, 'customer', 'es')).toBe('el otro vehículo')
+    expect(vehicleOf(mine, 'customer', 'es')).toBe('tu Toyota Camry 2022')
+    expect(vehicleOf(theirs, 'customer', 'es')).toBe('el otro vehículo (camioneta SUV de color negro)')
+    expect(ownerLabel(mine, 'customer', 'es')).toBe('Tu vehículo')
+    expect(ownerLabel(theirs, 'customer', 'es')).toBe('Otro vehículo')
+  })
+
+  it('a person by what they were doing there, without gendering them', () => {
+    expect(personLine({ ...newPerson('driver', 'a'), self: true }, vehicles, 'customer', 'es')).toBe('Tú, al volante de tu Toyota Camry 2022')
+    expect(personLine({ ...newPerson('driver', 'b'), name: 'Dana Quinn' }, vehicles, 'customer', 'es')).toBe(
+      'Dana Quinn, al volante del otro vehículo (camioneta SUV de color negro)',
+    )
+    expect(personLine(newPerson('driver', 'b'), vehicles, 'customer', 'es')).toBe('Quien conducía el otro vehículo (camioneta SUV de color negro)')
+    expect(personLine({ ...newPerson('driver', 'b'), name: UNKNOWN_DRIVER }, vehicles, 'customer', 'es')).toBe(
+      'Quien conducía el otro vehículo (camioneta SUV de color negro) — se desconoce, se fue del lugar',
+    )
+    expect(personLine({ ...newPerson('passenger', 'a'), name: 'Sam Lee' }, vehicles, 'customer', 'es')).toBe('Sam Lee, viajaba en tu Toyota Camry 2022')
+    expect(personLine(newPerson('passenger', 'a'), vehicles, 'customer', 'es')).toBe('Alguien que viajaba en tu Toyota Camry 2022')
+    expect(personLine({ ...newPerson('pedestrian'), name: 'Jo' }, vehicles, 'customer', 'es')).toBe('Jo, a pie o en bicicleta')
+    expect(personLine(newPerson('pedestrian'), vehicles, 'customer', 'es')).toBe('Alguien a pie o en bicicleta')
+    expect(personLine(newPerson('witness'), vehicles, 'customer', 'es')).toBe('Alguien que vio lo que pasó')
+    expect(personLine({ ...newPerson('witness'), name: 'Wit Ness' }, vehicles, 'customer', 'es')).toBe('Wit Ness, que vio lo que pasó')
+  })
+
+  it('a driver inside a group that already names the vehicle', () => {
+    expect(driverShort({ ...newPerson('driver', 'a'), self: true }, 'customer', 'es')).toBe('Tú, al volante')
+    expect(driverShort({ ...newPerson('driver', 'b'), name: 'Dana Quinn' }, 'customer', 'es')).toBe('Dana Quinn, al volante')
+    expect(driverShort({ ...newPerson('driver', 'b'), name: UNKNOWN_DRIVER }, 'customer', 'es')).toBe('Quien conducía — se desconoce, se fue del lugar')
+    expect(driverShort(newPerson('driver', 'b'), 'customer', 'es')).toBe('Quien conducía — sin nombre')
+    expect(driverName(undefined, 'customer', 'es')).toBeNull()
+    expect(driverName({ ...newPerson('driver', 'a'), self: true }, 'customer', 'es')).toBe('Tú')
+    expect(driverName({ ...newPerson('driver', 'b'), name: UNKNOWN_DRIVER }, 'customer', 'es')).toBe('Se desconoce — se fue del lugar')
+    expect(driverName(newPerson('driver', 'b'), 'customer', 'es')).toBeNull()
+  })
+
+  it('shows the English marker for a driver who left, without changing what is stored', () => {
+    expect(displayName(UNKNOWN_DRIVER, 'es')).toBe('Se desconoce — se fue del lugar')
+    expect(displayName(UNKNOWN_DRIVER)).toBe(UNKNOWN_DRIVER)
+    expect(displayName('Dana Quinn', 'es')).toBe('Dana Quinn')
+  })
+
+  it('contact details, yes and no, and a capital letter', () => {
+    expect(contactLine({ ...newPerson('driver', 'b'), phone: '555 0199', licence: 'D1' }, 'es')).toBe('555 0199 · licencia D1')
+    expect(contactLine({ ...newPerson('driver', 'b'), phone: '555 0199' }, 'es')).toBe('555 0199')
+    expect(contactLine(newPerson('driver', 'b'), 'es')).toBe('')
+    expect(yesNo(true, 'es')).toBe('Sí')
+    expect(yesNo(false, 'es')).toBe('No')
+    expect(yesNo(null, 'es')).toBeNull()
+    expect(cap('lluvia')).toBe('Lluvia')
+  })
+
+  it('what is worth adding before sending', () => {
+    const c: Claim = { ...emptyClaim(), vehicles }
+    expect(gaps(c, 'es').map((g) => g.text)).toEqual([
+      'Cuenta con tus palabras lo que pasó',
+      'Quién conducía el otro vehículo (camioneta SUV de color negro), o su aseguradora',
+      'Si se llamó a la policía',
+      'Dónde tiene daños tu Toyota Camry 2022',
+      'Una o dos fotos de los daños',
+      'Si tu vehículo todavía se puede manejar',
+      'Un teléfono o correo electrónico para contactarte',
+    ])
+    // the steps they point at are the same steps whatever the language
+    expect(gaps(c, 'es').map((g) => g.step)).toEqual(gaps(c).map((g) => g.step))
+  })
+
+  it('conditions as labels, skipping what was not answered', () => {
+    expect(conditionLabels({ weather: 'rain', road: 'wet', light: 'dark_lit' }, 'es')).toEqual(['Lluvia', 'Camino mojado', 'De noche, con alumbrado'])
+    expect(conditionLabels({ weather: '', road: 'icy', light: '' }, 'es')).toEqual(['Camino con hielo'])
+    expect(conditionLabels({ weather: '', road: '', light: '' }, 'es')).toEqual([])
   })
 })

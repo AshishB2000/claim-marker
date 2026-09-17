@@ -1,15 +1,17 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { useClaim, othersOf } from '../../../claim/store'
 import { MAX_PHOTOS, ROLE_COLOR, type ClaimVehicle } from '../../../claim/schema'
-import { vehicleName, whose } from '../../../claim/describe'
+import { vehicleName } from '../../../claim/describe'
+import type { Key } from '../../../i18n'
+import { useLang, useT } from '../../../i18n/useT'
 import { Icon } from '../../icons'
 
 /** the shots a claims handler wants, in the order they are easiest to take at the roadside */
 const SHOTS = [
-  { id: 'close', text: 'The damage, close up', art: Icon.closeUp },
-  { id: 'back', text: 'The same, from a step back', art: Icon.stepBack },
-  { id: 'side', text: 'The whole side of the car', art: Icon.carSide },
-  { id: 'other', text: 'The other vehicle and its plate', art: Icon.plate },
+  { id: 'close', art: Icon.closeUp },
+  { id: 'back', art: Icon.stepBack },
+  { id: 'side', art: Icon.carSide },
+  { id: 'other', art: Icon.plate },
 ] as const
 type Shot = (typeof SHOTS)[number]['id']
 
@@ -23,6 +25,8 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
   const addPhotos = useClaim((s) => s.addPhotos)
   const captionPhoto = useClaim((s) => s.captionPhoto)
   const removePhoto = useClaim((s) => s.removePhoto)
+  const lang = useLang()
+  const t = useT()
   const photos = claim.attachments.photos
   const files = useRef<HTMLInputElement>(null)
   const camera = useRef<HTMLInputElement>(null)
@@ -64,10 +68,10 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
         accept="image/*"
         capture="environment"
         className="hidden"
-        aria-label="Take a photo"
+        aria-label={t('damage.takePhoto')}
         onChange={(e) => onFiles(e.target.files, pending.current === 'other' && other ? other.id : v.id, pending.current)}
       />
-      <input ref={files} type="file" accept="image/*" multiple className="hidden" aria-label="Add photos" onChange={(e) => onFiles(e.target.files)} />
+      <input ref={files} type="file" accept="image/*" multiple className="hidden" aria-label={t('damage.addPhotos')} onChange={(e) => onFiles(e.target.files)} />
     </>
   )
 
@@ -75,7 +79,7 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
     <ul className={guided ? 'mt-4 grid grid-cols-3 gap-2' : 'mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5'}>
       {photos.map((p, i) => (
         <li key={i} className="group relative">
-          <img src={p.data} alt={p.caption || `Photo ${i + 1}`} className="aspect-square w-full rounded-lg object-cover ring-1 ring-slate-900/10" />
+          <img src={p.data} alt={p.caption || t('damage.photo.alt', { n: i + 1 })} className="aspect-square w-full rounded-lg object-cover ring-1 ring-slate-900/10" />
           {p.of && (
             <span
               className="absolute top-1.5 left-1.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-white"
@@ -84,13 +88,13 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
               {p.of.toUpperCase()}
             </span>
           )}
-          <button className="absolute top-1.5 right-1.5 grid size-6 place-items-center rounded-full bg-white/90 text-slate-700 shadow hover:bg-white" onClick={() => removePhoto(i)} aria-label={`Remove photo ${i + 1}`}>
+          <button className="absolute top-1.5 right-1.5 grid size-6 place-items-center rounded-full bg-white/90 text-slate-700 shadow hover:bg-white" onClick={() => removePhoto(i)} aria-label={t('damage.photo.remove', { n: i + 1 })}>
             <Icon.x />
           </button>
           <input
             className="input mt-1.5 h-8 py-0 text-xs"
-            placeholder="What it shows"
-            aria-label={`Caption for photo ${i + 1}`}
+            placeholder={t('damage.photo.caption')}
+            aria-label={t('damage.photo.captionAria', { n: i + 1 })}
             value={p.caption}
             onChange={(e) => captionPhoto(i, e.target.value)}
           />
@@ -103,9 +107,9 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
     return (
       <div className="card p-5">
         <h3 className="font-semibold">
-          Photos of {whose(v)} {vehicleName(v)}
+          {t(v.role === 'insured' ? 'damage.guided.title.mine' : 'damage.guided.title.other', { name: vehicleName(v, lang) })}
         </h3>
-        <p className="mt-0.5 text-sm text-slate-500">Start with the photos. We read the damage from them, and you check what we found.</p>
+        <p className="mt-0.5 text-sm text-slate-500">{t('damage.guided.lead')}</p>
         {inputs}
         <ul className="mt-4 grid grid-cols-2 gap-3">
           {SHOTS.filter((s) => s.id !== 'other' || other).map((s) => {
@@ -113,7 +117,7 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
             const shown = data && photos.some((p) => p.data === data) ? data : null
             return (
               <li key={s.id}>
-                <Tile label={s.text} done={!!shown} disabled={adding || full} onClick={() => shoot(s.id)}>
+                <Tile label={t(`damage.shot.${s.id}` as Key)} taken={t('damage.tile.taken', { label: t(`damage.shot.${s.id}` as Key) })} done={!!shown} disabled={adding || full} onClick={() => shoot(s.id)}>
                   {shown ? <img src={shown} alt="" className="size-full object-cover" /> : <s.art />}
                 </Tile>
               </li>
@@ -128,12 +132,12 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
               <span className="text-brand-600">
                 <Icon.gallery />
               </span>
-              Choose from your photos
+              {t('damage.guided.choose')}
             </button>
           </li>
         </ul>
         <p className="mt-3 text-xs text-slate-500">
-          {adding ? 'Adding…' : full ? `That is the most we can take — ${MAX_PHOTOS} photos.` : `${photos.length} of ${MAX_PHOTOS} photos`}
+          {adding ? t('damage.adding') : full ? t('damage.full', { n: MAX_PHOTOS }) : t('damage.count', { n: photos.length, max: MAX_PHOTOS })}
         </p>
         {gallery}
       </div>
@@ -142,10 +146,8 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
 
   return (
     <div className="card mt-5 p-5">
-      <h3 className="font-semibold">Photos</h3>
-      <p className="mt-0.5 text-sm text-slate-500">
-        The damage up close and from a step back, the other vehicle, its plate, their insurance card, the scene. Photos are the first thing a claims handler looks at.
-      </p>
+      <h3 className="font-semibold">{t('damage.photos.title')}</h3>
+      <p className="mt-0.5 text-sm text-slate-500">{t('damage.photos.lead')}</p>
       {inputs}
       <div
         className={`mt-4 flex flex-col items-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 text-center transition ${over ? 'border-brand-500 bg-brand-50' : 'border-slate-300 bg-slate-50/60'}`}
@@ -165,14 +167,18 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
         </span>
         <div className="flex flex-wrap justify-center gap-2">
           <button className="btn btn-primary" onClick={() => camera.current?.click()} disabled={adding || full}>
-            <Icon.camera /> Take a photo
+            <Icon.camera /> {t('damage.takePhoto')}
           </button>
           <button className="btn btn-secondary" onClick={() => files.current?.click()} disabled={adding || full}>
-            <Icon.plus /> Choose photos
+            <Icon.plus /> {t('damage.choosePhotos')}
           </button>
         </div>
         <p className="text-xs text-slate-500">
-          {adding ? 'Adding…' : full ? `That is the most we can take — ${MAX_PHOTOS} photos.` : `Photos of ${v.id.toUpperCase()} · ${photos.length} of ${MAX_PHOTOS} · or drop them here`}
+          {adding
+            ? t('damage.adding')
+            : full
+              ? t('damage.full', { n: MAX_PHOTOS })
+              : t('damage.drop.count', { id: v.id.toUpperCase(), n: photos.length, max: MAX_PHOTOS })}
         </p>
       </div>
       {gallery}
@@ -181,13 +187,13 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
 }
 
 /** one guided shot: a thumb-sized target with the drawing, or the photo once it is taken */
-function Tile({ label, done, disabled, onClick, children }: { label: string; done: boolean; disabled: boolean; onClick: () => void; children: ReactNode }) {
+function Tile({ label, taken, done, disabled, onClick, children }: { label: string; taken: string; done: boolean; disabled: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
       className="relative flex h-full w-full flex-col overflow-hidden rounded-xl bg-white text-left ring-1 ring-slate-300 transition active:scale-[0.98] disabled:opacity-40"
       onClick={onClick}
       disabled={disabled}
-      aria-label={done ? `${label}, taken — take it again` : label}
+      aria-label={done ? taken : label}
     >
       <span className="grid aspect-[4/3] w-full place-items-center bg-slate-50 text-brand-600">{children}</span>
       <span className="px-3 py-2 text-[13px] leading-snug font-medium">{label}</span>

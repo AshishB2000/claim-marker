@@ -664,6 +664,64 @@ mentions fault, cost or speed; nothing blocks Continue or sending.
 scripts prove the contract, the parsing and the layout; the judgement needs a key,
 `scripts/assist-server.mjs` and photographs of actual cars.
 
+## Spanish
+
+A US insurer cannot ship an English-only first-notice-of-loss form. The customer's page is
+now fully Spanish; the document and the claims desk are not, and that asymmetry is the whole
+design: **the customer writes in their language, the insurer reads in one.**
+
+**No library** (`src/i18n/`). Flat keys, `{name}` placeholders, two dictionaries. `index.ts`
+is pure — `translate(lang, key, vars)`, `pickLang`, `plural` — which is what lets
+`src/claim/describe.ts` translate the sentences it composes while still being importable by
+the server's parser. `useT()` binds the store's language for components. `es` is typed
+`Record<Key, string>`, so a key added in English and forgotten in Spanish **fails the build**
+rather than showing an English sentence to someone who asked for Spanish. An i18n library
+would have brought a loader, a provider, an interpolation syntax and a plural engine to
+replace forty lines and one type.
+
+**Messages live in area files** (`areas/vocab|shell|start|scene|damage.ts`) because four
+people translated this page at once and one enormous dictionary is one enormous conflict.
+`vocab` is the shared tables — the kinds, the conditions, the steps, the paints, the seven
+bodies, the 31 panels, the severities, the roles — written once so "hood" is the same word on
+the damage step, the review and the marker. A key defined in two areas is a test failure.
+433 keys in all.
+
+**Spanish is not English with the words swapped.** The year goes after the model ("Toyota
+Camry 2022"); "de el" contracts to "del"; and both people and cars are gendered, which a
+claim form cannot know. So the sentences are built around neutral constructions — "quien
+conducía", "alguien que viajaba en…" — and the other party's vehicle is named as "el otro
+vehículo (…)" rather than guessing an article for "camioneta SUV". Colours follow "de color",
+so one phrasing fits every body. `vehicleOf()` composes owner and name, because in Spanish
+`whose` and `vehicleName` cannot simply sit side by side the way they do in English.
+
+**What is deliberately not translated.** The enum *values* in `claim/1`; `UNKNOWN_DRIVER`,
+which is data written in English whatever the customer reads and shown through
+`displayName()`; the claims desk; the server's messages; `embed.js`. `ReportDocument`,
+`MapScene` and the damage marker are rendered by both sides, so they take `lang` as a **prop**
+defaulting to English rather than reading the store — otherwise an adjuster whose browser
+happens to hold a Spanish draft would read the document in Spanish.
+
+**The document says which language it is in.** `incident.language` is additive to `claim/1`,
+defaulting to `en` for every document written before there was a choice, and the desk shows
+"Reported in Spanish" beside the description. Every assist request carries `lang`, and the
+reference endpoint tells the model which language to answer in.
+
+**The language is chosen in this order:** the host's `lang` (and then the switch is hidden —
+an insurer that fixed the language meant it), then what the customer chose before, then the
+browser, then English. It is stored in the draft (persist v6) and stamped into the document,
+so a report queued offline in Spanish is still Spanish when it leaves.
+
+**Two things that only showed up on screen.** `severity.missing` was "falta la pieza" — three
+words, and the marker's picker is `text-transform: capitalize`, so it read "Falta La Pieza";
+one word fixed it. And the "Punto de impacto" badge is twice the width of "FOUND", which
+squeezed its heading onto two lines until the badge was allowed to wrap.
+
+**The risk, stated plainly:** the Spanish is correct, neutral and Latin American, but
+insurance wording varies by market and by state, and **a native claims person should read it
+once before an insurer sees it**. The Spanish fraud notice is a plain-language translation and
+is *not* legal text; a host must supply its own state's wording, and `fraudNoticeFor()` hands
+back whatever it supplies untouched.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:

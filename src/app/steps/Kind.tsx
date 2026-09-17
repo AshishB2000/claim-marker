@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { useClaim } from '../../claim/store'
-import { KINDS, KIND_INFO, type Kind } from '../../claim/schema'
+import { KINDS, type Kind } from '../../claim/schema'
+import type { Key } from '../../i18n'
+import { useT } from '../../i18n/useT'
 import { Icon } from '../icons'
 
 const ICON: Record<Kind, () => ReactNode> = {
@@ -18,9 +20,10 @@ const ICON: Record<Kind, () => ReactNode> = {
 export function WhatHappened() {
   const kind = useClaim((s) => s.claim.incident.kind)
   const setKind = useClaim((s) => s.setKind)
+  const t = useT()
   return (
     <div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" role="radiogroup" aria-label="What happened">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" role="radiogroup" aria-label={t('start.kind.group')}>
         {KINDS.map((k) => {
           const on = k === kind
           const I = ICON[k]
@@ -36,14 +39,14 @@ export function WhatHappened() {
                 <I />
               </span>
               <span>
-                <span className="block text-[15px] leading-snug font-semibold sm:text-base">{KIND_INFO[k].label}</span>
-                <span className="mt-1 block text-xs text-slate-500 sm:text-sm">{KIND_INFO[k].hint}</span>
+                <span className="block text-[15px] leading-snug font-semibold sm:text-base">{t(`kind.${k}.label` as Key)}</span>
+                <span className="mt-1 block text-xs text-slate-500 sm:text-sm">{t(`kind.${k}.hint` as Key)}</span>
               </span>
             </button>
           )
         })}
       </div>
-      <p className="mt-4 text-sm text-slate-500">Pick the closest. It decides which questions we ask next; you can say more in your own words later.</p>
+      <p className="mt-4 text-sm text-slate-500">{t('start.kind.note')}</p>
     </div>
   )
 }

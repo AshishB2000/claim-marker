@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useClaim } from '../../claim/store'
-import { LIGHT, LIGHT_LABEL, ROAD, WEATHER, nowLocal } from '../../claim/schema'
+import { LIGHT, ROAD, WEATHER, nowLocal } from '../../claim/schema'
 import { reversePlace, searchPlaces, type Place } from '../../geocode'
 import type { LngLat } from '../../geo'
+import type { Key } from '../../i18n'
+import { useT } from '../../i18n/useT'
 import { LocationMap } from '../../map/LocationMap'
 import { Field, Spinner } from '../ui'
 import { Icon } from '../icons'
@@ -11,13 +13,14 @@ export function Where() {
   const incident = useClaim((s) => s.claim.incident)
   const setIncident = useClaim((s) => s.setIncident)
   const setLocation = useClaim((s) => s.setLocation)
+  const t = useT()
 
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Place[]>([])
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
   const [busy, setBusy] = useState<'search' | 'locate' | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<Key | null>(null)
   const abort = useRef<AbortController | null>(null)
   // the address a result put into the box; searching it again would only reopen the list
   const picked = useRef<string | null>(null)
@@ -47,7 +50,7 @@ export function Where() {
           setError(null)
         }
       } catch {
-        if (!ac.signal.aborted) setError('Address search is not responding. You can still drop the pin on the map.')
+        if (!ac.signal.aborted) setError('start.where.searchDown')
       } finally {
         if (!ac.signal.aborted) setBusy(null)
       }
@@ -64,7 +67,7 @@ export function Where() {
   }
 
   const locate = () => {
-    if (!navigator.geolocation) return setError('Your browser does not share location. Search for the address instead.')
+    if (!navigator.geolocation) return setError('start.where.noGeo')
     setBusy('locate')
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
@@ -78,7 +81,7 @@ export function Where() {
       },
       () => {
         setBusy(null)
-        setError('We could not get your location. Search for the address, or drop the pin on the map.')
+        setError('start.where.locateFailed')
       },
       { enableHighAccuracy: true, timeout: 12_000 },
     )
@@ -115,14 +118,14 @@ export function Where() {
     <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:grid-rows-[auto_1fr]">
       <div className="space-y-5 lg:col-start-1">
         <div className="relative">
-          <span className="label">Where did it happen?</span>
+          <span className="label">{t('start.where.label')}</span>
           <div className="relative">
             <span className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-slate-400">
               <Icon.pin />
             </span>
             <input
               className="input pl-10"
-              placeholder="Street, junction, car park, landmark…"
+              placeholder={t('start.where.placeholder')}
               value={query}
               onChange={(e) => {
                 picked.current = null
@@ -137,7 +140,7 @@ export function Where() {
               role="combobox"
               aria-expanded={open}
               aria-controls="place-results"
-              aria-label="Where did it happen?"
+              aria-label={t('start.where.label')}
             />
             {busy === 'search' && (
               <span className="absolute top-1/2 right-3 -translate-y-1/2">
@@ -167,10 +170,10 @@ export function Where() {
 
         <button className="btn btn-secondary w-full" onClick={locate} disabled={busy === 'locate'}>
           {busy === 'locate' ? <Icon.spinner /> : <Icon.locate />}
-          {busy === 'locate' ? 'Finding you…' : "I'm at the scene — use my location"}
+          {busy === 'locate' ? t('start.where.finding') : t('start.where.useLocation')}
         </button>
 
-        {error && <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">{error}</p>}
+        {error && <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">{t(error)}</p>}
 
         {incident.location && (
           <div className="rounded-xl bg-brand-50 px-4 py-3 text-sm ring-1 ring-brand-100">
@@ -180,7 +183,7 @@ export function Where() {
               </span>
               <div>
                 <div className="font-medium">{incident.location.address}</div>
-                <div className="mt-0.5 text-xs text-slate-500">Drag the pin on the map to the exact spot if it is slightly off.</div>
+                <div className="mt-0.5 text-xs text-slate-500">{t('start.where.dragPin')}</div>
               </div>
             </div>
           </div>
@@ -192,14 +195,14 @@ export function Where() {
         {!center && (
           <div className="pointer-events-none absolute inset-x-0 bottom-9 flex justify-center px-4">
             <div className="rounded-full bg-ink/90 px-4 py-2 text-center text-xs font-medium text-white shadow-lg backdrop-blur">
-              Search for the address, use your location, or tap the map where it happened
+              {t('start.where.tapHint')}
             </div>
           </div>
         )}
       </div>
 
       <div className="space-y-5 lg:col-start-1">
-        <Field label="When did it happen?">
+        <Field label={t('start.where.when')}>
           <input
             type="datetime-local"
             className="input"
@@ -210,44 +213,44 @@ export function Where() {
         </Field>
 
         <div>
-          <span className="label">What were the conditions like?</span>
+          <span className="label">{t('start.where.conditions')}</span>
           <div className="grid grid-cols-3 gap-2">
             <select
               className="input"
-              aria-label="Weather"
+              aria-label={t('start.where.weather')}
               value={incident.conditions.weather}
               onChange={(e) => setIncident({ conditions: { ...incident.conditions, weather: e.target.value as typeof incident.conditions.weather } })}
             >
-              <option value="">Weather…</option>
+              <option value="">{t('start.where.pickWeather')}</option>
               {WEATHER.map((w) => (
-                <option key={w} value={w} className="capitalize">
-                  {w[0].toUpperCase() + w.slice(1)}
+                <option key={w} value={w}>
+                  {t(`weather.${w}` as Key)}
                 </option>
               ))}
             </select>
             <select
               className="input"
-              aria-label="Road"
+              aria-label={t('start.where.road')}
               value={incident.conditions.road}
               onChange={(e) => setIncident({ conditions: { ...incident.conditions, road: e.target.value as typeof incident.conditions.road } })}
             >
-              <option value="">Road…</option>
+              <option value="">{t('start.where.pickRoad')}</option>
               {ROAD.map((r) => (
                 <option key={r} value={r}>
-                  {r[0].toUpperCase() + r.slice(1)}
+                  {t(`road.${r}` as Key)}
                 </option>
               ))}
             </select>
             <select
               className="input"
-              aria-label="Light"
+              aria-label={t('start.where.light')}
               value={incident.conditions.light}
               onChange={(e) => setIncident({ conditions: { ...incident.conditions, light: e.target.value as typeof incident.conditions.light } })}
             >
-              <option value="">Light…</option>
+              <option value="">{t('start.where.pickLight')}</option>
               {LIGHT.map((l) => (
                 <option key={l} value={l}>
-                  {LIGHT_LABEL[l]}
+                  {t(`light.${l}` as Key)}
                 </option>
               ))}
             </select>

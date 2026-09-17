@@ -194,6 +194,17 @@ export const SURFACES = ['satellite', 'streets', 'lot', 'paper'] as const
 export type Surface = (typeof SURFACES)[number]
 export const isSurface = (v: unknown): v is Surface => (SURFACES as readonly string[]).includes(v as string)
 
+/**
+ * The language the customer wrote the report in. The document's words — the description, the
+ * captions, the notes — are the customer's own; an adjuster needs to know which language they
+ * are in before reading them. Listed here rather than imported from `src/i18n` so this file,
+ * which is also the server's parser, does not pull every dictionary into `dist/lib/claim.js`;
+ * `test/i18n.test.ts` asserts the two lists agree.
+ */
+export const LANGUAGES = ['en', 'es'] as const
+export type Language = (typeof LANGUAGES)[number]
+export const isLanguage = (v: unknown): v is Language => (LANGUAGES as readonly string[]).includes(v as string)
+
 export type Incident = {
   kind: Kind
   /** local date and time, `YYYY-MM-DDTHH:mm`, as the form field holds it */
@@ -202,6 +213,8 @@ export type Incident = {
   surface: Surface
   conditions: Conditions
   description: string
+  /** what language `description` and the other free text are in; `en` for documents from before there was a choice */
+  language: Language
 }
 
 export type Attachments = {
@@ -335,7 +348,7 @@ export const emptyClaim = (): Claim => ({
   reference: null,
   submittedAt: null,
   reporter: { name: '', phone: '', email: '', policy: '', policyholder: null },
-  incident: { kind: 'collision', at: nowLocal(), location: null, surface: 'satellite', conditions: { weather: '', road: '', light: '' }, description: '' },
+  incident: { kind: 'collision', at: nowLocal(), location: null, surface: 'satellite', conditions: { weather: '', road: '', light: '' }, description: '', language: 'en' },
   vehicles: [newVehicle('a', 'insured', 'sedan', '#b9bec6'), newVehicle('b', 'other', 'suv', '#1c1f26')],
   people: [],
   impact: null,
@@ -389,6 +402,7 @@ export const toDocument = (claim: Claim): Claim => {
         light: oneOf(LIGHT, claim.incident.conditions.light),
       },
       description: str(claim.incident.description),
+      language: isLanguage(claim.incident.language) ? claim.incident.language : 'en',
     },
     vehicles: claim.vehicles.map(claimVehicle),
     people,
@@ -535,6 +549,7 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
       surface: isSurface(inc.surface) ? inc.surface : 'satellite',
       conditions: { weather: oneOf(WEATHER, cond.weather), road: oneOf(ROAD, cond.road), light: oneOf(LIGHT, cond.light) },
       description: str(inc.description),
+      language: isLanguage(inc.language) ? inc.language : 'en',
     },
     vehicles,
     people,

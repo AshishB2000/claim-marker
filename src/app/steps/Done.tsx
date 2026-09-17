@@ -1,11 +1,13 @@
 import { useClaim } from '../../claim/store'
 import { toDocument } from '../../claim/schema'
+import { useT } from '../../i18n/useT'
 import { Icon } from '../icons'
 
 export function Done() {
   const claim = useClaim((s) => s.claim)
   const delivery = useClaim((s) => s.delivery)
   const reset = useClaim((s) => s.reset)
+  const t = useT()
   const queued = delivery === 'queued'
 
   const download = () => {
@@ -23,36 +25,28 @@ export function Done() {
           {queued ? <path d="M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" /> : <path d="M20 6 9 17l-5-5" />}
         </svg>
       </span>
-      <h1 className="mt-5 text-3xl font-semibold tracking-tight">{queued ? 'Your report is saved' : 'Your report is in'}</h1>
-      <p className="mt-2 text-slate-500">
-        {queued
-          ? 'There is no signal right now. It will send itself the moment your phone is back online — keep this page open, or come back to it.'
-          : 'Keep this reference. You will need it if you call about the claim.'}
-      </p>
+      <h1 className="mt-5 text-3xl font-semibold tracking-tight">{t(queued ? 'shell.done.queued.title' : 'shell.done.sent.title')}</h1>
+      <p className="mt-2 text-slate-500">{t(queued ? 'shell.done.queued.lead' : 'shell.done.sent.lead')}</p>
       <div className="card mx-auto mt-6 inline-block px-8 py-4">
-        <div className="eyebrow">{queued ? 'Reference · sending soon' : 'Reference'}</div>
+        <div className="eyebrow">{t(queued ? 'shell.done.queued.ref' : 'shell.done.ref')}</div>
         <div className="mt-1 font-mono text-3xl font-semibold tracking-wider">{claim.reference}</div>
       </div>
 
       <ol className="mx-auto mt-8 max-w-md space-y-3 text-left text-sm">
-        {[
-          'A claims handler reviews what you sent — the map, the vehicles and the damage you marked.',
-          'If anything is unclear they will contact you, usually within one working day.',
-          'You can arrange repairs once the claim is accepted.',
-        ].map((t, i) => (
-          <li key={i} className="flex gap-3">
+        {(['shell.done.next1', 'shell.done.next2', 'shell.done.next3'] as const).map((key, i) => (
+          <li key={key} className="flex gap-3">
             <span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-900 text-xs font-bold text-white">{i + 1}</span>
-            <span className="text-slate-600">{t}</span>
+            <span className="text-slate-600">{t(key)}</span>
           </li>
         ))}
       </ol>
 
       <div className="mt-8 flex flex-wrap justify-center gap-2">
         <button className="btn btn-secondary" onClick={download}>
-          <Icon.download /> Download a copy
+          <Icon.download /> {t('shell.done.download')}
         </button>
         <button className="btn btn-ghost" onClick={reset}>
-          Report another accident
+          {t('shell.done.again')}
         </button>
       </div>
     </div>

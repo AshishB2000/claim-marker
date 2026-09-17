@@ -1,13 +1,13 @@
 import { Fragment, useRef, type ReactNode, type RefObject } from 'react'
 import { useClaim, type Step } from '../claim/store'
 import { KIND_INFO, ROLE_COLOR, newPerson, type Claim, type ClaimVehicle, type Person } from '../claim/schema'
-import { cap, conditionLabels, contactLine, driverName, driverShort, gaps, ownerLabel, personLine, vehicleName, whose, yesNo, type Voice } from '../claim/describe'
+import { cap, conditionLabels, contactLine, driverName, driverShort, gaps, ownerLabel, personLine, vehicleName, vehicleOf, yesNo, type Voice } from '../claim/describe'
 import type { LngLat } from '../geo'
+import { plural, translate, type Key, type Lang, type Vars } from '../i18n'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
 import { DamageMarker, type DamageMarkerHandle } from '../marker/DamageMarker'
 import { SCHEMA, SEVERITY_COLOR } from '../schema'
-import { zoneById } from '../zones'
-import { paintLabel } from '../vehicles/paint'
+import { PAINTS } from '../vehicles/paint'
 import { Icon } from './icons'
 import { VehiclePhoto } from './VehiclePhoto'
 import { MarkPhotos } from './MarkPhotos'
@@ -15,11 +15,11 @@ import { usePlayback } from '../map/usePlayback'
 
 // ── the pieces the document is written in ────────────────────────────
 
-function Edit({ step, children = 'Change' }: { step: Step; children?: ReactNode }) {
+function Edit({ step, lang, children }: { step: Step; lang: Lang; children?: ReactNode }) {
   const goto = useClaim((s) => s.goto)
   return (
     <button className="text-xs font-semibold text-brand-700 underline-offset-2 hover:underline print:hidden" onClick={() => goto(step)}>
-      {children}
+      {children ?? translate(lang, 'common.change')}
     </button>
   )
 }
@@ -37,9 +37,12 @@ function Part({ title, edit, children }: { title: string; edit?: ReactNode; chil
   )
 }
 
-const NotGiven = () => <span className="text-slate-400">Not given</span>
-const given = (s: string | null | undefined): ReactNode => (s ? s : <NotGiven />)
-const mono = (s: string | null | undefined): ReactNode => (s ? <span className="font-mono text-[13px]">{s}</span> : <NotGiven />)
+const NotGiven = ({ lang }: { lang: Lang }) => <span className="text-slate-400">{translate(lang, 'common.notGiven')}</span>
+const given = (s: string | null | undefined, lang: Lang): ReactNode => (s ? s : <NotGiven lang={lang} />)
+const mono = (s: string | null | undefined, lang: Lang): ReactNode => (s ? <span className="font-mono text-[13px]">{s}</span> : <NotGiven lang={lang} />)
+/** which swatch a stored hex is, so the colour is named in the reader's language */
+const paintId = (hex: string) => PAINTS.find((p) => p.hex === hex.toLowerCase())?.id ?? 'custom'
+
 /** a yes/no answered as words, or not answered */
 const answered = (v: boolean | null, yes: string, no: string): string | null => (v === null ? null : v ? yes : no)
 
@@ -65,13 +68,14 @@ function Tag({ v }: { v: ClaimVehicle }) {
   )
 }
 
-const when = (at: string) => {
+const when = (at: string, lang: Lang) => {
   const d = new Date(at)
-  return Number.isNaN(d.getTime()) ? at : d.toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' })
+  // English follows the reader's own locale, as it always did; Spanish is asked for by name
+  return Number.isNaN(d.getTime()) ? at : d.toLocaleString(lang === 'es' ? 'es' : undefined, { dateStyle: 'full', timeStyle: 'short' })
 }
 
 /** the marks on one vehicle, numbered as they are on the car */
-function Marks({ v, photos }: { v: ClaimVehicle; photos: Claim['attachments']['photos'] }) {
+function Marks({ v, photos, lang }: { v: ClaimVehicle; photos: Claim['attachments']['photos']; lang: Lang }) {
   return (
     <ol className="space-y-1.5 text-sm">
       {v.damages.map((d, i) => (
@@ -80,10 +84,10 @@ function Marks({ v, photos }: { v: ClaimVehicle; photos: Claim['attachments']['p
             {i + 1}
           </span>
           <span>
-            <span className="font-medium">{zoneById(v.body, d.zone)?.label ?? d.zone}</span>
-            <span className="text-slate-500"> — {d.severity}</span>
+            <span className="font-medium">{translate(lang, `zone.${d.zone}` as Key)}</span>
+            <span className="text-slate-500"> — {translate(lang, `severity.${d.severity}` as Key)}</span>
             {d.note && <span className="block text-slate-600">“{d.note}”</span>}
-            <MarkPhotos photos={photos} of={v.id} zone={d.zone} />
+            <MarkPhotos photos={photos} of={v.id} zone={d.zone} lang={lang} />
           </span>
         </li>
       ))}
@@ -91,11 +95,11 @@ function Marks({ v, photos }: { v: ClaimVehicle; photos: Claim['attachments']['p
   )
 }
 
-function Hurt({ p }: { p: Person }) {
+function Hurt({ p, lang }: { p: Person; lang: Lang }) {
   if (!p.injured) return null
   return (
     <span className="mt-0.5 block text-red-700">
-      <span className="font-semibold">Hurt</span>
+      <span className="font-semibold">{translate(lang, 'scene.doc.hurtLabel')}</span>
       {p.injury && ` — ${p.injury}`}
     </span>
   )
@@ -114,6 +118,8 @@ export type ReportDocumentProps = {
   badge?: ReactNode
   /** who is reading: the customer ("your Camry") or the claims desk ("the policyholder's") */
   voice?: Voice
+  /** which language to read it in; the claims desk renders this too and always stays English */
+  lang?: Lang
 }
 
 /**
@@ -121,7 +127,8 @@ export type ReportDocumentProps = {
  * customer reads it on the review step with a way back into every section; the insurer
  * reads the same component on the claims desk with none.
  */
-export function ReportDocument({ claim, edit = false, mapRef, markers, badge, voice = 'customer' }: ReportDocumentProps) {
+export function ReportDocument({ claim, edit = false, mapRef, markers, badge, voice = 'customer', lang = 'en' }: ReportDocumentProps) {
+  const t = (key: Key, vars?: Vars) => translate(lang, key, vars)
   const ownMarkers = useRef(new Map<string, DamageMarkerHandle>())
   const marks = markers ?? ownMarkers
   const play = usePlayback(claim.vehicles)
@@ -130,7 +137,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
   const center: LngLat | null = loc ? [loc.lng, loc.lat] : null
   const info = KIND_INFO[claim.incident.kind]
   const mine = claim.vehicles.find((v) => v.role === 'insured') ?? claim.vehicles[0]
-  const conditions = conditionLabels(claim.incident.conditions)
+  const conditions = conditionLabels(claim.incident.conditions, lang)
   const damaged = claim.vehicles.filter((v) => v.damages.length > 0)
   const photos = claim.attachments.photos
   const hurt = claim.people.filter((p) => p.injured)
@@ -138,8 +145,8 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
   const inVehicle = (v: ClaimVehicle) => claim.people.filter((p) => p.vehicle === v.id && p.role !== 'driver')
   const outside = claim.people.filter((p) => !p.vehicle)
   const cond = mine?.condition
-  const missing = edit ? gaps(claim) : []
-  const change = (step: Step) => (edit ? <Edit step={step} /> : undefined)
+  const missing = edit ? gaps(claim, lang) : []
+  const change = (step: Step) => (edit ? <Edit step={step} lang={lang} /> : undefined)
 
   return (
     <article className="card overflow-hidden">
@@ -147,13 +154,16 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
       <header className="border-b border-slate-100 bg-gradient-to-b from-slate-50 to-white px-6 py-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="eyebrow">Accident report{claim.reference && !edit ? ` · ${claim.reference}` : ''}</div>
+            <div className="eyebrow">
+              {t('scene.doc.title')}
+              {claim.reference && !edit ? ` · ${claim.reference}` : ''}
+            </div>
             <h2 className="mt-1 flex flex-wrap items-baseline gap-3 text-2xl font-semibold tracking-tight">
-              {info.label}
+              {t(`kind.${claim.incident.kind}.label` as Key)}
               {change('kind')}
             </h2>
           </div>
-          {edit ? <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">Draft — not sent yet</span> : badge}
+          {edit ? <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">{t('scene.doc.draft')}</span> : badge}
         </div>
         <div className="mt-5 grid gap-x-10 gap-y-3 sm:grid-cols-2">
           <div className="flex items-start gap-3">
@@ -161,9 +171,10 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
               <Icon.pin />
             </span>
             <div>
-              <div className="text-sm font-medium">{loc?.address ?? <NotGiven />}</div>
+              <div className="text-sm font-medium">{loc?.address ?? <NotGiven lang={lang} />}</div>
               <div className="mt-0.5 text-xs text-slate-500">
-                Where it happened{edit && <> · {change('where')}</>}
+                {t('scene.doc.where')}
+                {edit && <> · {change('where')}</>}
               </div>
             </div>
           </div>
@@ -172,9 +183,9 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
               <Icon.target />
             </span>
             <div>
-              <div className="text-sm font-medium">{when(claim.incident.at)}</div>
+              <div className="text-sm font-medium">{when(claim.incident.at, lang)}</div>
               <div className="mt-0.5 text-xs text-slate-500">
-                {conditions.length ? conditions.join(' · ') : 'Conditions not given'}
+                {conditions.length ? conditions.join(' · ') : t('scene.doc.noConditions')}
                 {edit && <> · {change('where')}</>}
               </div>
             </div>
@@ -186,8 +197,8 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
       {edit &&
         (missing.length > 0 ? (
           <div className="border-b border-slate-100 bg-amber-50/60 px-6 py-4">
-            <div className="text-sm font-semibold text-amber-900">Worth adding before you send</div>
-            <p className="mt-0.5 text-xs text-amber-800/80">None of this stops you sending. Each one is a phone call saved.</p>
+            <div className="text-sm font-semibold text-amber-900">{t('scene.doc.gapsTitle')}</div>
+            <p className="mt-0.5 text-xs text-amber-800/80">{t('scene.doc.gapsLead')}</p>
             <ul className="mt-2 grid gap-x-6 gap-y-1 text-sm text-amber-900 sm:grid-cols-2">
               {missing.map((g) => (
                 <li key={g.text} className="flex items-start gap-2">
@@ -197,7 +208,10 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                     {g.step !== 'review' && (
                       <>
                         {' '}
-                        · <Edit step={g.step}>Add it</Edit>
+                        ·{' '}
+                        <Edit step={g.step} lang={lang}>
+                          {t('scene.doc.gapsAdd')}
+                        </Edit>
                       </>
                     )}
                   </span>
@@ -207,28 +221,32 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
           </div>
         ) : (
           <div className="flex items-center gap-2 border-b border-slate-100 bg-emerald-50/60 px-6 py-3 text-sm font-medium text-emerald-800">
-            <Icon.check /> Everything a claims handler needs is here.
+            <Icon.check /> {t('scene.doc.complete')}
           </div>
         ))}
 
       {/* ── vehicles ────────────────────────────────────────────── */}
-      <Part title="Vehicles" edit={change('vehicles')}>
+      <Part title={t('scene.doc.vehicles')} edit={change('vehicles')}>
         <div className="divide-y divide-slate-100">
           {claim.vehicles.map((v) => {
             const d = driverOf(v)
+            const driver = driverName(d, voice, lang)
             const rows: [string, ReactNode][] = [
-              ['Colour', paintLabel(v.color)],
-              ['Plate', given(v.plate ? `${v.plate}${v.plateState ? ` (${v.plateState})` : ''}` : null)],
-              ['VIN', mono(v.vin)],
+              [t('scene.doc.colour'), t(`paint.${paintId(v.color)}` as Key)],
+              [t('scene.doc.plate'), given(v.plate ? `${v.plate}${v.plateState ? ` (${v.plateState})` : ''}` : null, lang)],
+              [t('scene.doc.vin'), mono(v.vin, lang)],
             ]
             if (v.role !== 'insured') {
               rows.push(
-                ['Driver', given(driverName(d, voice) ? `${driverName(d, voice)}${d && contactLine(d) ? ` · ${contactLine(d)}` : ''}` : null)],
-                ['Insurer', given(v.insurer ? `${v.insurer}${v.policy ? `, policy ${v.policy}` : ''}` : null)],
-                ['Owner', v.owner || 'The driver'],
+                [t('scene.doc.driver'), given(driver ? `${driver}${d && contactLine(d, lang) ? ` · ${contactLine(d, lang)}` : ''}` : null, lang)],
+                [t('scene.doc.insurer'), given(v.insurer ? `${v.insurer}${v.policy ? t('scene.doc.policySuffix', { policy: v.policy }) : ''}` : null, lang)],
+                [t('scene.doc.owner'), v.owner || t('scene.doc.ownerDriver')],
               )
             }
-            rows.push(['Damage', v.damages.length ? `${v.damages.length} panel${v.damages.length === 1 ? '' : 's'} marked, below` : 'None marked'])
+            rows.push([
+              t('scene.doc.damage'),
+              v.damages.length ? t(plural(v.damages.length, 'scene.doc.panels.one', 'scene.doc.panels.other'), { n: v.damages.length }) : t('scene.doc.noPanels'),
+            ])
             return (
               <div key={v.id} className="flex gap-4 py-4 first:pt-0 last:pb-0">
                 <VehiclePhoto
@@ -243,8 +261,8 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                 <div className="min-w-0 flex-1">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <Tag v={v} />
-                    <span className="font-semibold">{vehicleName(v)}</span>
-                    <span className="text-xs text-slate-500">{ownerLabel(v, voice)}</span>
+                    <span className="font-semibold">{vehicleName(v, lang)}</span>
+                    <span className="text-xs text-slate-500">{ownerLabel(v, voice, lang)}</span>
                   </div>
                   <Rows items={rows} />
                 </div>
@@ -255,15 +273,15 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
       </Part>
 
       {/* ── people ──────────────────────────────────────────────── */}
-      <Part title="People and injuries" edit={change('people')}>
+      <Part title={t('step.people')} edit={change('people')}>
         <div className="mb-3">
           {hurt.length ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700 ring-1 ring-red-200">
-              {hurt.length} {hurt.length === 1 ? 'person' : 'people'} hurt
+              {t(plural(hurt.length, 'scene.doc.hurt.one', 'scene.doc.hurt.other'), { n: hurt.length })}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-              <Icon.check /> No one hurt
+              <Icon.check /> {t('scene.doc.noneHurt')}
             </span>
           )}
         </div>
@@ -275,7 +293,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
               <div key={v.id} className="rounded-xl bg-slate-50 p-4">
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <Tag v={v} />
-                  In {whose(v, voice)} {vehicleName(v)}
+                  {t('scene.doc.inVehicle', { vehicle: vehicleOf(v, voice, lang) })}
                 </div>
                 <ul className="space-y-2 text-sm">
                   <li className="flex items-start gap-2">
@@ -285,14 +303,14 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                     <span>
                       {d ? (
                         <>
-                          {driverShort(d, voice)}
-                          {contactLine(d) && <span className="block text-xs text-slate-500">{contactLine(d)}</span>}
-                          <Hurt p={d} />
+                          {driverShort(d, voice, lang)}
+                          {contactLine(d, lang) && <span className="block text-xs text-slate-500">{contactLine(d, lang)}</span>}
+                          <Hurt p={d} lang={lang} />
                         </>
                       ) : v.role === 'insured' ? (
-                        driverShort({ ...newPerson('driver', v.id), self: true }, voice)
+                        driverShort({ ...newPerson('driver', v.id), self: true }, voice, lang)
                       ) : (
-                        <span className="text-slate-400">Driver not given</span>
+                        <span className="text-slate-400">{t('scene.doc.noDriver')}</span>
                       )}
                     </span>
                   </li>
@@ -302,9 +320,9 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                         <Icon.person />
                       </span>
                       <span>
-                        {p.name || 'A passenger'}, passenger
+                        {t('scene.doc.passengerRow', { name: p.name || t('scene.doc.aPassenger') })}
                         {p.phone && <span className="block text-xs text-slate-500">{p.phone}</span>}
-                        <Hurt p={p} />
+                        <Hurt p={p} lang={lang} />
                       </span>
                     </li>
                   ))}
@@ -314,7 +332,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
           })}
           {outside.length > 0 && (
             <div className="rounded-xl bg-slate-50 p-4">
-              <div className="mb-2 text-sm font-semibold">Not in a vehicle</div>
+              <div className="mb-2 text-sm font-semibold">{t('scene.doc.outside')}</div>
               <ul className="space-y-2 text-sm">
                 {outside.map((p, i) => (
                   <li key={i} className="flex items-start gap-2">
@@ -322,9 +340,9 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                       <Icon.person />
                     </span>
                     <span>
-                      {personLine(p, claim.vehicles, voice)}
-                      {contactLine(p) && <span className="block text-xs text-slate-500">{contactLine(p)}</span>}
-                      <Hurt p={p} />
+                      {personLine(p, claim.vehicles, voice, lang)}
+                      {contactLine(p, lang) && <span className="block text-xs text-slate-500">{contactLine(p, lang)}</span>}
+                      <Hurt p={p} lang={lang} />
                     </span>
                   </li>
                 ))}
@@ -337,18 +355,18 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
             <span className="text-slate-400">
               <Icon.shield />
             </span>
-            Police
+            {t('scene.doc.police')}
           </div>
           {claim.police.called === null ? (
-            <p className="text-sm text-slate-400">Not answered — were the police called?</p>
+            <p className="text-sm text-slate-400">{t('scene.doc.policeUnknown')}</p>
           ) : claim.police.called === false ? (
-            <p className="text-sm">The police were not called.</p>
+            <p className="text-sm">{t('scene.doc.policeNo')}</p>
           ) : (
             <Rows
               items={[
-                ['Department', given(claim.police.department)],
-                ['Report number', mono(claim.police.report)],
-                ['Tickets', claim.police.citations || 'None mentioned'],
+                [t('scene.doc.department'), given(claim.police.department, lang)],
+                [t('scene.doc.reportNumber'), mono(claim.police.report, lang)],
+                [t('scene.doc.tickets'), claim.police.citations || t('scene.doc.noTickets')],
               ]}
             />
           )}
@@ -356,19 +374,36 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
       </Part>
 
       {/* ── what happened ───────────────────────────────────────── */}
-      <Part title="What happened" edit={change(info.diagram ? 'scene' : 'damage')}>
+      <Part title={t('scene.doc.happened')} edit={change(info.diagram ? 'scene' : 'damage')}>
         {claim.incident.description ? (
-          <blockquote className="border-l-4 border-brand-200 pl-4 text-[15px] leading-relaxed whitespace-pre-line">{claim.incident.description}</blockquote>
+          <>
+            {/* the desk reads English; this says the words below it were not written in it */}
+            {claim.incident.language === 'es' && lang === 'en' && (
+              <div className="mb-2 text-xs font-semibold text-slate-500">{t('scene.doc.reportedInSpanish')}</div>
+            )}
+            <blockquote className="border-l-4 border-brand-200 pl-4 text-[15px] leading-relaxed whitespace-pre-line">{claim.incident.description}</blockquote>
+          </>
         ) : (
-          <p className="text-sm text-slate-400">No description written{edit ? '. A sentence or two in your own words helps' : ''}.</p>
+          <p className="text-sm text-slate-400">{edit ? t('scene.doc.noDescriptionEdit') : t('scene.doc.noDescription')}</p>
         )}
         {center && info.diagram && (
           <figure className="mt-4 overflow-hidden rounded-xl ring-1 ring-slate-900/10">
             <div className="relative">
-              <MapScene ref={mapRef} center={center} style={claim.incident.surface} vehicles={claim.vehicles} impact={claim.impact} selected={null} interactive={false} poses={play.poses} className="h-[360px]" />
+              <MapScene
+                ref={mapRef}
+                center={center}
+                style={claim.incident.surface}
+                vehicles={claim.vehicles}
+                impact={claim.impact}
+                selected={null}
+                lang={lang}
+                interactive={false}
+                poses={play.poses}
+                className="h-[360px]"
+              />
               {play.canPlay && (
                 <button className="chip absolute top-3 right-3 print:hidden" onClick={play.playing ? play.stop : play.start} aria-pressed={play.playing}>
-                  {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? 'Stop' : 'Play it back'}
+                  {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
                 </button>
               )}
             </div>
@@ -378,25 +413,25 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                 .map((v) => (
                   <span key={v.id} className="inline-flex items-center gap-1.5">
                     <span className="size-2.5 rounded-sm" style={{ background: ROLE_COLOR[v.role] }} />
-                    {v.id.toUpperCase()} · {whose(v, voice)} {vehicleName(v)}
+                    {v.id.toUpperCase()} · {vehicleOf(v, voice, lang)}
                   </span>
                 ))}
               {claim.impact && (
                 <span className="inline-flex items-center gap-1.5">
                   <span className="grid size-3.5 place-items-center rounded-full bg-red-600 text-[8px] font-bold text-white">✕</span>
-                  where they hit
+                  {t('scene.doc.whereHit')}
                 </span>
               )}
-              <span className="ml-auto">The lines are the routes each vehicle took.</span>
+              <span className="ml-auto">{t('scene.doc.routes')}</span>
             </figcaption>
           </figure>
         )}
       </Part>
 
       {/* ── damage ──────────────────────────────────────────────── */}
-      <Part title="Damage" edit={change('damage')}>
+      <Part title={t('scene.doc.damage')} edit={change('damage')}>
         {damaged.length === 0 ? (
-          <p className="text-sm text-slate-400">No damage marked on any vehicle.</p>
+          <p className="text-sm text-slate-400">{t('scene.doc.noDamage')}</p>
         ) : (
           <div className="space-y-4">
             {damaged.map((v) => (
@@ -409,15 +444,16 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                     }}
                     vehicle={v.body}
                     paint={v.color}
+                    lang={lang}
                     value={{ schema: SCHEMA, vehicle: v.body, damages: v.damages }}
                   />
                 </div>
                 <div className="p-4 pt-3 sm:pl-0">
                   <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                     <Tag v={v} />
-                    {cap(whose(v, voice))} {vehicleName(v)}
+                    {cap(vehicleOf(v, voice, lang))}
                   </div>
-                  <Marks v={v} photos={photos} />
+                  <Marks v={v} photos={photos} lang={lang} />
                 </div>
               </div>
             ))}
@@ -427,17 +463,17 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
         {photos.length > 0 && (
           <div className="mt-5">
             <div className="mb-2 text-sm font-semibold">
-              Photos <span className="font-normal text-slate-500">· {photos.length}</span>
+              {t('scene.doc.photos')} <span className="font-normal text-slate-500">· {photos.length}</span>
             </div>
             <ul className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
               {photos.map((p, i) => (
                 <li key={i}>
                   <a href={p.data} target="_blank" rel="noreferrer" className="block">
-                    <img src={p.data} alt={p.caption || `Photo ${i + 1}`} className="aspect-square w-full rounded-lg object-cover ring-1 ring-slate-900/10" />
+                    <img src={p.data} alt={p.caption || t('scene.doc.photoAlt', { n: i + 1 })} className="aspect-square w-full rounded-lg object-cover ring-1 ring-slate-900/10" />
                   </a>
                   <span className="mt-1 block truncate text-[11px] text-slate-600">
                     {p.of && <span className="font-semibold">{p.of.toUpperCase()} · </span>}
-                    {p.caption || <span className="text-slate-400">No caption</span>}
+                    {p.caption || <span className="text-slate-400">{t('scene.doc.noCaption')}</span>}
                   </span>
                 </li>
               ))}
@@ -449,23 +485,23 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl bg-slate-50 p-4">
               <div className="mb-2 text-sm font-semibold">
-                {cap(whose(mine, voice))} {vehicleName(mine)} now
+                {t('scene.doc.now', { vehicle: cap(vehicleOf(mine, voice, lang)) })}
               </div>
               <Rows
                 items={[
-                  ['Drivable', given(answered(cond.drivable, 'Yes', 'No'))],
-                  ['Airbags', given(answered(cond.airbags, 'Went off', 'Did not go off'))],
-                  ['Towed', given(yesNo(cond.towed))],
-                  ['Where it is', given(cond.location)],
+                  [t('scene.doc.drivable'), given(answered(cond.drivable, t('common.yes'), t('common.no')), lang)],
+                  [t('scene.doc.airbags'), given(answered(cond.airbags, t('scene.doc.airbagsYes'), t('scene.doc.airbagsNo')), lang)],
+                  [t('scene.doc.towed'), given(yesNo(cond.towed, lang), lang)],
+                  [t('scene.doc.whereItIs'), given(cond.location, lang)],
                 ]}
               />
             </div>
             <div className="rounded-xl bg-slate-50 p-4">
-              <div className="mb-2 text-sm font-semibold">Other property</div>
+              <div className="mb-2 text-sm font-semibold">{t('scene.doc.otherProperty')}</div>
               {claim.property.description ? (
-                <Rows items={[['Damaged', claim.property.description], ['Belongs to', given(claim.property.owner)]]} />
+                <Rows items={[[t('scene.doc.damaged'), claim.property.description], [t('scene.doc.belongsTo'), given(claim.property.owner, lang)]]} />
               ) : (
-                <p className="text-sm text-slate-500">Nothing else was damaged.</p>
+                <p className="text-sm text-slate-500">{t('scene.doc.nothingElse')}</p>
               )}
             </div>
           </div>
@@ -474,15 +510,23 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
 
       {/* ── who sent it: on the desk only; the customer fills this in below the document ── */}
       {!edit && (
-        <Part title="Reported by">
+        <Part title={t('scene.doc.reportedBy')}>
           <Rows
             items={[
-              ['Name', given(claim.reporter.name)],
-              ['Phone', given(claim.reporter.phone)],
-              ['Email', given(claim.reporter.email)],
-              ['Policy', mono(claim.reporter.policy)],
-              ['Policyholder', given(yesNo(claim.reporter.policyholder))],
-              ['Signed', given(claim.attestation.agreed && claim.attestation.name ? `${claim.attestation.name}${claim.attestation.at ? ` · ${when(claim.attestation.at)}` : ''}` : null)],
+              [t('scene.doc.name'), given(claim.reporter.name, lang)],
+              [t('scene.doc.phone'), given(claim.reporter.phone, lang)],
+              [t('scene.doc.email'), given(claim.reporter.email, lang)],
+              [t('scene.doc.policy'), mono(claim.reporter.policy, lang)],
+              [t('scene.doc.policyholder'), given(yesNo(claim.reporter.policyholder, lang), lang)],
+              [
+                t('scene.doc.signed'),
+                given(
+                  claim.attestation.agreed && claim.attestation.name
+                    ? `${claim.attestation.name}${claim.attestation.at ? ` · ${when(claim.attestation.at, lang)}` : ''}`
+                    : null,
+                  lang,
+                ),
+              ],
             ]}
           />
         </Part>

@@ -36,20 +36,11 @@ import { fromFrame } from '../assist/frame'
 import type { Scene } from '../assist/schema'
 import { SIZE } from '../vehicles/bodies'
 import { suggestDamage } from './suggest'
+import type { Lang } from '../i18n'
 
 // the flow's own steps live in the schema, where the assistant can name one without
 // dragging the store in; everything here still imports them from the store as it did
 export { STEPS, type Step }
-
-export const STEP_TITLE: Record<Step, string> = {
-  kind: 'What happened',
-  where: 'Where and when',
-  vehicles: 'The vehicles',
-  people: 'People and injuries',
-  scene: 'Show us',
-  damage: 'The damage',
-  review: 'Review and send',
-}
 
 /** the steps this kind of incident goes through: a hail claim has nothing to diagram */
 export const stepsFor = (kind: Kind): Step[] => STEPS.filter((s) => s !== 'scene' || KIND_INFO[kind].diagram)
@@ -93,6 +84,9 @@ export type ClaimState = {
   policy: PrefillVehicle[]
   /** how the report left: sent, or waiting in the outbox for a signal; null until it has */
   delivery: 'sent' | 'queued' | null
+  /** the language the customer is reading in; null until the host, the browser or they chose */
+  lang: Lang | null
+  setLang: (lang: Lang) => void
 
   /** what the host page knows already: fills what is empty, never what the customer typed */
   prefill: (p: Prefill) => void
@@ -231,6 +225,9 @@ export const useClaim = create<ClaimState>()(
         autoDamage: {},
         policy: [],
         delivery: null,
+        lang: null,
+        // the document says which language its free text is in, so the desk knows what it is reading
+        setLang: (lang) => set((s) => ({ lang, claim: { ...s.claim, incident: { ...s.claim.incident, language: lang } } })),
 
         prefill: (p) => set((s) => ({ policy: p.vehicles ?? [], claim: s.claim.reference ? s.claim : applyPrefill(s.claim, p) })),
         pickPolicyVehicle: (index) => {
@@ -421,15 +418,21 @@ export const useClaim = create<ClaimState>()(
         submitted: (reference, submittedAt, delivery) => set((s) => ({ delivery, claim: { ...s.claim, reference, submittedAt } })),
         delivered: (local, reference) =>
           set((s) => (s.claim.reference === local ? { delivery: 'sent', claim: { ...s.claim, reference } } : {})),
-        reset: () => set({ claim: emptyClaim(), step: 'kind', impactManual: false, autoDamage: {}, delivery: null }),
+        // starting over keeps the language: it is how the customer is reading, not part of the report
+        reset: () =>
+          set((s) => {
+            const claim = emptyClaim()
+            claim.incident.language = s.lang ?? 'en'
+            return { claim, step: 'kind', impactManual: false, autoDamage: {}, delivery: null }
+          }),
       }
     },
     {
       name: 'claim-marker/draft',
-      version: 5,
+      version: 6,
       // every section added since a draft was saved takes its default: v3 added the ground,
       // v4 the kind, the people, the police, the photos and the rest of the report, v5 the
-      // policy's vehicles and how the report left
+      // policy's vehicles and how the report left, v6 the language (null: not chosen yet)
       migrate: (persisted) => {
         const s = persisted as { claim?: Partial<Claim> & { incident?: Partial<Incident>; vehicles?: Partial<ClaimVehicle>[] } }
         if (!s.claim) return persisted
@@ -451,6 +454,7 @@ export const useClaim = create<ClaimState>()(
         autoDamage: s.autoDamage,
         policy: s.policy,
         delivery: s.delivery,
+        lang: s.lang,
       }),
     },
   ),

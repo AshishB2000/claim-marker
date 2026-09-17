@@ -14,7 +14,15 @@
  */
 import { config, tell } from '../config'
 import { Rejected, enqueue, flush, type Queued } from '../claim/outbox'
+import { translate, type Key, type Vars } from '../i18n'
 import type { Claim } from '../claim/schema'
+
+/**
+ * These sentences are shown to the customer, so they are read in the customer's language —
+ * which the document itself records, and carries into the outbox with it. No store here: a
+ * report that left the outbox a week later is still in the language it was written in.
+ */
+const say = (doc: Claim, key: Key, vars?: Vars) => translate(doc.incident.language, key, vars)
 
 export type Delivery = 'sent' | 'queued'
 export type Sent = { reference: string; delivery: Delivery }
@@ -45,7 +53,7 @@ export async function deliver(doc: Claim, opts: DeliverOptions): Promise<string>
   if (opts.token) headers.authorization = `Bearer ${opts.token}`
   const body = JSON.stringify(doc)
 
-  let last: Error = new Error('We could not send your report.')
+  let last: Error = new Error(say(doc, 'shell.send.failed'))
   for (let i = 0; i < attempts; i++) {
     if (i > 0) await wait(BACKOFF[Math.min(i - 1, BACKOFF.length - 1)])
     let res: Response
@@ -61,9 +69,9 @@ export async function deliver(doc: Claim, opts: DeliverOptions): Promise<string>
     }
     // 408 and 429 are the server asking for patience; 401 and 403 may clear when the host renews the token
     if (res.status >= 400 && res.status < 500 && ![401, 403, 408, 429].includes(res.status)) {
-      throw new Rejected(`We could not send your report (${res.status}). Please check it over and try again.`)
+      throw new Rejected(say(doc, 'shell.send.rejected', { status: res.status }))
     }
-    last = new Error(`We could not send your report (${res.status}).`)
+    last = new Error(say(doc, 'shell.send.error', { status: res.status }))
   }
   throw last
 }

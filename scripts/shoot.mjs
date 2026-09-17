@@ -3,11 +3,51 @@
  * the document carries is a rendered frame rather than a blank buffer.
  *
  *   npm run dev   # in another shell
- *   node scripts/shoot.mjs [origin]
+ *   node scripts/shoot.mjs [origin] [--lang=es]
+ *
+ * With `--lang=es` the same walk is driven in Spanish and the shots land as `docs/es-*.png`,
+ * beside the English ones rather than over them. Every name comes from the dictionaries the
+ * build emits beside the parser (`dist/lib/messages.json`).
  */
+import { readFileSync } from 'node:fs'
 import { chromium } from 'playwright'
 
-const origin = process.argv[2] ?? 'http://localhost:5173'
+const args = process.argv.slice(2)
+const origin = args.find((a) => !a.startsWith('--')) ?? 'http://localhost:5173'
+const lang = args.includes('--lang=es') ? 'es' : 'en'
+
+const DICT = JSON.parse(readFileSync(new URL('../dist/lib/messages.json', import.meta.url), 'utf8'))
+const t = (key, vars = {}) => String(DICT[lang][key] ?? DICT.en[key] ?? key).replace(/\{(\w+)\}/g, (whole, name) => (name in vars ? vars[name] : whole))
+/** the names this walk clicks by, in the language it is shooting */
+const N = {
+  kindGroup: t('start.kind.group'),
+  continue: t('common.continue'),
+  where: t('start.where.label'),
+  yourVehicle: lang === 'es' ? 'Tu vehículo' : 'Your vehicle',
+  bodyType: t('start.vehicles.bodyType'),
+  make: t('start.vehicles.make'),
+  year: t('start.vehicles.year'),
+  model: t('start.vehicles.model'),
+  red: t('paint.red'),
+  whoDriving: t('start.people.drivingTitle'),
+  driverBName: t('start.people.nameOf', { who: t('start.people.whoDriverOf', { id: 'B' }) }),
+  driverBPhone: t('start.people.phoneOf', { who: t('start.people.whoDriverOf', { id: 'B' }) }),
+  insurerB: t('start.people.insurerOf', { id: 'B' }),
+  hurtGroup: t('start.people.hurtGroup'),
+  policeGroup: t('start.people.policeGroup'),
+  department: t('start.people.department'),
+  reportNumber: t('start.people.reportNumberOf'),
+  yes: t('common.yes'),
+  no: t('common.no'),
+  dent: t('severity.dent'),
+  closeUp: t('damage.shot.close'),
+  add: t('damage.suggest.add', { panel: '' }).trim(),
+  photosShow: t('damage.seen.aria'),
+  send: t('scene.send.send'),
+  yourName: t('scene.contact.name'),
+  agree: t('scene.send.agreeAria'),
+  sign: t('scene.send.signAria'),
+}
 
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, deviceScaleFactor: 2 })
@@ -18,54 +58,58 @@ const fail = (m) => {
   console.error(`FAIL: ${m}`)
   process.exit(1)
 }
-const next = () => page.getByRole('button', { name: /^Continue/ }).click()
-const shot = async (out) => {
+const next = () => page.getByRole('button', { name: new RegExp(`^${N.continue}`) }).click()
+/** the Spanish run writes beside the English shots, never over them */
+const named = (name) => `docs/${lang === 'es' ? 'es-' : ''}${name}.png`
+const shot = async (name) => {
+  const out = named(name)
   await page.screenshot({ path: out })
   console.log(out)
 }
 
+if (lang === 'es') await page.addInitScript(() => void (window.CLAIM_MARKER = { lang: 'es' }))
 await page.goto(`${origin}/`, { waitUntil: 'networkidle' })
-await page.waitForSelector('[role=radiogroup][aria-label="What happened"]')
-await shot('docs/kind.png')
+await page.waitForSelector(`[role=radiogroup][aria-label="${N.kindGroup}"]`)
+await shot('kind')
 await next()
-await page.getByRole('combobox', { name: 'Where did it happen?' }).fill('Times Square New York')
+await page.getByRole('combobox', { name: N.where }).fill('Times Square New York')
 await page.waitForSelector('[role=option]', { timeout: 20000 })
 await page.locator('[role=option]').first().click()
 // the fly-to takes 1.4 s and the vector tiles and glyphs come after it
 await page.waitForTimeout(6500)
-await shot('docs/where.png')
+await shot('where')
 
 await next()
-await page.waitForSelector('text=Your vehicle')
-const groups = page.locator('[role=radiogroup][aria-label="Body type"]')
-await page.getByRole('combobox', { name: 'Make' }).first().selectOption('Toyota')
-await page.getByRole('combobox', { name: 'Year' }).first().selectOption('2022')
-await page.waitForFunction(() => {
-  const sel = document.querySelector('select[aria-label="Model"]')
+await page.waitForSelector(`text=${N.yourVehicle}`)
+const groups = page.locator(`[role=radiogroup][aria-label="${N.bodyType}"]`)
+await page.getByRole('combobox', { name: N.make }).first().selectOption('Toyota')
+await page.getByRole('combobox', { name: N.year }).first().selectOption('2022')
+await page.waitForFunction((label) => {
+  const sel = document.querySelector(`select[aria-label="${label}"]`)
   return sel && !sel.disabled && [...sel.options].some((o) => o.value === 'Camry')
-}, null, { timeout: 30000 })
-await page.getByRole('combobox', { name: 'Model' }).first().selectOption('Camry')
-await groups.nth(0).locator('..').locator('..').getByRole('radio', { name: 'Red' }).click()
-await page.getByRole('combobox', { name: 'Make' }).nth(1).selectOption('Ford')
-await page.getByRole('combobox', { name: 'Year' }).nth(1).selectOption('2020')
-await page.waitForFunction(() => {
-  const sel = document.querySelectorAll('select[aria-label="Model"]')[1]
+}, N.model, { timeout: 30000 })
+await page.getByRole('combobox', { name: N.model }).first().selectOption('Camry')
+await groups.nth(0).locator('..').locator('..').getByRole('radio', { name: N.red }).click()
+await page.getByRole('combobox', { name: N.make }).nth(1).selectOption('Ford')
+await page.getByRole('combobox', { name: N.year }).nth(1).selectOption('2020')
+await page.waitForFunction((label) => {
+  const sel = document.querySelectorAll(`select[aria-label="${label}"]`)[1]
   return sel && !sel.disabled && [...sel.options].some((o) => o.value === 'F-150')
-}, null, { timeout: 30000 })
-await page.getByRole('combobox', { name: 'Model' }).nth(1).selectOption('F-150')
+}, N.model, { timeout: 30000 })
+await page.getByRole('combobox', { name: N.model }).nth(1).selectOption('F-150')
 await page.waitForTimeout(5000)
-await shot('docs/vehicles.png')
+await shot('vehicles')
 
 await next()
-await page.waitForSelector('text=Who was driving?')
-await page.getByRole('textbox', { name: 'Driver of B name' }).fill('Dana Quinn')
-await page.getByRole('textbox', { name: 'Driver of B phone' }).fill('555 0199')
-await page.getByRole('textbox', { name: 'Insurer of B' }).fill('Acme Mutual')
-await page.locator('[role=radiogroup][aria-label="Was anyone hurt"]').getByRole('radio', { name: 'No', exact: true }).click()
-await page.locator('[role=radiogroup][aria-label="Were the police called"]').getByRole('radio', { name: 'Yes', exact: true }).click()
-await page.getByRole('textbox', { name: 'Police department' }).fill('NYPD Midtown South')
-await page.getByRole('textbox', { name: 'Police report number' }).fill('2026-0042')
-await shot('docs/people.png')
+await page.waitForSelector(`text=${N.whoDriving}`)
+await page.getByRole('textbox', { name: N.driverBName }).fill('Dana Quinn')
+await page.getByRole('textbox', { name: N.driverBPhone }).fill('555 0199')
+await page.getByRole('textbox', { name: N.insurerB }).fill('Acme Mutual')
+await page.locator(`[role=radiogroup][aria-label="${N.hurtGroup}"]`).getByRole('radio', { name: N.no, exact: true }).click()
+await page.locator(`[role=radiogroup][aria-label="${N.policeGroup}"]`).getByRole('radio', { name: N.yes, exact: true }).click()
+await page.getByRole('textbox', { name: N.department }).fill('NYPD Midtown South')
+await page.getByRole('textbox', { name: N.reportNumber }).fill('2026-0042')
+await shot('people')
 
 await next()
 await page.waitForSelector('.mk-car', { timeout: 20000 })
@@ -86,7 +130,7 @@ await page.mouse.up()
 await page.waitForTimeout(2200)
 await page.locator('.mk-car').first().click()
 await page.waitForTimeout(1500)
-await shot('docs/scene.png')
+await shot('scene')
 
 await next()
 await page.waitForSelector('.cm-root canvas', { timeout: 20000 })
@@ -99,9 +143,9 @@ await page.mouse.click(c.x + c.width * 0.42, c.y + c.height * 0.55)
 await page.waitForTimeout(500)
 // force: the popover follows the 3D point, and OrbitControls' damping keeps it drifting by
 // fractions of a pixel for seconds, which Playwright's exact-rect stability check never accepts
-await page.getByRole('button', { name: 'dent', exact: true }).click({ force: true })
+await page.getByRole('button', { name: N.dent, exact: true }).click({ force: true })
 await page.waitForTimeout(1800)
-await shot('docs/damage.png')
+await shot('damage')
 
 // ── the same step on a phone, with the assistant on: photos first ──────
 // The stub answers for the endpoint the insurer would run, and the "photograph" is the car as
@@ -113,9 +157,9 @@ saved.state.claim.attachments.photos = []
 saved.state.autoDamage = {}
 const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
 const phone = await phoneCtx.newPage()
-await phone.addInitScript(() => {
-  window.CLAIM_MARKER = { assistUrl: 'https://assist.example/read' }
-})
+await phone.addInitScript((l) => {
+  window.CLAIM_MARKER = { assistUrl: 'https://assist.example/read', ...(l === 'es' ? { lang: 'es' } : {}) }
+}, lang)
 await phone.route('https://assist.example/read', (r) =>
   r.fulfill({
     status: 200,
@@ -123,38 +167,46 @@ await phone.route('https://assist.example/read', (r) =>
     body: JSON.stringify({
       schema: 'claim-assist/1',
       task: 'damage',
-      damages: [
-        { zone: 'front_bumper', severity: 'crack', note: 'Split below the number plate' },
-        { zone: 'hood', severity: 'dent', note: 'Creased along the front edge' },
-      ],
+      // the stub stands in for the insurer's endpoint, which is told the language and answers
+      // in it, so the shot shows what a Spanish-speaking customer would actually read
+      damages:
+        lang === 'es'
+          ? [
+              { zone: 'front_bumper', severity: 'crack', note: 'Partido debajo de la placa' },
+              { zone: 'hood', severity: 'dent', note: 'Hundido en el borde delantero' },
+            ]
+          : [
+              { zone: 'front_bumper', severity: 'crack', note: 'Split below the number plate' },
+              { zone: 'hood', severity: 'dent', note: 'Creased along the front edge' },
+            ],
     }),
   }),
 )
 await phone.goto(`${origin}/`, { waitUntil: 'networkidle' })
 await phone.evaluate((s) => localStorage.setItem('claim-marker/draft', s), JSON.stringify(saved))
 await phone.reload({ waitUntil: 'networkidle' })
-await phone.getByRole('button', { name: 'The damage, close up' }).waitFor({ timeout: 20000 })
-const [chooser] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The damage, close up' }).click()])
+await phone.getByRole('button', { name: N.closeUp }).waitFor({ timeout: 20000 })
+const [chooser] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: N.closeUp }).click()])
 await chooser.setFiles({ name: 'damage.png', mimeType: 'image/png', buffer: carShot })
-await phone.getByRole('button', { name: /^Add / }).first().waitFor({ timeout: 20000 })
+await phone.getByRole('button', { name: new RegExp(`^${N.add} `) }).first().waitFor({ timeout: 20000 })
 await phone.waitForTimeout(500)
-await phone.locator('section[aria-label="What the photos show"]').scrollIntoViewIfNeeded()
+await phone.locator(`section[aria-label="${N.photosShow}"]`).scrollIntoViewIfNeeded()
 await phone.mouse.wheel(0, -280)
 await phone.waitForTimeout(400)
-await phone.screenshot({ path: 'docs/damage-phone.png' })
-console.log('docs/damage-phone.png')
+await phone.screenshot({ path: named('damage-phone') })
+console.log(named('damage-phone'))
 await phoneCtx.close()
 
 await next()
-await page.waitForSelector('text=Send my report', { timeout: 20000 })
+await page.waitForSelector(`text=${N.send}`, { timeout: 20000 })
 await page.waitForTimeout(8000)
-await shot('docs/review.png')
+await shot('review')
 
-await page.getByRole('textbox', { name: 'Your name' }).fill('Ashish B')
-await page.getByRole('checkbox', { name: 'I confirm this report is true' }).check()
-await page.getByRole('textbox', { name: 'Signature' }).fill('Ashish B')
+await page.getByRole('textbox', { name: N.yourName }).fill('Ashish B')
+await page.getByRole('checkbox', { name: N.agree }).check()
+await page.getByRole('textbox', { name: N.sign }).fill('Ashish B')
 const submitted = page.evaluate(() => new Promise((r) => window.addEventListener('claim:submitted', (e) => r(e.detail), { once: true })))
-await page.getByRole('button', { name: 'Send my report' }).click()
+await page.getByRole('button', { name: N.send }).click()
 const doc = await submitted
 
 /** decode a PNG data URL and count distinct colours, sampled sparsely */
@@ -182,4 +234,4 @@ if (damage.colours < 50) fail('the damage attachment looks blank')
 
 await browser.close()
 if (errors.length) fail(`console errors:\n${errors.join('\n')}`)
-console.log('\nok — screenshots regenerated, both attachments are real frames')
+console.log(`\nok — screenshots regenerated${lang === 'es' ? ' in Spanish (docs/es-*.png)' : ''}, both attachments are real frames`)

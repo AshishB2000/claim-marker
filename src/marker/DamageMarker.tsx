@@ -2,6 +2,7 @@ import { useEffect, useImperativeHandle, useRef, useState, type CSSProperties, t
 import { useStore } from 'zustand'
 import { emptyValue, parse, type ClaimValue } from '../schema'
 import { createMarkerStore } from './store'
+import { translate, type Lang } from '../i18n'
 import { injectStyle } from '../style'
 import { themeClass, type Theme } from '../theme'
 import { Scene } from './Scene'
@@ -29,14 +30,16 @@ export type DamageMarkerProps = {
   paint?: string
   /** `light` (default) or `dark`; finer control is the `--cm-*` custom properties */
   theme?: Theme
+  /** the language of the marker's own words; English unless the page says otherwise */
+  lang?: Lang
   className?: string
   style?: CSSProperties
   ref?: Ref<DamageMarkerHandle>
 }
 
-function Hint({ store }: { store: ReturnType<typeof createMarkerStore> }) {
+function Hint({ store, lang }: { store: ReturnType<typeof createMarkerStore>; lang: Lang }) {
   const empty = useStore(store, (s) => s.damages.length === 0 && !s.pending)
-  return empty ? <div className="cm-hint">Tap the car where the damage is</div> : null
+  return empty ? <div className="cm-hint">{translate(lang, 'scene.marker.hint')}</div> : null
 }
 
 export function DamageMarker({
@@ -46,6 +49,7 @@ export function DamageMarker({
   modelUrl,
   paint = '#b9bec6',
   theme = 'light',
+  lang = 'en',
   className,
   style,
   ref,
@@ -100,8 +104,8 @@ export function DamageMarker({
 
   return (
     <div className={themeClass(theme, className)} style={style} onPointerDownCapture={() => setIdle(false)}>
-      <Scene store={store} modelUrl={modelUrl} paint={paint} theme={theme} idle={idle} onCanvas={setCanvas} />
-      <Hint store={store} />
+      <Scene store={store} modelUrl={modelUrl} paint={paint} theme={theme} idle={idle} lang={lang} onCanvas={setCanvas} />
+      <Hint store={store} lang={lang} />
     </div>
   )
 }

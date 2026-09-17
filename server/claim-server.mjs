@@ -43,6 +43,7 @@
  *   ALLOWED_HOSTS    origins allowed to embed the page, comma-separated; sets frame-ancestors
  *   BRAND            the insurer's name, injected into the page
  *   ASSIST_URL       an endpoint speaking `claim-assist/1`, injected into the page
+ *   LANG_DEFAULT     en or es — fixes the page's language and hides its switch; unset, the customer chooses
  *   CONNECT_SRC      extra origins the page may reach (your own tiles or geocoder)
  *   WEBHOOK_URL      where to announce a new report
  *   WEBHOOK_SECRET   the HMAC key for X-Claim-Signature
@@ -248,6 +249,8 @@ const pageConfig = {
   claimsApi: '',
   ...(process.env.BRAND ? { brand: process.env.BRAND } : {}),
   ...(process.env.ASSIST_URL ? { assistUrl: process.env.ASSIST_URL } : {}),
+  // a language the page does not speak is no instruction at all: leave the choice to the customer
+  ...(['en', 'es'].includes(process.env.LANG_DEFAULT) ? { lang: process.env.LANG_DEFAULT } : {}),
   ...(ALLOWED_HOSTS.length ? { allowedHosts: ALLOWED_HOSTS } : {}),
 }
 // `</script>` inside a value would end the tag early; escaping every `<` is the blunt fix

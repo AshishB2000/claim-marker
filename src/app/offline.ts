@@ -6,10 +6,12 @@
  * should ever see — Safari refuses service workers in cross-site iframes, so the embedded
  * case simply degrades to the behaviour it had before this existed.
  */
-const MESSAGE = 'Works offline now — you can finish this report without a signal.'
+import { translate, type Lang } from '../i18n'
+
 const SHOWN_FOR = 5000
 
-export function keepOffline(): void {
+/** the language is settled before this is called, and passed in: no store, no React, no hooks */
+export function keepOffline(lang: Lang): void {
   if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return
   // no controller means no worker has ever run for this origin: this load is the one that
   // installs the shell, and the only one worth saying anything about
@@ -17,15 +19,15 @@ export function keepOffline(): void {
   navigator.serviceWorker
     .register('/sw.js')
     .then(() => navigator.serviceWorker.ready)
-    .then(() => first && toast())
+    .then(() => first && toast(lang))
     .catch(() => {})
 }
 
 /** plain DOM: this runs before React has anything on the page, and outlives a step change */
-function toast() {
+function toast(lang: Lang) {
   const el = document.createElement('div')
   el.setAttribute('role', 'status')
-  el.textContent = MESSAGE
+  el.textContent = translate(lang, 'shell.offline.ready')
   el.style.cssText =
     'position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:60;max-width:calc(100vw - 32px);' +
     'padding:10px 16px;border-radius:12px;background:#0f172a;color:#fff;font:500 13px/1.4 system-ui,sans-serif;' +

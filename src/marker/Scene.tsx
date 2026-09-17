@@ -8,6 +8,7 @@ import { THEME, type Theme } from '../theme'
 import type { MarkerStore } from './store'
 import { Car } from './Car'
 import { Picker } from './Picker'
+import { translate, type Key, type Lang } from '../i18n'
 import { ORBIT_TARGET, cameraFor } from './camera'
 import { STUDIO } from '../vehicles/BodyPreview'
 import { toWorld } from '../vehicles/bodies'
@@ -114,13 +115,13 @@ function Markers({ store, accent }: { store: MarkerStore; accent: string }) {
 }
 
 /** names the zone under the cursor; hidden while a picker is open so the two never overlap */
-function HoverLabel({ store }: { store: MarkerStore }) {
+function HoverLabel({ store, lang }: { store: MarkerStore; lang: Lang }) {
   const vehicle = useStore(store, (s) => s.vehicle)
   const zone = useStore(store, (s) => (s.pending || s.selected !== null ? null : s.hovered))
   if (!zone) return null
   return (
     <Html position={toWorld(vehicle, zone.anchor)} center zIndexRange={[20, 10]} style={{ pointerEvents: 'none' }}>
-      <div className="cm-zone">{zone.label}</div>
+      <div className="cm-zone">{translate(lang, `zone.${zone.id}` as Key)}</div>
     </Html>
   )
 }
@@ -189,6 +190,7 @@ export function Scene({
   paint,
   theme,
   idle,
+  lang,
   onCanvas,
 }: {
   store: MarkerStore
@@ -197,6 +199,7 @@ export function Scene({
   theme: Theme
   /** turntable until the first touch */
   idle: boolean
+  lang: Lang
   onCanvas: (canvas: HTMLCanvasElement) => void
 }) {
   const t = THEME[theme]
@@ -258,8 +261,8 @@ export function Scene({
       <ContactShadows position={[0, 0.001, 0]} opacity={0.5} scale={16} blur={2.6} far={4} resolution={1024} color={t.shadow} />
 
       <Markers store={store} accent={t.accent} />
-      <HoverLabel store={store} />
-      <Picker store={store} />
+      <HoverLabel store={store} lang={lang} />
+      <Picker store={store} lang={lang} />
       <CameraRig store={store} />
 
       <OrbitControls

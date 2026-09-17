@@ -18,6 +18,7 @@
  * so the conversion is this page's job (`frame.ts`). Headings are compass bearings.
  */
 import { normalizeBearing } from '../geo'
+import type { Lang } from '../i18n'
 import { isStep, type Conditions, type Kind, type PersonRole, type Role, type Step, type Surface } from '../claim/schema'
 import { SEVERITIES, type Damage, type Severity } from '../schema'
 import { zoneById, type Vehicle } from '../zones'
@@ -62,7 +63,15 @@ export type Scene = {
   note: string
 }
 
-export type DiagramRequest = {
+/**
+ * The language the customer is reading and writing in. Every request carries it, because
+ * everything that comes back is read by them: the note under a diagram, the statement, the
+ * questions. What the endpoint *validates* is language-agnostic — a zone id and a severity
+ * are the same word in every language, and always the page's own words, never the model's.
+ */
+export type Spoken = { lang: Lang }
+
+export type DiagramRequest = Spoken & {
   schema: typeof ASSIST_SCHEMA
   task: 'diagram'
   /** what the customer wrote or dictated */
@@ -72,7 +81,7 @@ export type DiagramRequest = {
   vehicles: AssistVehicle[]
 }
 
-export type DescribeRequest = {
+export type DescribeRequest = Spoken & {
   schema: typeof ASSIST_SCHEMA
   task: 'describe'
   place: string
@@ -152,7 +161,7 @@ export type CheckVehicle = AssistVehicle & {
  * *someone* is marked hurt and the police were not called; it does not need to know who they
  * are. `brief()` in the client set that precedent for the diagram and this keeps it.
  */
-export type CheckRequest = {
+export type CheckRequest = Spoken & {
   schema: typeof ASSIST_SCHEMA
   task: 'check'
   kind: Kind
@@ -207,7 +216,7 @@ const MAX_NOTE = 120
  * because zone sets differ per body — a pickup has no rear doors — and the endpoint should be
  * choosing from this vehicle's own panels, not from the union of every body's.
  */
-export type DamageRequest = {
+export type DamageRequest = Spoken & {
   schema: typeof ASSIST_SCHEMA
   task: 'damage'
   vehicle: Vehicle

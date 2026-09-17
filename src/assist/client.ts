@@ -5,6 +5,7 @@
  */
 import type { Claim, ClaimVehicle } from '../claim/schema'
 import { config } from '../config'
+import { translate } from '../i18n'
 import type { Damage } from '../schema'
 import { paintLabel } from '../vehicles/paint'
 import { zoneById, zonesOf } from '../zones'
@@ -38,14 +39,15 @@ const brief = (v: ClaimVehicle): AssistVehicle => ({
   year: v.year,
 })
 
+/** every request says which language it is in, and so every message about it is read in that one */
 async function call<T>(body: AssistRequest, signal: AbortSignal | undefined, read: (json: unknown) => T): Promise<T> {
   const url = config.assistUrl
-  if (!url) throw new Error('The assistant is not switched on for this page.')
+  if (!url) throw new Error(translate(body.lang, 'shell.assist.off'))
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal })
-  if (!res.ok) throw new Error(`The assistant could not answer (${res.status}). Please try again, or fill it in yourself.`)
+  if (!res.ok) throw new Error(translate(body.lang, 'shell.assist.status', { status: res.status }))
   const json: unknown = await res.json()
   if (typeof json !== 'object' || json === null || (json as { schema?: unknown }).schema !== ASSIST_SCHEMA) {
-    throw new Error('The assistant answered in a shape this page does not understand.')
+    throw new Error(translate(body.lang, 'shell.assist.shape'))
   }
   return read(json)
 }
@@ -57,6 +59,7 @@ export async function buildDiagram(claim: Claim, signal?: AbortSignal): Promise<
     {
       schema: ASSIST_SCHEMA,
       task: 'diagram',
+      lang: claim.incident.language,
       text: claim.incident.description,
       place: claim.incident.location?.address ?? '',
       vehicles: claim.vehicles.map(brief),
@@ -92,6 +95,7 @@ export async function writeStatement(claim: Claim, signal?: AbortSignal): Promis
     {
       schema: ASSIST_SCHEMA,
       task: 'describe',
+      lang: claim.incident.language,
       place: scene.place,
       at: claim.incident.at,
       surface: claim.incident.surface,
@@ -101,7 +105,7 @@ export async function writeStatement(claim: Claim, signal?: AbortSignal): Promis
     signal,
     (json) => {
       const text = (json as { text?: unknown }).text
-      if (typeof text !== 'string' || !text.trim()) throw new Error('The assistant sent nothing back.')
+      if (typeof text !== 'string' || !text.trim()) throw new Error(translate(claim.incident.language, 'shell.assist.empty'))
       return text.trim()
     },
   )
@@ -122,6 +126,7 @@ export async function checkReport(claim: Claim, signal?: AbortSignal): Promise<C
     {
       schema: ASSIST_SCHEMA,
       task: 'check',
+      lang: claim.incident.language,
       kind: claim.incident.kind,
       at: claim.incident.at,
       place: scene.place,
@@ -143,13 +148,14 @@ export async function checkReport(claim: Claim, signal?: AbortSignal): Promise<C
 /** The photographs of one vehicle, back as marks on its own panels, ready to add. */
 export async function damageFromPhotos(claim: Claim, vehicleId: string, signal?: AbortSignal): Promise<Damage[]> {
   const v = claim.vehicles.find((x) => x.id === vehicleId)
-  if (!v) throw new Error('The assistant was asked about a vehicle that is not in this report.')
+  if (!v) throw new Error(translate(claim.incident.language, 'shell.assist.noVehicle'))
   const photos = claim.attachments.photos.filter((p) => p.of === vehicleId).slice(0, MAX_PHOTOS_SENT)
-  if (!photos.length) throw new Error('There are no photos of this vehicle to look at.')
+  if (!photos.length) throw new Error(translate(claim.incident.language, 'shell.assist.noPhotos'))
   return call(
     {
       schema: ASSIST_SCHEMA,
       task: 'damage',
+      lang: claim.incident.language,
       vehicle: v.body,
       zones: zonesOf(v.body).map((z) => ({ id: z.id, label: z.label })),
       photos: photos.map((p) => p.data),

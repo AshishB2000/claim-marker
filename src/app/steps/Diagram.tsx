@@ -3,21 +3,17 @@ import { useClaim } from '../../claim/store'
 import { assistOn, buildDiagram, writeStatement } from '../../assist/client'
 import type { LngLat } from '../../geo'
 import { ROLE_COLOR, SURFACES, type ClaimVehicle } from '../../claim/schema'
+import { cap, vehicleOf } from '../../claim/describe'
+import type { Key } from '../../i18n'
+import { useLang, useT } from '../../i18n/useT'
 import { MapScene, type MapSceneHandle, type TapMode } from '../../map/MapScene'
-import { SURFACE_LABEL } from '../../map/styles'
 import { usePlayback } from '../../map/usePlayback'
-import { VEHICLES, zoneById } from '../../zones'
-import { paintLabel } from '../../vehicles/paint'
+import { zoneById } from '../../zones'
 import { Describe } from '../Describe'
 import { Icon } from '../icons'
 
 const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west']
-const facing = (deg: number) => COMPASS[Math.round((((deg % 360) + 360) % 360) / 45) % 8]
-
-const name = (v: ClaimVehicle) => {
-  const id = [v.year, v.make, v.model].filter(Boolean).join(' ')
-  return `${v.role === 'insured' ? 'Your' : 'Their'} ${paintLabel(v.color).toLowerCase()} ${id || VEHICLES[v.body].label.toLowerCase()}`
-}
+const facing = (deg: number): Key => `scene.compass.${COMPASS[Math.round((((deg % 360) + 360) % 360) / 45) % 8]}` as Key
 
 type Tap = { kind: 'waypoint'; id: string } | { kind: 'impact' } | null
 
@@ -36,6 +32,8 @@ export function Diagram() {
   const setImpact = useClaim((s) => s.setImpact)
   const setIncident = useClaim((s) => s.setIncident)
 
+  const t = useT()
+  const lang = useLang()
   const [selected, setSelected] = useState<string | null>(claim.vehicles[0]?.id ?? null)
   const [tap, setTap] = useState<Tap>(null)
   // the one-line hint on the map goes once the customer has moved or turned anything
@@ -56,9 +54,9 @@ export function Diagram() {
       const scene = await buildDiagram(useClaim.getState().claim)
       applyScene(scene)
       setTouched(true)
-      setSaid(scene.vehicles.length === 0 ? scene.note || 'Nothing in that could be placed on the map. Drag the cars instead.' : scene.note)
+      setSaid(scene.vehicles.length === 0 ? scene.note || t('scene.assist.nothing') : scene.note)
     } catch (e) {
-      setFailed(e instanceof Error ? e.message : 'The assistant could not answer.')
+      setFailed(e instanceof Error ? e.message : t('scene.assist.failed'))
     } finally {
       setBusy(null)
     }
@@ -71,7 +69,7 @@ export function Diagram() {
     try {
       setIncident({ description: await writeStatement(useClaim.getState().claim) })
     } catch (e) {
-      setFailed(e instanceof Error ? e.message : 'The assistant could not answer.')
+      setFailed(e instanceof Error ? e.message : t('scene.assist.failed'))
     } finally {
       setBusy(null)
     }
@@ -101,13 +99,13 @@ export function Diagram() {
 
   const banner =
     tap?.kind === 'impact'
-      ? 'Tap the map where the vehicles hit'
+      ? t('scene.banner.impact')
       : tap?.kind === 'waypoint'
-        ? `Tap the map where ${tap.id.toUpperCase()} came from, then tap again for each bend`
+        ? t('scene.banner.waypoint', { id: tap.id.toUpperCase() })
         : null
 
   /** what the diagram says this vehicle was hit on, when it was worked out from the impact */
-  const hit = (v: ClaimVehicle) => (autoDamage[v.id] === 'auto' && v.damages[0] ? zoneById(v.body, v.damages[0].zone)?.label : null)
+  const hit = (v: ClaimVehicle) => (autoDamage[v.id] === 'auto' && v.damages[0] ? zoneById(v.body, v.damages[0].zone)?.id : null)
 
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
@@ -119,6 +117,7 @@ export function Diagram() {
           vehicles={claim.vehicles}
           impact={claim.impact}
           selected={selected}
+          lang={lang}
           interactive
           tapMode={tapMode}
           poses={play.poses}
@@ -145,7 +144,7 @@ export function Diagram() {
               <span className="size-2 animate-pulse rounded-full bg-emerald-400" />
               {banner}
               <button className="ml-1 rounded-lg bg-white/15 px-2 py-0.5 text-xs hover:bg-white/25" onClick={() => setTap(null)}>
-                Done
+                {t('scene.banner.done')}
               </button>
             </div>
           ) : (
@@ -153,10 +152,10 @@ export function Diagram() {
           )}
           <div className="pointer-events-auto mr-12 flex gap-1.5">
             <button className="chip" onClick={play.playing ? play.stop : play.start} disabled={!play.canPlay} aria-pressed={play.playing}>
-              {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? 'Stop' : 'Play it back'}
+              {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
             </button>
             <button className="chip" onClick={() => map.current?.recentre()}>
-              <Icon.target /> Recentre
+              <Icon.target /> {t('scene.recentre')}
             </button>
           </div>
         </div>
@@ -164,7 +163,7 @@ export function Diagram() {
         {!touched && !banner && !play.playing && (
           <div className="pointer-events-none absolute inset-x-0 bottom-9 flex justify-center px-3">
             <div className="rounded-full bg-ink/90 px-3.5 py-1.5 text-center text-xs font-medium text-white shadow-lg backdrop-blur">
-              Drag a car along the route it took · drag the arrow ahead of its nose to turn it
+              {t('scene.dragHint')}
             </div>
           </div>
         )}
@@ -172,26 +171,24 @@ export function Diagram() {
 
       <aside className="space-y-3">
         <div className="card px-4 py-3">
-          <span className="label">Draw it on</span>
-          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Ground">
+          <span className="label">{t('scene.ground.label')}</span>
+          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={t('scene.ground.aria')}>
             {SURFACES.map((s) => (
               <button key={s} className="chip" role="radio" aria-checked={claim.incident.surface === s} aria-pressed={claim.incident.surface === s} onClick={() => setIncident({ surface: s })}>
                 {s === 'satellite' || s === 'streets' ? <Icon.layers /> : null}
-                {SURFACE_LABEL[s]}
+                {t(`surface.${s}` as Key)}
               </button>
             ))}
           </div>
           <p className="mt-1.5 text-xs text-slate-500">
-            A garage, a covered car park or a driveway will not show from above. Draw those on the parking lot or the blank sheet.
+            {t('scene.ground.note')}
           </p>
         </div>
 
         <div className="card divide-y divide-slate-100">
           <div className="px-4 py-3">
-            <h2 className="font-semibold">Where did each vehicle end up?</h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              Drag a car along the route it took: the line it leaves is its path and it turns to face the way you drag. Drag the arrow ahead of its nose to turn it on the spot.
-            </p>
+            <h2 className="font-semibold">{t('scene.list.title')}</h2>
+            <p className="mt-0.5 text-sm text-slate-500">{t('scene.list.lead')}</p>
           </div>
           {claim.vehicles.map((v) => {
             const on = v.id === selected
@@ -203,11 +200,11 @@ export function Diagram() {
                     {v.id.toUpperCase()}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{name(v)}</span>
+                    <span className="block truncate text-sm font-medium">{cap(vehicleOf(v, 'customer', lang))}</span>
                     <span className="block text-xs text-slate-500">
-                      Facing {facing(v.heading)}
-                      {v.path.length > 0 && ' · path drawn'}
-                      {panel && <span className="text-red-700"> · hit on the {panel.toLowerCase()}</span>}
+                      {t('scene.vehicle.facing', { dir: t(facing(v.heading)) })}
+                      {v.path.length > 0 && t('scene.vehicle.path')}
+                      {panel && <span className="text-red-700">{t('scene.vehicle.hit', { panel: t(`zone.${panel}` as Key).toLowerCase() })}</span>}
                     </span>
                   </span>
                   <span className={`text-slate-400 transition ${on ? 'rotate-90' : ''}`}>
@@ -218,8 +215,8 @@ export function Diagram() {
                   <div className="space-y-4 px-4 pb-4">
                     <div>
                       <div className="mb-1 flex items-baseline justify-between">
-                        <span className="label mb-0">Which way was it facing?</span>
-                        <span className="text-xs font-medium text-slate-600">{facing(v.heading)}</span>
+                        <span className="label mb-0">{t('scene.facing.label')}</span>
+                        <span className="text-xs font-medium text-slate-600">{t(facing(v.heading))}</span>
                       </div>
                       <input
                         type="range"
@@ -227,34 +224,33 @@ export function Diagram() {
                         min={0}
                         max={359}
                         value={Math.round(v.heading)}
-                        aria-label={`Facing of vehicle ${v.id.toUpperCase()}`}
+                        aria-label={t('scene.facing.aria', { id: v.id.toUpperCase() })}
                         onChange={(e) => turnVehicle(v.id, Number(e.target.value))}
                       />
                       <div className="mt-1 flex justify-between text-[10px] font-medium tracking-wide text-slate-400">
-                        <span>N</span>
-                        <span>E</span>
-                        <span>S</span>
-                        <span>W</span>
-                        <span>N</span>
+                        {t('scene.facing.ticks')
+                          .split(',')
+                          .map((tick, i) => (
+                            <span key={i}>{tick}</span>
+                          ))}
                       </div>
-                      <p className="mt-1 text-xs text-slate-500">Or drag the arrow ahead of the car on the map.</p>
+                      <p className="mt-1 text-xs text-slate-500">{t('scene.facing.note')}</p>
                     </div>
                     <div>
-                      <span className="label">Where did it come from?</span>
-                      <p className="mb-1.5 text-xs text-slate-500">
-                        Dragging the car draws this for you. Drag the white dots to adjust it, or add points by hand.
-                      </p>
+                      <span className="label">{t('scene.path.label')}</span>
+                      <p className="mb-1.5 text-xs text-slate-500">{t('scene.path.note')}</p>
                       <div className="flex flex-wrap gap-1.5">
                         <button
                           className="btn btn-secondary btn-sm"
                           aria-pressed={tap?.kind === 'waypoint' && tap.id === v.id}
                           onClick={() => setTap(tap?.kind === 'waypoint' && tap.id === v.id ? null : { kind: 'waypoint', id: v.id })}
                         >
-                          <Icon.pin /> {tap?.kind === 'waypoint' && tap.id === v.id ? 'Tapping… done' : v.path.length ? 'Add a bend' : 'Tap it on the map'}
+                          <Icon.pin />{' '}
+                          {tap?.kind === 'waypoint' && tap.id === v.id ? t('scene.path.tapping') : v.path.length ? t('scene.path.bend') : t('scene.path.tap')}
                         </button>
                         {v.path.length > 0 && (
                           <button className="btn btn-ghost btn-sm" onClick={() => clearPath(v.id)}>
-                            <Icon.x /> Clear path
+                            <Icon.x /> {t('scene.path.clear')}
                           </button>
                         )}
                       </div>
@@ -269,27 +265,26 @@ export function Diagram() {
         <div className="card px-4 py-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <h2 className="flex items-center gap-2 font-semibold">
-                Point of impact
+              {/* wraps because "ENCONTRADO" is twice the width of "FOUND": the badge drops, the title does not break */}
+              <h2 className="flex flex-wrap items-center gap-2 font-semibold">
+                {t('scene.impact.title')}
                 {claim.impact && !impactManual && (
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-700 uppercase">Found</span>
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-700 uppercase">
+                    {t('scene.impact.found')}
+                  </span>
                 )}
               </h2>
               <p className="mt-0.5 text-sm text-slate-500">
-                {claim.impact
-                  ? impactManual
-                    ? 'This is where you said they hit. Drag the red cross to adjust it.'
-                    : 'Marked where the vehicles met, and the panel each one was hit on is marked for the next step. Drag the cross if it is not quite right.'
-                  : 'Drag the vehicles together and the cross appears where they meet.'}
+                {claim.impact ? (impactManual ? t('scene.impact.manual') : t('scene.impact.auto')) : t('scene.impact.none')}
               </p>
             </div>
             <div className="flex shrink-0 gap-1">
               <button className="btn btn-ghost btn-sm" aria-pressed={tap?.kind === 'impact'} onClick={() => setTap(tap?.kind === 'impact' ? null : { kind: 'impact' })}>
                 <span className="grid size-4 place-items-center rounded-full bg-red-600 text-[9px] font-bold text-white">✕</span>
-                {tap?.kind === 'impact' ? 'Tap the map…' : claim.impact ? 'Move it' : 'Place it'}
+                {tap?.kind === 'impact' ? t('scene.impact.tapping') : claim.impact ? t('scene.impact.move') : t('scene.impact.place')}
               </button>
               {claim.impact && (
-                <button className="btn btn-ghost btn-sm" onClick={() => setImpact(null)} aria-label="Remove the point of impact">
+                <button className="btn btn-ghost btn-sm" onClick={() => setImpact(null)} aria-label={t('scene.impact.remove')}>
                   <Icon.x />
                 </button>
               )}
@@ -299,37 +294,31 @@ export function Diagram() {
 
         <div className="card px-4 py-3">
           <Describe
-            placeholder={
-              assistOn()
-                ? 'For example: I was going straight through the junction on a green light and the other car turned left across me — then let us draw it.'
-                : 'For example: I was going straight through the junction on a green light and the other car turned left across me.'
-            }
+            placeholder={assistOn() ? t('scene.describe.placeholderAssist') : t('scene.describe.placeholder')}
           >
             {assistOn() && (
               <>
                 <button className="btn btn-secondary btn-sm" onClick={draw} disabled={!!busy || claim.incident.description.trim().length < 15}>
                   {busy === 'diagram' ? <Icon.spinner /> : <Icon.wand />}
-                  {busy === 'diagram' ? 'Drawing…' : 'Draw this on the map'}
+                  {busy === 'diagram' ? t('scene.assist.drawing') : t('scene.assist.draw')}
                 </button>
                 <button className="btn btn-ghost btn-sm" onClick={write} disabled={!!busy || !claim.vehicles.some((v) => v.position)}>
                   {busy === 'describe' ? <Icon.spinner /> : <Icon.pen />}
-                  {busy === 'describe' ? 'Writing…' : 'Write it from the diagram'}
+                  {busy === 'describe' ? t('scene.assist.writing') : t('scene.assist.write')}
                 </button>
               </>
             )}
           </Describe>
           {assistOn() && (
             <>
-              {busy && <p className="mt-2 text-xs text-slate-500">This takes a few seconds.</p>}
+              {busy && <p className="mt-2 text-xs text-slate-500">{t('scene.assist.wait')}</p>}
               {said && !busy && (
                 <p className="mt-2 rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-900 ring-1 ring-brand-100">
-                  {said} Everything is still yours to drag.
+                  {said} {t('scene.assist.yours')}
                 </p>
               )}
               {failed && !busy && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">{failed}</p>}
-              <p className="mt-2 text-[11px] text-slate-400">
-                Written by AI from what you wrote. Read it over and correct anything that is not right — it goes to us as your account of the accident.
-              </p>
+              <p className="mt-2 text-[11px] text-slate-400">{t('scene.assist.disclaimer')}</p>
             </>
           )}
         </div>

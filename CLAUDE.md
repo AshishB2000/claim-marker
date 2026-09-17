@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 256 tests across 18 files
+npm test               # vitest, 278 tests across 19 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -247,6 +247,28 @@ on the vehicle and its photographs, debounced 1.2 s, aborted on change, with the
 `claim/1`, kept only when `of` is a vehicle and the zone is on that body, **absent** otherwise so
 old documents stay byte-identical) is set by `tagPhoto` when a suggestion is added, and
 `ReportDocument` puts those thumbnails beside the mark.
+
+**The customer's page has two languages; everything else has one** (`src/i18n/`). No library:
+flat keys, `{name}` placeholders, `translate(lang, key, vars)` pure in `index.ts` so
+`describe.ts` and the server's parser can use it, `useT()` for components. `es` is typed
+`Record<Key, string>`, so a key added in English and forgotten in Spanish fails `tsc`. Messages
+live in `areas/*.ts` (`vocab` is the shared label tables — look kinds, panels, paints, bodies,
+severities and roles up by id there rather than using the English tables in `schema.ts` and
+`zones.ts`, which are the desk's words and the parser's). **No literal customer-facing English
+in a step.** Not translated on purpose: `claim/1`'s enum values, `UNKNOWN_DRIVER` (data —
+display it through `displayName`), `src/adjuster/`, `server/`, `embed.js`.
+
+**A component the desk also renders takes `lang` as a prop, never `useLang()`** —
+`ReportDocument`, `MapScene`, `DamageMarker`. The desk and a customer's draft share an origin
+and a localStorage; without the prop an adjuster inherits whatever language the last claimant
+chose. The default is English, so the desk gets it by saying nothing.
+
+**Spanish is not English with the words swapped.** The year goes last ("Toyota Camry 2022"),
+"de el" contracts to "del", and people and cars are gendered where a claim form cannot know
+the gender — hence the neutral constructions in `describe.ts` ("quien conducía"), "el otro
+vehículo (…)" for the other party, and "de color rojo" so one phrasing fits every body. Use
+`vehicleOf()`; `whose` and `vehicleName` do not sit side by side in Spanish. The Spanish fraud
+notice (`fraudNoticeFor`) is a plain-language translation, **not legal text**.
 
 **The kind of incident drives the flow** (`KIND_INFO` in `src/claim/schema.ts`, `stepsFor` in the
 store): `others` says whether other vehicles are expected, `diagram` whether the map step is shown.

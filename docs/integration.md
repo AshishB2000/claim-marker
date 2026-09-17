@@ -143,7 +143,8 @@ scrollbar), passes the settings once the page says it is ready, and relays event
 | `token` | sent as `Authorization: Bearer …` with the document. Mint a short-lived one per session so your backend knows whose report it is. |
 | `brand` | shown under the page title |
 | `prefill` | `reporter` and the `vehicles` on the policy. One vehicle fills the card; several become a "which of your vehicles?" pick. Only empty fields are filled; whatever the customer types is theirs. |
-| `fraudNotice` | the state-mandated wording above the signature |
+| `fraudNotice` | the state-mandated wording above the signature. Supply it per language if you fix `lang`; the built-in Spanish default is a plain-language translation, **not legal text**. |
+| `lang` | `'en'` or `'es'`. Set, the page is that language and its switch is hidden. Unset, the page follows the browser and the customer can switch. The document records which was used, and your claims desk stays English either way. |
 | `assistUrl` | an endpoint speaking `claim-assist/1` ([the assistant](spec-app.md#the-assistant)); unset, no AI exists in the page |
 | `returnDocument` | include the whole document in the `submitted` event, not just the reference |
 | `minHeight`, `autoHeight`, `title` | the iframe's |

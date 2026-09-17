@@ -9,6 +9,7 @@
  *       submitUrl: 'https://api.example.com/claims', // where the document is POSTed
  *       token: session.claimToken,                   // short-lived, minted by your backend
  *       brand: 'Acme Mutual',
+ *       lang: 'es',                                  // optional: 'en' or 'es'; unset, the customer chooses
  *       prefill: { reporter: { name, phone, email, policy }, vehicles: [{ make, model, year, plate, vin, color }] },
  *       onSubmitted: function (e) { location.href = '/claims/' + e.reference },
  *     })
@@ -25,7 +26,7 @@
  */
 ;(function () {
   var CHANNEL = 'claim-marker'
-  var SETTINGS = ['submitUrl', 'token', 'brand', 'fraudNotice', 'assistUrl', 'prefill', 'returnDocument']
+  var SETTINGS = ['submitUrl', 'token', 'brand', 'fraudNotice', 'assistUrl', 'lang', 'prefill', 'returnDocument']
 
   function pick(opts) {
     var config = {}
