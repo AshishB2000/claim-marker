@@ -3,7 +3,7 @@ import { useClaim } from '../../claim/store'
 import { assistOn, buildDiagram, writeStatement } from '../../assist/client'
 import type { LngLat } from '../../geo'
 import { ROLE_COLOR, SURFACES, type ClaimVehicle } from '../../claim/schema'
-import { cap, vehicleOf } from '../../claim/describe'
+import { cap, compassKey, vehicleOf } from '../../claim/describe'
 import type { Key } from '../../i18n'
 import { useLang, useT } from '../../i18n/useT'
 import { MapScene, type MapSceneHandle, type TapMode } from '../../map/MapScene'
@@ -11,9 +11,6 @@ import { usePlayback } from '../../map/usePlayback'
 import { zoneById } from '../../zones'
 import { Describe } from '../Describe'
 import { Icon } from '../icons'
-
-const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west']
-const facing = (deg: number): Key => `scene.compass.${COMPASS[Math.round((((deg % 360) + 360) % 360) / 45) % 8]}` as Key
 
 type Tap = { kind: 'waypoint'; id: string } | { kind: 'impact' } | null
 
@@ -202,7 +199,7 @@ export function Diagram() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{cap(vehicleOf(v, 'customer', lang))}</span>
                     <span className="block text-xs text-slate-500">
-                      {t('scene.vehicle.facing', { dir: t(facing(v.heading)) })}
+                      {t('scene.vehicle.facing', { dir: t(compassKey(v.heading)) })}
                       {v.path.length > 0 && t('scene.vehicle.path')}
                       {panel && <span className="text-red-700">{t('scene.vehicle.hit', { panel: t(`zone.${panel}` as Key).toLowerCase() })}</span>}
                     </span>
@@ -216,7 +213,7 @@ export function Diagram() {
                     <div>
                       <div className="mb-1 flex items-baseline justify-between">
                         <span className="label mb-0">{t('scene.facing.label')}</span>
-                        <span className="text-xs font-medium text-slate-600">{t(facing(v.heading))}</span>
+                        <span className="text-xs font-medium text-slate-600">{t(compassKey(v.heading))}</span>
                       </div>
                       <input
                         type="range"

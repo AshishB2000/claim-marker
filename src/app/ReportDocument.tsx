@@ -1,7 +1,22 @@
 import { Fragment, useRef, type ReactNode, type RefObject } from 'react'
 import { useClaim, type Step } from '../claim/store'
 import { KIND_INFO, ROLE_COLOR, newPerson, type Claim, type ClaimVehicle, type Person } from '../claim/schema'
-import { cap, conditionLabels, contactLine, driverName, driverShort, gaps, ownerLabel, personLine, vehicleName, vehicleOf, yesNo, type Voice } from '../claim/describe'
+import {
+  cap,
+  conditionLabels,
+  contactLine,
+  driverName,
+  driverShort,
+  gaps,
+  glareLine,
+  lookedUpLines,
+  ownerLabel,
+  personLine,
+  vehicleName,
+  vehicleOf,
+  yesNo,
+  type Voice,
+} from '../claim/describe'
 import type { LngLat } from '../geo'
 import { plural, translate, type Key, type Lang, type Vars } from '../i18n'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
@@ -134,6 +149,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
   const play = usePlayback(claim.vehicles)
 
   const loc = claim.incident.location
+  const ctx = claim.incident.context
   const center: LngLat | null = loc ? [loc.lng, loc.lat] : null
   const info = KIND_INFO[claim.incident.kind]
   const mine = claim.vehicles.find((v) => v.role === 'insured') ?? claim.vehicles[0]
@@ -224,6 +240,30 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
             <Icon.check /> {t('scene.doc.complete')}
           </div>
         ))}
+
+      {/* ── what the record said about the place and the hour: provenance, not an answer ── */}
+      {ctx && (
+        <Part title={t('start.where.looked.title')}>
+          <p className="mb-2 text-xs text-slate-500">{t('start.where.looked.source')}</p>
+          <ul className="space-y-1.5 text-sm text-ink">
+            {lookedUpLines(ctx, claim.incident.conditions, lang).map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+            {voice === 'desk' &&
+              claim.vehicles
+                .filter((v) => v.position)
+                .map((v) => {
+                  const glare = glareLine(ctx, v.heading, lang)
+                  return glare ? (
+                    <li key={v.id} className="flex items-center gap-2">
+                      <Tag v={v} />
+                      <span>{glare}</span>
+                    </li>
+                  ) : null
+                })}
+          </ul>
+        </Part>
+      )}
 
       {/* ── vehicles ────────────────────────────────────────────── */}
       <Part title={t('scene.doc.vehicles')} edit={change('vehicles')}>
