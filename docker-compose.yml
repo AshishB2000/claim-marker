@@ -2,6 +2,7 @@
 #
 #   docker compose up --build
 #
+# Settings come from the environment or a .env beside this file (see .env.example).
 # Nothing here is required to start in development. For production set at least
 # SESSION_SECRET (or CLAIM_TOKEN), DESK_TOKEN and ALLOWED_HOSTS: with NODE_ENV=production
 # the server refuses to start without them.
@@ -29,6 +30,8 @@ services:
       CONNECT_SRC: ${CONNECT_SRC:-}
       WEBHOOK_URL: ${WEBHOOK_URL:-}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      # forget reports older than this many days; unset keeps them for ever
+      RETAIN_DAYS: ${RETAIN_DAYS:-}
 
 volumes:
   claims:

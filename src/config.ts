@@ -110,6 +110,9 @@ export function applyConfig(input: unknown): void {
 }
 
 const originAllowed = (origin: string) => {
+  // a page on this very origin can already reach into this one directly, so a config message
+  // from it grants nothing new — and it is how the demo portal at /demo embeds this page
+  if (origin === window.location.origin) return true
   const allowed = allowedHosts()
   if (allowed.length === 0) {
     console.warn(`claim-marker: accepting config from ${origin}; set VITE_ALLOWED_HOSTS in production`)

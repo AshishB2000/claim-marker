@@ -508,6 +508,102 @@ which needs the body, the environment map and the textures. It reads the marker'
 rather than a vehicle card's, because the marker is the one kept with `preserveDrawingBuffer`
 — the card previews render fine and read back blank.
 
+## A live instance
+
+Until now nobody could see the product without cloning the repo. This is what it takes to put
+the one-port server on a public URL, and what that URL has to refuse to do. **It has not been
+deployed**: there is no Fly account behind it yet, flyctl and Docker are not installed on the
+machine it was written on, and everything below is proven against a local server started in
+production mode, not against Fly.
+
+**Fly, because it builds the Dockerfile for us.** No Docker here means an image cannot be built
+locally; Fly builds it on its own builders from `fly.toml`, gives it a volume for `CLAIM_DIR`,
+TLS on a `fly.dev` hostname, secrets as environment, and stops the machine when nobody is
+looking. Render does the same from `render.yaml` and is the documented alternative, at the cost
+of a paid instance for the disk. The six commands are Ashish's to run
+([integration.md](integration.md#deploy-to-fly)): an account and credentials are not something
+to create on someone's behalf.
+
+**Retention (`RETAIN_DAYS`), because a public demo collects strangers' photographs.** A report
+older than the limit is deleted — the folder with its images, and the `by-client/` entry that
+mapped the page's reference to it — at startup and every six hours on an `unref`ed timer.
+Unset keeps everything, which is still the default for an insurer's own deployment where
+retention is a policy decision and not this server's. The age test is a pure
+`expired(receivedAt, days, now)` in `server/retention.mjs` with its own test; it never deletes
+a report whose date does not parse. `/health` says what the limit is, so the live check can
+report it. The integration smoke seeds a report from 2000 and asserts it is gone by the time
+the server answers.
+
+**Three things found by reading, not by deploying**, each a line:
+
+- A Fly volume is mounted over `/data` owned by root, and the image ran as `node`: the first
+  `mkdir` would have failed with `EACCES` and the machine would never have passed a health
+  check. The image now starts as root, takes the reports folder for `node`, and `su-exec`s to
+  `node` — what the official postgres and redis images do. Not recursive, because everything
+  inside was written by `node`.
+- With `TRUST_PROXY=1` the rate limit keyed on the *first* `X-Forwarded-For` entry, which is
+  whatever the client sent when a proxy appends. Fly's rightmost entry is its own address, so
+  "last" would have put every visitor in one bucket. It now prefers `Fly-Client-IP`, which the
+  proxy sets itself, and falls back to the first entry elsewhere.
+- `PORT`, `CLAIM_DIR`, `STATIC_DIR` and `RATE_LIMIT` were read with `??`, so the empty values an
+  `.env` or compose's `${X:-}` produce meant port 0, the current directory (whose `index.html`
+  is the Vite *source*), or zero requests a minute. They are `||` now.
+
+**The proof is `scripts/live-check.mjs <url>`, and it needs no browser.** A deployed instance is
+checked from outside with `fetch`, using the `API_KEY` and `DESK_TOKEN` it was deployed with:
+`/health` up and serving the page; `/` is HTML whose CSP has `frame-ancestors` and the hash of
+the injected config, which says `"submitUrl":"/claims"`; a hashed asset is `immutable`;
+`/lib/claim.js` and a `%2f`-encoded `..` path are 404 (encoded so `fetch` does not fold the
+`..` away before it leaves the machine); `/sessions` is 401 without the key and mints with it;
+a `claim/1` built by `toDocument(emptyClaim())` from `dist/lib/claim.js` is filed with an `INS-`
+reference and sent again is a `200` duplicate; the desk is 401 without its token and lists the
+report with it; and the report is then PATCHed `closed`, so the inbox a prospect opens is not a
+wall of test reports.
+
+## The demo portal
+
+A prospect could not see the product without cloning the repo, and a live URL on its own would
+have dropped them on an empty form with no policy, no token and no idea what the insurer's side
+looks like. `server/demo/` is the missing half: Acme Mutual's own site, served by the claim
+server at `/demo/` when `DEMO=1`.
+
+**Plain HTML on purpose.** Three pages, one stylesheet, one script, no build step — because the
+thing being demonstrated is that the report embeds into *someone else's* stack. A React demo
+portal would have proved nothing. The sign-in cards are rendered into `index.html` at startup
+from `customers.mjs`, the same way the page's config is injected, so the sample customers live
+in one file and a static page still shows them without a fetch.
+
+**Sign-in is the insurer's backend, minus the hop.** `POST /demo/login` calls the same
+`createSession(customer, vehicles, ttl)` that `POST /sessions` does — the refactor is the whole
+change to minting — and answers the token and prefill that `ClaimMarker.mount` wants. There is
+nobody to authenticate, so each sign-in mints a customer id of its own (`demo-<who>-<random>`):
+two visitors who pick the same sample customer must not end up reading each other's reports.
+
+**What a public demonstration must not do.** People will type real names into it. So: a receipt
+minted from a demo session is tagged `demo: true` and swept after a day whatever `RETAIN_DAYS`
+says; the desk's reader is scoped — `DESK_TOKEN` still reads everything, but a demo visitor
+reads reports filed under their own id and nothing else, with the very session that filed them
+(`claims.html` puts it where the desk looks, so the "see what the claims team sees" link just
+opens). The plan had that link show the instance's `DESK_TOKEN`, which would have handed every
+visitor every other visitor's photographs. The production guard is untouched: `DEMO=1` relaxes
+nothing, and the portal has no business on an instance taking real claims.
+
+**Two lines elsewhere.** `src/config.ts` now trusts a `config` message from its *own* origin: a
+page on the same origin can already reach into the iframe directly, so the message grants it
+nothing new, and without it the portal's iframe would have been ignored whenever `ALLOWED_HOSTS`
+was set. That is why there is no `PUBLIC_ORIGIN` variable — the only thing left needing the
+server's own origin is `frame-ancestors`, which gains `'self'` when `DEMO=1`. And `public/sw.js`
+leaves `/demo` to the network as it already leaves `/adjuster`: the insurer's own screens are
+not part of a claimant's offline shell.
+
+**The proof is a second walk in `scripts/integration-smoke.mjs`**, which is also the first time
+anything drove the *built* page rather than the dev server: `/demo` redirects to `/demo/`,
+signing in as the two-vehicle customer makes the policy pick show two vehicles, the report is
+filed with an `INS-` reference on `claims.html`, its link opens the desk on that report in the
+adjuster's voice, and that visitor's own token lists exactly one report. `scripts/record-demo.mjs`
+is the one-off that records `docs/demo.gif` from the same journey, sped up and palette-mapped
+through ffmpeg.
+
 ## Photo-first damage on a phone
 
 Standing at the roadside with one hand free, the first thing anyone does is photograph the car.
