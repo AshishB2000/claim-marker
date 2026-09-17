@@ -24,6 +24,7 @@
  * claims desk, which opens that report and nothing else.
  */
 import { chromium } from 'playwright'
+import { readFileSync as readDictionary } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { sign } from '../server/session.mjs'
 import { createServer } from 'node:http'
@@ -173,6 +174,14 @@ if (flood.slice(0, RATE_LIMIT).includes(429)) fail(`the limit bit before ${RATE_
 if (!flood.includes(429)) fail(`${flood.length} requests in a second were all let through: ${flood.join(' ')}`)
 ok(`rate limit: the first ${RATE_LIMIT} POSTs are answered, the flood after them gets 429`)
 
+/**
+ * The embedded walk is driven in Spanish: the host page fixes the language the way an insurer
+ * with Spanish-speaking customers would, and every name below comes from the dictionaries the
+ * build emits, so nothing here can quietly go back to matching English.
+ */
+const DICT = JSON.parse(readDictionary(new URL('../dist/lib/messages.json', import.meta.url), 'utf8')).es
+const es = (key, vars = {}) => String(DICT[key]).replace(/\{(\w+)\}/g, (whole, name) => (name in vars ? vars[name] : whole))
+
 const HOST_PAGE = `<!doctype html><meta charset="utf-8"><title>Acme Mutual — my policy</title>
 <h1>Acme Mutual</h1><p>Something happened? Tell us below.</p>
 <div id="report"></div>
@@ -184,6 +193,7 @@ const HOST_PAGE = `<!doctype html><meta charset="utf-8"><title>Acme Mutual — m
     submitUrl: '${API}/claims',
     token: ${JSON.stringify(session.token)},
     brand: 'Acme Mutual',
+    lang: 'es',
     returnDocument: true,
     prefill: ${JSON.stringify(session.prefill)},
     onStep: function (e) { events.push(e) },
@@ -222,35 +232,39 @@ await frame
 await page.waitForFunction(() => window.events.some((e) => e.type === 'step' && e.step === 'kind'), null, { timeout: 5000 }).catch(() => fail('the host never heard the first step'))
 const height = await page.waitForFunction(() => parseInt(document.querySelector('iframe').style.height) > 400, null, { timeout: 5000 }).catch(() => null)
 if (!height) fail('the iframe was never sized to the page')
-ok('embed: config reached the page (brand shown), the host heard the step, the iframe took the page height')
+// the host asked for Spanish, so the very first thing the customer reads is Spanish
+const firstHeading = await frame.locator('h1').first().innerText()
+if (firstHeading !== es('shell.head.kind.title')) fail(`the host asked for Spanish and the page opened with "${firstHeading}"`)
+if ((await frame.getByRole('group', { name: es('shell.lang.label') }).count()) !== 0) fail('the language switch is still offered although the host fixed the language')
+ok(`embed: config reached the page (brand shown, opened in Spanish with "${firstHeading}"), the host heard the step, the iframe took the page height`)
 
-const next = () => frame.getByRole('button', { name: /^Continue/ }).click()
+const next = () => frame.getByRole('button', { name: new RegExp(`^${es('common.continue')}`) }).click()
 await next()
 
 // where
-const search = frame.getByRole('combobox', { name: 'Where did it happen?' })
+const search = frame.getByRole('combobox', { name: es('start.where.label') })
 await search.fill('Times Square, New York')
 const option = frame.getByRole('option').first()
 await option.waitFor({ timeout: 20000 }).catch(() => fail('no address suggestions'))
 await option.click()
-await frame.locator('text=Drag the pin on the map').waitFor({ timeout: 10000 })
+await frame.locator(`text=${es('start.where.dragPin')}`).waitFor({ timeout: 10000 })
 await next()
 
 // vehicles: the policy's two vehicles are a pick
-const picks = frame.getByRole('radiogroup', { name: 'Which of your vehicles' }).getByRole('radio')
+const picks = frame.getByRole('radiogroup', { name: es('start.vehicles.whichOfYours') }).getByRole('radio')
 if ((await picks.count()) !== 2) fail(`expected two policy vehicles to pick from, got ${await picks.count()}`)
 await picks.nth(1).click()
-if ((await frame.getByRole('combobox', { name: 'Make' }).first().inputValue()) !== 'Ford') fail('picking the F-150 did not fill the card')
+if ((await frame.getByRole('combobox', { name: es('start.vehicles.make') }).first().inputValue()) !== 'Ford') fail('picking the F-150 did not fill the card')
 await picks.nth(0).click()
-const make = await frame.getByRole('combobox', { name: 'Make' }).first().inputValue()
+const make = await frame.getByRole('combobox', { name: es('start.vehicles.make') }).first().inputValue()
 const vin = await frame.getByRole('textbox', { name: 'VIN' }).first().inputValue()
-const plate = await frame.getByRole('textbox', { name: 'Plate' }).first().inputValue()
+const plate = await frame.getByRole('textbox', { name: es('start.vehicles.plate') }).first().inputValue()
 if (make !== 'Toyota' || vin !== '4T1BF1FK5CU123456' || plate !== 'ABC 123') fail(`picking the Camry gave ${make} ${vin} ${plate}`)
 ok('prefill: two policy vehicles to pick from; picking one fills make, model, year, plate and VIN')
 await next()
 
 // people, the scene, the damage: nothing to add for this run
-await frame.locator('text=Who was driving?').waitFor()
+await frame.locator(`text=${es('start.people.drivingTitle')}`).waitFor()
 await next()
 await frame.locator('.mk-car').first().waitFor({ timeout: 30000 })
 await page.waitForTimeout(3000)
@@ -260,19 +274,19 @@ await page.waitForTimeout(3000)
 await next()
 
 // review: the reporter is already filled in
-await frame.locator('text=How do we reach you?').waitFor()
-const name = await frame.getByRole('textbox', { name: 'Your name' }).inputValue()
-const email = await frame.getByRole('textbox', { name: 'Your email' }).inputValue()
-const policy = await frame.getByRole('textbox', { name: 'Policy number' }).inputValue()
+await frame.locator(`text=${es('scene.contact.title')}`).waitFor()
+const name = await frame.getByRole('textbox', { name: es('scene.contact.name') }).inputValue()
+const email = await frame.getByRole('textbox', { name: es('scene.contact.emailAria') }).inputValue()
+const policy = await frame.getByRole('textbox', { name: es('scene.contact.policyAria') }).inputValue()
 if (name !== 'Sam Lee' || email !== 'sam@example.com' || policy !== 'POL-9') fail(`reporter prefill gave ${name} / ${email} / ${policy}`)
 ok('prefill: the reporter is filled in on the review page')
-await frame.getByRole('checkbox', { name: 'I confirm this report is true' }).check()
-await frame.getByRole('textbox', { name: 'Signature' }).fill('Sam Lee')
+await frame.getByRole('checkbox', { name: es('scene.send.agreeAria') }).check()
+await frame.getByRole('textbox', { name: es('scene.send.signAria') }).fill('Sam Lee')
 
 // send with no signal: the report is kept, and the host hears it
 await context.setOffline(true)
-await frame.getByRole('button', { name: 'Send my report' }).click()
-await frame.locator('text=Your report is saved').waitFor({ timeout: 40000 }).catch(() => fail('a report sent with no signal was not kept'))
+await frame.getByRole('button', { name: es('scene.send.send') }).click()
+await frame.locator(`text=${es('shell.done.queued.title')}`).waitFor({ timeout: 40000 }).catch(() => fail('a report sent with no signal was not kept'))
 const queued = (await events()).find((e) => e.type === 'queued')
 if (!queued || !/^CM-/.test(queued.reference)) fail('the host was not told the report was queued')
 ok('offline: the report is kept with the page\'s reference and the host hears "queued"')
@@ -280,12 +294,14 @@ ok('offline: the report is kept with the page\'s reference and the host hears "q
 // the signal returns: it leaves by itself, and the server's reference replaces the page's
 await context.setOffline(false)
 await frame.locator('body').evaluate(() => window.dispatchEvent(new Event('online')))
-await frame.locator('text=Your report is in').waitFor({ timeout: 30000 }).catch(() => fail('the queued report did not send when back online'))
+await frame.locator(`text=${es('shell.done.sent.title')}`).waitFor({ timeout: 30000 }).catch(() => fail('the queued report did not send when back online'))
 const shown = await frame.locator('.font-mono.text-3xl').textContent()
 if (!/^INS-\d{4}-[A-Z2-9]{6}$/.test(shown ?? '')) fail(`the done page shows ${shown}, not the server's reference`)
 const submitted = (await events()).find((e) => e.type === 'submitted')
 if (!submitted || submitted.reference !== shown) fail(`the host heard ${JSON.stringify(submitted)}`)
 if (submitted.document?.schema !== 'claim/1' || submitted.document.reporter.name !== 'Sam Lee') fail('the host asked for the document and did not get it')
+// the document says which language its free text is in, so the desk knows what it is reading
+if (submitted.document.incident.language !== 'es') fail(`the report was written in Spanish but the document says ${submitted.document.incident.language}`)
 ok(`online again: sent as ${shown}; the host heard "submitted" with the document`)
 
 // ── the server's side ─────────────────────────────────────────────────
@@ -297,6 +313,7 @@ const one = await (await fetch(`http://localhost:${API_PORT}/claims/${shown}`, d
 if (one.claim.reporter.name !== 'Sam Lee' || one.claim.vehicles[0].vin !== '4T1BF1FK5CU123456' || one.claim.attestation.name !== 'Sam Lee') fail('the stored document is not the one sent')
 if (!one.claim.attestation.at || !one.claim.submittedAt) fail('the attestation was not stamped')
 if (one.customer?.id !== 'cust-1' || one.customer.policy !== 'POL-9') fail(`the report was not filed against the session's customer: ${JSON.stringify(one.customer)}`)
+if (one.claim.incident.language !== 'es') fail(`the stored document says ${one.claim.incident.language}, not es`)
 const files = await readdir(join(dir, shown))
 // no damage was marked on this walk (scripts/smoke.mjs covers that), so there is a diagram but no marked-up car
 for (const f of ['claim.json', 'receipt.json', 'scene.png']) if (!files.includes(f)) fail(`${f} was not unpacked; have ${files.join(', ')}`)

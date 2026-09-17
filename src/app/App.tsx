@@ -4,6 +4,8 @@ import { KIND_INFO, type Claim } from '../claim/schema'
 import { config, tell } from '../config'
 import { LANGS, type Key, type Vars } from '../i18n'
 import { useLang, useT } from '../i18n/useT'
+import { assistOn } from '../assist/client'
+import { useNarrow } from './narrow'
 import { Icon } from './icons'
 import { WhatHappened } from './steps/Kind'
 import { Where } from './steps/Where'
@@ -24,9 +26,13 @@ function headingKey(step: Step, claim: Claim): string {
   return step
 }
 
-const heading = (step: Step, claim: Claim, t: T): { title: string; lead: string } => {
+const heading = (step: Step, claim: Claim, t: T, photoFirst: boolean): { title: string; lead: string } => {
   const id = headingKey(step, claim)
-  return { title: t(`shell.head.${id}.title` as Key), lead: t(`shell.head.${id}.lead` as Key) }
+  return {
+    title: t(`shell.head.${id}.title` as Key),
+    // when the camera leads the damage step, "tap the car" is the wrong first instruction
+    lead: step === 'damage' && photoFirst ? t('damage.head.lead') : t(`shell.head.${id}.lead` as Key),
+  }
 }
 
 /** what has to be true before the customer can leave a step */
@@ -45,6 +51,9 @@ export function App() {
   const setLang = useClaim((s) => s.setLang)
   const lang = useLang()
   const t = useT()
+  // the damage step puts the camera first on a phone with the assistant on, and says so
+  const narrow = useNarrow()
+  const photoFirst = narrow && assistOn()
   const [done, setDone] = useState(!!claim.reference)
 
   useEffect(() => {
@@ -65,7 +74,7 @@ export function App() {
     return () => ro.disconnect()
   }, [])
   const blocker = ready(step, claim, t)
-  const { title, lead } = heading(step, claim, t)
+  const { title, lead } = heading(step, claim, t, photoFirst)
 
   return (
     <div className={config.embedded ? 'pb-4' : 'min-h-screen pb-28'}>

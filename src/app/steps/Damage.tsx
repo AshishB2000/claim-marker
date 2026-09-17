@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useClaim, insuredOf } from '../../claim/store'
-import { VEHICLES } from '../../zones'
 import { KIND_INFO, ROLE_COLOR } from '../../claim/schema'
+import type { Key } from '../../i18n'
+import { useT } from '../../i18n/useT'
 import { Field, YesNo } from '../ui'
 import { Describe } from '../Describe'
 import { assistOn } from '../../assist/client'
@@ -14,6 +15,7 @@ export function Damage() {
   const claim = useClaim((s) => s.claim)
   const setCondition = useClaim((s) => s.setCondition)
   const setProperty = useClaim((s) => s.setProperty)
+  const t = useT()
   const [id, setId] = useState(insuredOf(claim).id)
   const v = claim.vehicles.find((x) => x.id === id) ?? insuredOf(claim)
   const diagram = KIND_INFO[claim.incident.kind].diagram
@@ -30,7 +32,7 @@ export function Damage() {
           {claim.vehicles.map((x) => (
             <button key={x.id} className="chip" aria-pressed={x.id === v.id} onClick={() => setId(x.id)}>
               <span className="size-2 rounded-full" style={{ background: ROLE_COLOR[x.role] }} />
-              {x.id.toUpperCase()} · {x.role === 'insured' ? 'Your' : 'Other'} {VEHICLES[x.body].label}
+              {x.id.toUpperCase()} · {t(x.role === 'insured' ? 'damage.chip.mine' : 'damage.chip.other', { body: t(`body.${x.body}` as Key) })}
               {x.damages.length > 0 && <span className="rounded-full bg-black/10 px-1.5 text-[10px]">{x.damages.length}</span>}
             </button>
           ))}
@@ -51,7 +53,7 @@ export function Damage() {
 
       {!diagram && (
         <div className="card mt-5 p-5">
-          <Describe placeholder="For example: I came out in the morning and the driver's window was smashed and the glovebox emptied." />
+          <Describe placeholder={t('damage.describe.placeholder')} />
         </div>
       )}
 
@@ -59,27 +61,27 @@ export function Damage() {
 
       {v.role === 'insured' && (
         <div className="card mt-5 p-5">
-          <h3 className="font-semibold">Your car now</h3>
-          <p className="mt-0.5 text-sm text-slate-500">This decides whether we arrange a tow, a hire car, and where to send someone to look at it.</p>
+          <h3 className="font-semibold">{t('damage.now.title')}</h3>
+          <p className="mt-0.5 text-sm text-slate-500">{t('damage.now.lead')}</p>
           <div className="mt-4 grid gap-4 sm:grid-cols-3">
             <div>
-              <span className="label">Can it be driven?</span>
-              <YesNo name="Can it be driven" value={v.condition.drivable} onChange={(drivable) => setCondition(v.id, { drivable })} unsure="Not sure" />
+              <span className="label">{t('damage.now.drivable')}</span>
+              <YesNo name={t('damage.now.drivableAria')} value={v.condition.drivable} onChange={(drivable) => setCondition(v.id, { drivable })} unsure={t('common.notSure')} />
             </div>
             <div>
-              <span className="label">Did the airbags go off?</span>
-              <YesNo name="Did the airbags go off" value={v.condition.airbags} onChange={(airbags) => setCondition(v.id, { airbags })} />
+              <span className="label">{t('damage.now.airbags')}</span>
+              <YesNo name={t('damage.now.airbagsAria')} value={v.condition.airbags} onChange={(airbags) => setCondition(v.id, { airbags })} />
             </div>
             <div>
-              <span className="label">Was it towed?</span>
-              <YesNo name="Was it towed" value={v.condition.towed} onChange={(towed) => setCondition(v.id, { towed })} />
+              <span className="label">{t('damage.now.towed')}</span>
+              <YesNo name={t('damage.now.towedAria')} value={v.condition.towed} onChange={(towed) => setCondition(v.id, { towed })} />
             </div>
           </div>
-          <Field label="Where is it now?" className="mt-4">
+          <Field label={t('damage.now.where')} className="mt-4">
             <input
               className="input"
-              aria-label="Where is the vehicle now"
-              placeholder="At home · the tow yard's name · the body shop · an address"
+              aria-label={t('damage.now.whereAria')}
+              placeholder={t('damage.now.wherePlaceholder')}
               value={v.condition.location}
               onChange={(e) => setCondition(v.id, { location: e.target.value })}
               autoComplete="off"
@@ -90,14 +92,14 @@ export function Damage() {
 
       {KIND_INFO[claim.incident.kind].diagram && (
         <div className="card mt-5 p-5">
-          <h3 className="font-semibold">Was anything else damaged?</h3>
-          <p className="mt-0.5 text-sm text-slate-500">A fence, a pole, a wall, a parked bike — anything that is not a vehicle.</p>
+          <h3 className="font-semibold">{t('damage.property.title')}</h3>
+          <p className="mt-0.5 text-sm text-slate-500">{t('damage.property.lead')}</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-[1.6fr_1fr]">
-            <Field label="What was damaged">
-              <input className="input" aria-label="Other property damaged" value={claim.property.description} onChange={(e) => setProperty({ description: e.target.value })} autoComplete="off" />
+            <Field label={t('damage.property.what')}>
+              <input className="input" aria-label={t('damage.property.whatAria')} value={claim.property.description} onChange={(e) => setProperty({ description: e.target.value })} autoComplete="off" />
             </Field>
-            <Field label="Whose it is, if you know">
-              <input className="input" aria-label="Property owner" value={claim.property.owner} onChange={(e) => setProperty({ owner: e.target.value })} autoComplete="off" />
+            <Field label={t('damage.property.owner')}>
+              <input className="input" aria-label={t('damage.property.ownerAria')} value={claim.property.owner} onChange={(e) => setProperty({ owner: e.target.value })} autoComplete="off" />
             </Field>
           </div>
         </div>

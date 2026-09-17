@@ -274,7 +274,11 @@ if (!(await send.isDisabled())) fail('the review page let the report go unsigned
 
 // the endpoint failing says so and changes nothing
 answer = () => [502, { error: 'the assistant could not answer' }]
-await page.getByRole('button', { name: 'Check it over for me' }).click()
+// scrolled into view first: the review page is 4000 px of map and document, and the click's
+// own scroll competes with the step's smooth scroll-to-top for long enough to time out
+const check = page.getByRole('button', { name: 'Check it over for me' })
+await check.scrollIntoViewIfNeeded()
+await check.click()
 await page.waitForFunction(() => /could not answer \(502\)/.test(document.body.innerText), null, { timeout: 15000 })
 if (!(await send.isDisabled())) fail('a failed check changed whether the report could be sent')
 ok('assist: a failing second look says so and changes nothing')
@@ -296,7 +300,9 @@ answer = () => [
   },
 ]
 // the label only says "again" once something came back; after the 502 it still says "over for me"
-await page.getByRole('button', { name: /^Check it (over for me|again)$/ }).click()
+const again = page.getByRole('button', { name: /^Check it (over for me|again)$/ })
+await again.scrollIntoViewIfNeeded()
+await again.click()
 await page.waitForFunction(() => document.body.innerText.includes('Were the police called?'), null, { timeout: 15000 })
 const asked2 = seen.at(-1)
 if (asked2.task !== 'check') fail(`wrong task: ${asked2.task}`)

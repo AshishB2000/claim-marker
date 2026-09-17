@@ -4,11 +4,121 @@
  * document that came out. Unit tests cover the maths; this covers the product.
  *
  *   npm run dev   # in another shell
- *   node scripts/smoke.mjs [origin]
+ *   node scripts/smoke.mjs [origin] [--lang=es]
+ *
+ * With `--lang=es` the same walk is driven in Spanish. It clicks nothing by an English word:
+ * every name comes from `names()`, which reads the dictionaries the build emits beside the
+ * parser (`dist/lib/messages.json`), so a step that forgets to translate something fails here
+ * rather than in front of a customer. Each step also checks that no English sentence from the
+ * dictionary is still on the page.
  */
+import { readFileSync } from 'node:fs'
 import { chromium } from 'playwright'
 
-const origin = process.argv[2] ?? 'http://localhost:5173'
+const args = process.argv.slice(2)
+const origin = args.find((a) => !a.startsWith('--')) ?? 'http://localhost:5173'
+const lang = args.includes('--lang=es') ? 'es' : 'en'
+
+const DICT = JSON.parse(readFileSync(new URL('../dist/lib/messages.json', import.meta.url), 'utf8'))
+/** one message, in the language this run is driving, with its placeholders filled */
+const t = (key, vars = {}) => String(DICT[lang][key] ?? DICT.en[key] ?? key).replace(/\{(\w+)\}/g, (whole, name) => (name in vars ? vars[name] : whole))
+/** a vehicle as the page names it: the year goes last in Spanish */
+const named = (year, make, model) => (lang === 'es' ? `${make} ${model} ${year}` : `${year} ${make} ${model}`)
+const starts = (s) => new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+
+/**
+ * Every name this walk clicks, types into or waits for, in the language it is driving.
+ * Almost all of it is the dictionary; the three sentences at the end are composed by
+ * `src/claim/describe.ts`, which builds them rather than looking one key up.
+ */
+const names = (lang) => ({
+  kindGroup: t('start.kind.group'),
+  weather: t('kind.weather.label'),
+  collision: t('kind.collision.label'),
+  continue: t('common.continue'),
+  yes: t('common.yes'),
+  no: t('common.no'),
+
+  where: t('start.where.label'),
+  weatherSel: t('start.where.weather'),
+  roadSel: t('start.where.road'),
+  lightSel: t('start.where.light'),
+
+  addVehicle: t('start.vehicles.add'),
+  bodyType: t('start.vehicles.bodyType'),
+  make: t('start.vehicles.make'),
+  year: t('start.vehicles.year'),
+  model: t('start.vehicles.model'),
+  plateState: t('start.vehicles.plateState'),
+  van: t('body.van'),
+  red: t('paint.red'),
+  credit: t('start.photo.credit'),
+  vinDiffers: t('start.vehicles.vinDiffers', { found: named(2003, 'Honda', 'Accord'), chosen: named(2021, 'Honda', 'CR-V') }),
+
+  whoDriving: t('start.people.drivingTitle'),
+  driverBName: t('start.people.nameOf', { who: t('start.people.whoDriverOf', { id: 'B' }) }),
+  driverBPhone: t('start.people.phoneOf', { who: t('start.people.whoDriverOf', { id: 'B' }) }),
+  insurerB: t('start.people.insurerOf', { id: 'B' }),
+  policyB: t('start.people.policyOf', { id: 'B' }),
+  addPassenger: t('start.people.addPassenger'),
+  passengerName: t('start.people.nameOf', { who: t('role.passenger') }),
+  hurtGroup: t('start.people.hurtGroup'),
+  injurySam: t('start.people.injuryOf', { who: 'Sam Lee' }),
+  policeGroup: t('start.people.policeGroup'),
+  reportNumber: t('start.people.reportNumberOf'),
+  addWitness: t('start.people.addWitness'),
+  witnessName: t('start.people.nameOf', { who: t('role.witness') }),
+
+  facingA: t('scene.facing.aria', { id: 'A' }),
+  addBend: t('scene.path.bend'),
+  tapMap: t('scene.path.tap'),
+  done: t('scene.banner.done'),
+  playBack: t('scene.play.start'),
+  lot: t('surface.lot'),
+  satellite: t('surface.satellite'),
+  describeLabel: t('shell.describe.label'),
+  hitOnBumper: t('scene.vehicle.hit', { panel: t('zone.front_bumper').toLowerCase() }).replace(/^\s*·\s*/, ''),
+
+  dent: t('severity.dent'),
+  addPhotos: t('damage.addPhotos'),
+  photo1: t('damage.photo.alt', { n: 1 }),
+  caption1: t('damage.photo.captionAria', { n: 1 }),
+  markedForYou: t('damage.auto.title', { panel: t('zone.front_bumper').toLowerCase() }),
+  drivable: t('damage.now.drivableAria'),
+  airbags: t('damage.now.airbagsAria'),
+  towed: t('damage.now.towedAria'),
+  whereNow: t('damage.now.whereAria'),
+  otherProperty: t('damage.property.whatAria'),
+
+  send: t('scene.send.send'),
+  yourName: t('scene.contact.name'),
+  yourPhone: t('scene.contact.phoneAria'),
+  yourEmail: t('scene.contact.emailAria'),
+  policyholder: t('scene.contact.policyholderAria'),
+  agree: t('scene.send.agreeAria'),
+  sign: t('scene.send.signAria'),
+  reportIn: t('shell.done.sent.title'),
+
+  // composed by describe.ts, not looked up: the tag on a vehicle card, and one person's line
+  yourVehicle: lang === 'es' ? 'Tu vehículo' : 'Your vehicle',
+  samLine: lang === 'es' ? 'Sam Lee, viajaba en tu' : 'Sam Lee, passenger in your',
+})
+const N = names(lang)
+
+/**
+ * The English sentences the dictionary has a different Spanish one for, in fragments so that
+ * a message with a placeholder in the middle still counts. Four words or more: shorter than
+ * that and a label like "Model" or "VIN" is the same word in both.
+ */
+const ENGLISH = Object.keys(DICT.en).flatMap((key) =>
+  DICT.es[key] === DICT.en[key]
+    ? []
+    : String(DICT.en[key])
+        .split(/\{\w+\}/)
+        .map((f) => f.trim())
+        .filter((f) => f.split(/\s+/).length >= 4)
+        .map((f) => [key, f]),
+)
 
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
@@ -64,29 +174,40 @@ const drag = async (from, dx, dy) => {
   await page.mouse.up()
   await page.waitForTimeout(300)
 }
-const next = () => page.getByRole('button', { name: /^Continue/ }).click()
+const next = () => page.getByRole('button', { name: starts(N.continue) }).click()
 
+/** nothing the customer can read on this step may still be in English */
+const noEnglish = async (where) => {
+  if (lang === 'en') return
+  const text = await page.evaluate(() => document.body.innerText)
+  const left = ENGLISH.filter(([, sentence]) => text.includes(sentence))
+  if (left.length) fail(`English left on ${where}: ${left.map(([k, f]) => `${k} — "${f.slice(0, 70)}"`).join('\n  ')}`)
+}
+
+// the host fixes the language, which is also the path an insurer serving a Spanish page takes
+if (lang === 'es') await page.addInitScript(() => void (window.CLAIM_MARKER = { lang: 'es' }))
 await page.goto(`${origin}/`, { waitUntil: 'networkidle' })
 
 // ── 0 · what happened ─────────────────────────────────────────────────
 // the kind decides the flow: a hail claim has no other party and nothing to diagram
-await page.waitForSelector('[role=radiogroup][aria-label="What happened"]')
-const kinds = page.locator('[role=radiogroup][aria-label="What happened"] [role=radio]')
+await page.waitForSelector(`[role=radiogroup][aria-label="${N.kindGroup}"]`)
+const kinds = page.locator(`[role=radiogroup][aria-label="${N.kindGroup}"] [role=radio]`)
 if ((await kinds.count()) !== 8) fail(`expected 8 kinds of incident, got ${await kinds.count()}`)
-await page.getByRole('radio', { name: /^Weather/ }).click()
+await page.getByRole('radio', { name: starts(N.weather) }).click()
 await page.waitForTimeout(300)
 if ((await page.locator('header ol li').count()) !== 6) fail(`a weather claim should have 6 steps, got ${await page.locator('header ol li').count()}`)
 if ((await draft()).vehicles.length !== 1) fail('a weather claim should drop the other vehicle')
-await page.getByRole('radio', { name: /^Collision/ }).click()
+await page.getByRole('radio', { name: starts(N.collision) }).click()
 await page.waitForTimeout(300)
 if ((await page.locator('header ol li').count()) !== 7) fail('a collision should have 7 steps')
 if ((await draft()).vehicles.length !== 2) fail('switching back to a collision should bring an other vehicle back')
+await noEnglish('what happened')
 ok('what happened: 8 kinds; weather drops the other vehicle and the diagram step, collision brings them back')
 await next()
 
 // ── 1 · where ──────────────────────────────────────────────────────────
-if (!(await page.getByRole('button', { name: /^Continue/ }).isDisabled())) fail('Continue should be disabled until a place is chosen')
-await page.getByRole('combobox', { name: 'Where did it happen?' }).fill('Times Square New York')
+if (!(await page.getByRole('button', { name: starts(N.continue) }).isDisabled())) fail('Continue should be disabled until a place is chosen')
+await page.getByRole('combobox', { name: N.where }).fill('Times Square New York')
 await page.waitForSelector('[role=option]', { timeout: 20000 })
 await page.locator('[role=option]').first().click()
 await page.waitForTimeout(1200)
@@ -100,28 +221,29 @@ if (!d1.incident.location || !/Times Square/.test(d1.incident.location.address))
 await settled('.maplibregl-canvas')
 const streetColours = await colours('.maplibregl-canvas')
 if (streetColours < 60) fail(`the street map looks blank (${streetColours} distinct colours)`)
-await page.getByRole('combobox', { name: 'Weather' }).selectOption('rain')
-await page.getByRole('combobox', { name: 'Road' }).selectOption('wet')
-await page.getByRole('combobox', { name: 'Light' }).selectOption('daylight')
+await page.getByRole('combobox', { name: N.weatherSel }).selectOption('rain')
+await page.getByRole('combobox', { name: N.roadSel }).selectOption('wet')
+await page.getByRole('combobox', { name: N.lightSel }).selectOption('daylight')
+await noEnglish('where')
 ok(`where: ${d1.incident.location.address}, street tiles painted (${streetColours} colours), conditions set`)
 
 // ── 2 · vehicles ───────────────────────────────────────────────────────
 await next()
-await page.waitForSelector('text=Your vehicle')
-await page.getByRole('button', { name: 'Add a vehicle' }).click()
-const cards = page.locator('[role=radiogroup][aria-label="Body type"]')
+await page.waitForSelector(`text=${N.yourVehicle}`)
+await page.getByRole('button', { name: N.addVehicle }).click()
+const cards = page.locator(`[role=radiogroup][aria-label="${N.bodyType}"]`)
 if ((await cards.count()) !== 3) fail(`expected 3 vehicle cards, got ${await cards.count()}`)
 
 // make, year and model from the lists; the model list comes from the vehicle database
-const makes = page.getByRole('combobox', { name: 'Make' })
-const years = page.getByRole('combobox', { name: 'Year' })
-const modelsA = page.getByRole('combobox', { name: 'Model' }).first()
+const makes = page.getByRole('combobox', { name: N.make })
+const years = page.getByRole('combobox', { name: N.year })
+const modelsA = page.getByRole('combobox', { name: N.model }).first()
 await makes.first().selectOption('Honda')
 await years.first().selectOption('2021')
-await page.waitForFunction(() => {
-  const sel = document.querySelector('select[aria-label="Model"]')
+await page.waitForFunction((label) => {
+  const sel = document.querySelector(`select[aria-label="${label}"]`)
   return sel && !sel.disabled && [...sel.options].some((o) => o.value === 'CR-V')
-}, null, { timeout: 30000 })
+}, N.model, { timeout: 30000 })
 await modelsA.selectOption('CR-V')
 const d2a = await draft()
 if (d2a.vehicles[0].make !== 'Honda' || d2a.vehicles[0].model !== 'CR-V' || d2a.vehicles[0].year !== 2021) fail(`make/model/year not saved: ${JSON.stringify([d2a.vehicles[0].make, d2a.vehicles[0].model, d2a.vehicles[0].year])}`)
@@ -130,10 +252,10 @@ ok(`vehicles: ${d2a.vehicles[0].year} ${d2a.vehicles[0].make} ${d2a.vehicles[0].
 
 await page.getByRole('textbox', { name: 'VIN' }).first().fill('1hgcm82633a004352')
 // that VIN is a real 2003 Accord: the page must say so rather than overwrite the CR-V the customer picked
-await page.waitForSelector('text=This VIN is a 2003 Honda Accord, not a 2021 Honda CR-V', { timeout: 20000 }).catch(() => fail('a VIN that disagrees with the chosen model was not pointed out'))
-await page.getByRole('textbox', { name: 'Plate state' }).first().fill('ny')
-await cards.nth(1).getByRole('radio', { name: 'Van' }).click()
-await cards.nth(0).locator('..').locator('..').getByRole('radio', { name: 'Red' }).click()
+await page.waitForSelector(`text=${N.vinDiffers}`, { timeout: 20000 }).catch(() => fail('a VIN that disagrees with the chosen model was not pointed out'))
+await page.getByRole('textbox', { name: N.plateState }).first().fill('ny')
+await cards.nth(1).getByRole('radio', { name: N.van }).click()
+await cards.nth(0).locator('..').locator('..').getByRole('radio', { name: N.red }).click()
 const d2 = await draft()
 if (d2.vehicles[1].body !== 'van') fail(`body change did not save: ${d2.vehicles[1].body}`)
 if (d2.vehicles[0].color !== '#b91c1c') fail(`colour change did not save: ${d2.vehicles[0].color}`)
@@ -142,7 +264,7 @@ if ((await page.locator('canvas').count()) < 2) fail('expected a 3D preview on e
 ok(`vehicles: ${d2.vehicles.map((v) => `${v.id}:${v.body}`).join(' ')}`)
 
 // the real car: a photograph of the make and model, found and actually loaded by the browser
-const alt = `${d2a.vehicles[0].year} ${d2a.vehicles[0].make} ${d2a.vehicles[0].model}`
+const alt = named(d2a.vehicles[0].year, d2a.vehicles[0].make, d2a.vehicles[0].model)
 await page
   .waitForFunction((alt) => {
     const i = document.querySelector(`img[alt="${alt}"]`)
@@ -151,32 +273,34 @@ await page
   .catch(() => fail(`no photograph of the ${alt} loaded on its card`))
 const photoSrc = await page.locator(`img[alt="${alt}"]`).getAttribute('src')
 if (!/wikimedia\.org/.test(photoSrc)) fail(`the photograph came from somewhere unexpected: ${photoSrc}`)
-if (!(await page.locator('a', { hasText: 'Photo: Wikimedia Commons' }).count())) fail('the photograph is not credited')
+if (!(await page.locator('a', { hasText: N.credit }).count())) fail('the photograph is not credited')
+await noEnglish('vehicles')
 ok(`vehicles: a real photograph of the ${alt} on its card`)
 
 // ── 2b · people, injuries, police ──────────────────────────────────────
 await next()
-await page.waitForSelector('text=Who was driving?')
+await page.waitForSelector(`text=${N.whoDriving}`)
 // the other driver, off their insurance card
-await page.getByRole('textbox', { name: 'Driver of B name' }).fill('Dana Q')
-await page.getByRole('textbox', { name: 'Driver of B phone' }).fill('555 0199')
-await page.getByRole('textbox', { name: 'Insurer of B' }).fill('Acme Mutual')
-await page.getByRole('textbox', { name: 'Policy of B' }).fill('am-77')
+await page.getByRole('textbox', { name: N.driverBName }).fill('Dana Q')
+await page.getByRole('textbox', { name: N.driverBPhone }).fill('555 0199')
+await page.getByRole('textbox', { name: N.insurerB }).fill('Acme Mutual')
+await page.getByRole('textbox', { name: N.policyB }).fill('am-77')
 // a passenger in the customer's car, who was hurt
-await page.getByRole('button', { name: 'Add a passenger' }).click()
-await page.getByRole('textbox', { name: 'Passenger name' }).fill('Sam Lee')
-await page.locator('[role=radiogroup][aria-label="Was anyone hurt"]').getByRole('radio', { name: 'Yes', exact: true }).click()
-await page.getByRole('checkbox', { name: /Sam Lee, passenger in your/ }).check()
-await page.getByRole('textbox', { name: 'Injury of Sam Lee' }).fill('Whiplash, seen at urgent care')
-await page.locator('[role=radiogroup][aria-label="Were the police called"]').getByRole('radio', { name: 'Yes', exact: true }).click()
-await page.getByRole('textbox', { name: 'Police report number' }).fill('2026-0042')
-await page.getByRole('button', { name: 'Add a witness' }).click()
-await page.getByRole('textbox', { name: 'Witness name' }).fill('Wit Ness')
+await page.getByRole('button', { name: N.addPassenger }).click()
+await page.getByRole('textbox', { name: N.passengerName }).fill('Sam Lee')
+await page.locator(`[role=radiogroup][aria-label="${N.hurtGroup}"]`).getByRole('radio', { name: N.yes, exact: true }).click()
+await page.getByRole('checkbox', { name: starts(N.samLine) }).check()
+await page.getByRole('textbox', { name: N.injurySam }).fill('Whiplash, seen at urgent care')
+await page.locator(`[role=radiogroup][aria-label="${N.policeGroup}"]`).getByRole('radio', { name: N.yes, exact: true }).click()
+await page.getByRole('textbox', { name: N.reportNumber }).fill('2026-0042')
+await page.getByRole('button', { name: N.addWitness }).click()
+await page.getByRole('textbox', { name: N.witnessName }).fill('Wit Ness')
 const d2b = await draft()
 const roles = d2b.people.map((p) => p.role).sort().join(',')
 if (roles !== 'driver,passenger,witness') fail(`people not saved: ${roles}`)
 if (!d2b.people.find((p) => p.role === 'passenger')?.injured) fail('the injured passenger was not marked as hurt')
 if (d2b.police.called !== true || d2b.police.report !== '2026-0042') fail(`police not saved: ${JSON.stringify(d2b.police)}`)
+await noEnglish('people')
 ok('people: the other driver and insurer, an injured passenger, the police report, a witness')
 
 // ── 3 · the map ────────────────────────────────────────────────────────
@@ -251,7 +375,7 @@ ok(`map: car A renders in its paint (${(redShare * 100).toFixed(0)}% red around 
 await page.locator('.mk-car').first().click()
 await page.waitForSelector('.mk-car[data-selected="true"] .mk-turn', { timeout: 5000 })
 const h0 = (await draft()).vehicles[0].heading
-await page.getByRole('slider', { name: 'Facing of vehicle A' }).fill('135')
+await page.getByRole('slider', { name: N.facingA }).fill('135')
 await page.waitForTimeout(300)
 const h1 = (await draft()).vehicles[0].heading
 if (h1 !== 135) fail(`heading did not follow the slider (${h0} → ${h1})`)
@@ -273,13 +397,13 @@ if (Math.hypot(turned.position[0] - dragged.position[0], turned.position[1] - dr
 ok(`map: turned on the map by its handle, ${h1}° → ${turned.heading}°`)
 
 // a point added by hand, for a bend the drag did not capture
-await page.getByRole('button', { name: /Add a bend|Tap it on the map/ }).click()
+await page.getByRole('button', { name: new RegExp(`${N.addBend}|${N.tapMap}`) }).click()
 const mapBox = await page.locator('.maplibregl-canvas').boundingBox()
 const before3 = (await draft()).vehicles[0].path.length
 await page.mouse.click(mapBox.x + mapBox.width * 0.3, mapBox.y + mapBox.height * 0.3)
 await page.waitForTimeout(300)
 if ((await draft()).vehicles[0].path.length !== before3 + 1) fail('tapping the map did not add to the path')
-await page.getByRole('button', { name: 'Done', exact: true }).click()
+await page.getByRole('button', { name: N.done, exact: true }).click()
 
 // nobody asks for the impact: drag one car onto another and the cross appears between them
 if ((await draft()).impact) fail('the impact should not exist before the cars have met')
@@ -311,11 +435,11 @@ const hitA = (await draft()).vehicles[0].damages
 const hitB = (await draft()).vehicles[1].damages
 if (hitA.length !== 1 || hitA[0].zone !== 'front_bumper') fail(`A should be marked on the front bumper from the impact, got ${JSON.stringify(hitA)}`)
 if (hitB.length !== 1 || hitB[0].zone !== 'front_bumper') fail(`B should be marked on the front bumper from the impact, got ${JSON.stringify(hitB)}`)
-if (!(await page.locator('text=hit on the front bumper').count())) fail('the vehicle list does not say where it was hit')
+if (!(await page.locator(`text=${N.hitOnBumper}`).count())) fail('the vehicle list does not say where it was hit')
 ok('map: both cars marked on the front bumper from the impact')
 
 // play it back: the handles step aside while the cars drive their routes, then come back
-await page.getByRole('button', { name: /Play it back/ }).click()
+await page.getByRole('button', { name: N.playBack }).click()
 await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
 await page.waitForFunction(() => !document.querySelector('.maplibregl-map').classList.contains('mk-playing'), null, { timeout: 12000 })
 if ((await page.locator('.mk-car').count()) !== 3) fail('the cars did not come back after playback')
@@ -323,7 +447,7 @@ ok('map: playback ran and handed the map back')
 
 // somewhere the map cannot show — a garage, a covered car park: the same diagram on a
 // drawn parking lot. The ground is saved with the claim, and the cars survive the switch.
-await page.getByRole('radio', { name: 'Parking lot' }).click()
+await page.getByRole('radio', { name: N.lot }).click()
 await page.waitForTimeout(2000)
 if ((await draft()).incident.surface !== 'lot') fail('the ground was not saved')
 if ((await page.locator('.mk-car').count()) !== 3) fail('the cars did not survive the change of ground')
@@ -344,12 +468,13 @@ const asphalt = await page.evaluate(() => {
   return hit / n
 })
 if (asphalt < 0.5) fail(`the parking lot did not paint (${(asphalt * 100).toFixed(0)}% tarmac)`)
-await page.getByRole('radio', { name: 'Satellite' }).click()
+await page.getByRole('radio', { name: N.satellite }).click()
 await page.waitForTimeout(2000)
 if ((await draft()).incident.surface !== 'satellite') fail('could not switch back to the satellite map')
 ok(`map: drawn parking lot for places the map cannot show (${(asphalt * 100).toFixed(0)}% tarmac), cars kept, back to satellite`)
 
-await page.getByRole('textbox', { name: 'In your own words, what happened?' }).fill('The van pulled out across me.')
+await page.getByRole('textbox', { name: N.describeLabel }).fill('The van pulled out across me.')
+await noEnglish('the map')
 ok('map: bend added by hand, description saved')
 
 // ── 4 · damage ─────────────────────────────────────────────────────────
@@ -357,7 +482,7 @@ await next()
 await page.waitForSelector('.cm-root canvas', { timeout: 20000 })
 await settled('.cm-root canvas')
 // the mark from the impact is already on the car, and the page says so
-if (!(await page.locator('text=Marked for you').count())) fail('the damage step does not say the mark came from the impact')
+if (!(await page.locator(`text=${N.markedForYou}`).count())) fail('the damage step does not say the mark came from the impact')
 const autoBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.autoDamage)
 if (autoBefore.a !== 'auto') fail(`vehicle A's mark should be the impact's, got ${JSON.stringify(autoBefore)}`)
 await page.mouse.click(...Object.values(await centre(page.locator('.cm-root canvas'))))
@@ -365,7 +490,7 @@ await page.waitForTimeout(600)
 if ((await page.locator('.cm-pop').count()) !== 1) fail('tapping the car did not open the severity picker')
 // force: the popover follows the 3D point, and OrbitControls' damping keeps it drifting by
 // fractions of a pixel for seconds, which Playwright's exact-rect stability check never accepts
-await page.getByRole('button', { name: 'dent', exact: true }).click({ force: true })
+await page.getByRole('button', { name: N.dent, exact: true }).click({ force: true })
 await page.waitForTimeout(600)
 const d4 = await draft()
 if (d4.vehicles[0].damages.length !== 2 || d4.vehicles[0].damages[1].severity !== 'dent') fail(`damage not saved: ${JSON.stringify(d4.vehicles[0].damages)}`)
@@ -387,9 +512,9 @@ const png = await page.evaluate(() => {
   x.fillRect(200, 300, 900, 500)
   return c.toDataURL('image/png').split(',')[1]
 })
-await page.locator('input[aria-label="Add photos"]').setInputFiles({ name: 'bumper.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') })
-await page.waitForSelector('img[alt="Photo 1"]', { timeout: 15000 })
-await page.getByRole('textbox', { name: 'Caption for photo 1' }).fill('Front bumper, close up')
+await page.locator(`input[aria-label="${N.addPhotos}"]`).setInputFiles({ name: 'bumper.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') })
+await page.waitForSelector(`img[alt="${N.photo1}"]`, { timeout: 15000 })
+await page.getByRole('textbox', { name: N.caption1 }).fill('Front bumper, close up')
 const photo = (await draft()).attachments.photos[0]
 if (!photo || !photo.data.startsWith('data:image/jpeg;base64,')) fail('the photo was not kept as a JPEG')
 if (photo.of !== 'a') fail(`the photo should be of vehicle A, got ${photo.of}`)
@@ -406,43 +531,45 @@ const dims = await page.evaluate(
 )
 if (dims[0] !== 1280 || dims[1] !== 960) fail(`expected 1280×960 after downscaling, got ${dims.join('×')}`)
 // the car now, and the pole it took with it
-await page.locator('[role=radiogroup][aria-label="Can it be driven"]').getByRole('radio', { name: 'No', exact: true }).click()
-await page.locator('[role=radiogroup][aria-label="Did the airbags go off"]').getByRole('radio', { name: 'Yes', exact: true }).click()
-await page.locator('[role=radiogroup][aria-label="Was it towed"]').getByRole('radio', { name: 'Yes', exact: true }).click()
-await page.getByRole('textbox', { name: 'Where is the vehicle now' }).fill("Mike's Towing, Brooklyn")
-await page.getByRole('textbox', { name: 'Other property damaged' }).fill('Traffic light pole')
+await page.locator(`[role=radiogroup][aria-label="${N.drivable}"]`).getByRole('radio', { name: N.no, exact: true }).click()
+await page.locator(`[role=radiogroup][aria-label="${N.airbags}"]`).getByRole('radio', { name: N.yes, exact: true }).click()
+await page.locator(`[role=radiogroup][aria-label="${N.towed}"]`).getByRole('radio', { name: N.yes, exact: true }).click()
+await page.getByRole('textbox', { name: N.whereNow }).fill("Mike's Towing, Brooklyn")
+await page.getByRole('textbox', { name: N.otherProperty }).fill('Traffic light pole')
+await noEnglish('the damage')
 ok(`damage: photo kept as ${dims.join('×')} JPEG (${photoKb} kB) of A with a caption; not drivable, airbags out, towed; the pole noted`)
 
 // ── 5 · review and send ────────────────────────────────────────────────
 await next()
-await page.waitForSelector('text=Send my report', { timeout: 20000 })
+await page.waitForSelector(`text=${N.send}`, { timeout: 20000 })
 // nothing goes without the customer's word and their name on it
-if (!(await page.getByRole('button', { name: 'Send my report' }).isDisabled())) fail('Send should be disabled before the attestation')
-await page.getByRole('textbox', { name: 'Your name' }).fill('Ashish B')
-await page.getByRole('textbox', { name: 'Your phone' }).fill('555 0100')
-await page.getByRole('textbox', { name: 'Your email' }).fill('ME@example.com')
-await page.locator('[role=radiogroup][aria-label="Are you the policyholder"]').getByRole('radio', { name: 'Yes', exact: true }).click()
-await page.getByRole('checkbox', { name: 'I confirm this report is true' }).check()
-if (!(await page.getByRole('button', { name: 'Send my report' }).isDisabled())) fail('Send should still be disabled until it is signed')
-await page.getByRole('textbox', { name: 'Signature' }).fill('Ashish B')
-if (await page.getByRole('button', { name: 'Send my report' }).isDisabled()) fail('Send should be enabled once confirmed and signed')
+if (!(await page.getByRole('button', { name: N.send }).isDisabled())) fail('Send should be disabled before the attestation')
+await page.getByRole('textbox', { name: N.yourName }).fill('Ashish B')
+await page.getByRole('textbox', { name: N.yourPhone }).fill('555 0100')
+await page.getByRole('textbox', { name: N.yourEmail }).fill('ME@example.com')
+await page.locator(`[role=radiogroup][aria-label="${N.policyholder}"]`).getByRole('radio', { name: N.yes, exact: true }).click()
+await page.getByRole('checkbox', { name: N.agree }).check()
+if (!(await page.getByRole('button', { name: N.send }).isDisabled())) fail('Send should still be disabled until it is signed')
+await page.getByRole('textbox', { name: N.sign }).fill('Ashish B')
+if (await page.getByRole('button', { name: N.send }).isDisabled()) fail('Send should be enabled once confirmed and signed')
 if (!(await page.locator('text=Dana Q').count())) fail('review does not show the other driver')
 if (!(await page.locator('text=2026-0042').count())) fail('review does not show the police report number')
 if (!(await page.locator('text=Times Square').count())) fail('review does not show the address')
 if (!(await page.locator('text=The van pulled out across me.').count())) fail('review does not show the description')
 await page.waitForSelector('.maplibregl-canvas', { timeout: 20000 })
 await page.waitForTimeout(7000)
+await noEnglish('the review')
 
 // the review can play it back too: the insurer sees what happened, not a still
-await page.getByRole('button', { name: /Play it back/ }).click()
+await page.getByRole('button', { name: N.playBack }).click()
 await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
 await page.waitForFunction(() => !document.querySelector('.maplibregl-map').classList.contains('mk-playing'), null, { timeout: 12000 })
 ok('review: playback ran on the review map')
 
 const submitted = page.evaluate(() => new Promise((r) => window.addEventListener('claim:submitted', (e) => r(e.detail), { once: true })))
-await page.getByRole('button', { name: 'Send my report' }).click()
+await page.getByRole('button', { name: N.send }).click()
 const doc = await submitted
-await page.waitForSelector('text=Your report is in', { timeout: 20000 })
+await page.waitForSelector(`text=${N.reportIn}`, { timeout: 20000 })
 
 if (doc.schema !== 'claim/1') fail(`document schema ${doc.schema}`)
 if (!/^CM-[A-HJ-NP-Z2-9]{6}$/.test(doc.reference)) fail(`reference ${doc.reference}`)
@@ -452,6 +579,7 @@ if (doc.vehicles[0].damages.length !== 2) fail('document lost a damage')
 if (doc.vehicles[1].damages.length !== 1) fail("document lost B's damage from the impact")
 if (!doc.impact) fail('document lost the impact')
 if (doc.incident.surface !== 'satellite') fail(`document ground ${doc.incident.surface}`)
+if (doc.incident.language !== lang) fail(`document says it is in ${doc.incident.language}, not ${lang}`)
 if (!/^data:image\/png;base64,/.test(doc.attachments.scene ?? '')) fail('no scene PNG attached')
 if (!/^data:image\/png;base64,/.test(doc.attachments.damage.a ?? '')) fail('no damage PNG attached for vehicle A')
 const sceneKb = Math.round(doc.attachments.scene.length / 1024)
@@ -479,9 +607,10 @@ ok(`sent: ${doc.reference}, scene ${sceneKb} kB, damage PNG ${Math.round(doc.att
 
 // ── a refresh lands on the confirmation, not the first step ────────────
 await page.reload({ waitUntil: 'networkidle' })
-await page.waitForSelector('text=Your report is in', { timeout: 10000 })
+await page.waitForSelector(`text=${N.reportIn}`, { timeout: 10000 })
+await noEnglish('the confirmation')
 ok('refresh keeps the confirmation')
 
 await browser.close()
 if (errors.length) fail(`console errors:\n${errors.join('\n')}`)
-console.log('\nall smoke checks passed')
+console.log(`\nall smoke checks passed${lang === 'es' ? ' (in Spanish)' : ''}`)
