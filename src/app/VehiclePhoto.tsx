@@ -1,12 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { ClaimVehicle } from '../claim/schema'
 import { photoFor, type Photo } from '../vehicles/photo'
+import { translate, type Lang } from '../i18n'
 
 /**
  * A photograph of the vehicle's real make and model, with its credit, or `fallback` while
  * there is none: before a model is chosen, while the lookup runs, or when nothing was found.
  * `contain` shows the whole car over a blurred copy of itself, for a box the photo's shape
  * will not fill; otherwise the photo is cropped to the box, which suits a thumbnail.
+ *
+ * The claims desk renders this too, through `ReportDocument`, and must stay English whatever
+ * the draft in the same browser says — so the language is a prop, not `useLang()`.
  */
 export function VehiclePhoto({
   vehicle: v,
@@ -14,12 +18,14 @@ export function VehiclePhoto({
   credit,
   contain,
   className,
+  lang = 'en',
 }: {
   vehicle: ClaimVehicle
   fallback: ReactNode
   credit?: boolean
   contain?: boolean
   className?: string
+  lang?: Lang
 }) {
   const key = `${v.make}|${v.model}|${v.year ?? ''}|${v.color}`
   const [state, setState] = useState<{ key: string; photo: Photo | null }>({ key: '', photo: null })
@@ -40,7 +46,8 @@ export function VehiclePhoto({
 
   const photo = state.key === key ? state.photo : null
   if (!photo || photo.url === broken) return <>{fallback}</>
-  const name = [v.year, v.make, v.model].filter(Boolean).join(' ')
+  // the year goes last in Spanish, as every other name for a vehicle does
+  const name = (lang === 'es' ? [v.make, v.model, v.year] : [v.year, v.make, v.model]).filter(Boolean).join(' ')
   return (
     <figure className={className}>
       {contain && <img src={photo.url} alt="" aria-hidden className="absolute inset-0 size-full scale-110 object-cover opacity-70 blur-2xl" />}
@@ -51,9 +58,9 @@ export function VehiclePhoto({
           href={photo.credit.href}
           target="_blank"
           rel="noreferrer"
-          title={`${photo.credit.title} — Wikimedia Commons`}
+          title={translate(lang, 'start.photo.creditTitle', { title: photo.credit.title })}
         >
-          Photo: Wikimedia Commons
+          {translate(lang, 'start.photo.credit')}
         </a>
       )}
     </figure>
