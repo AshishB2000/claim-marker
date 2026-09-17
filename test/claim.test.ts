@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { damage } from '../src/schema'
+import { UNKNOWN_DRIVER } from '../src/claim/describe'
 import { CLAIM_SCHEMA, MAX_PHOTOS, emptyClaim, makeReference, newPerson, newVehicle, nowLocal, parseClaim, toDocument, type Claim } from '../src/claim/schema'
 
 const sample = (): Claim => ({
@@ -149,6 +150,33 @@ describe('claim round-trip', () => {
   it('keeps the v1 damage shape untouched inside a vehicle', () => {
     const { value } = parseClaim(toDocument(sample()))
     expect(value.vehicles[0].damages[0]).toEqual({ zone: 'front_bumper', point: [0.18, 0.32, 1.24], severity: 'dent', note: '' })
+  })
+
+  it('records which language the free text is in, and round-trips it', () => {
+    const c: Claim = { ...sample(), incident: { ...sample().incident, description: 'Se me atravesó', language: 'es' } }
+    const first = toDocument(c)
+    expect(first.incident.language).toBe('es')
+    expect(JSON.stringify(toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value))).toBe(JSON.stringify(first))
+    // a document from before there was a choice, or one naming a language this page does not speak
+    const raw = JSON.parse(JSON.stringify(first))
+    delete raw.incident.language
+    expect(parseClaim(raw).value.incident.language).toBe('en')
+    raw.incident.language = 'fr'
+    expect(parseClaim(raw).value.incident.language).toBe('en')
+    raw.incident.language = 7
+    expect(parseClaim(raw).value.incident.language).toBe('en')
+  })
+
+  it('keeps "the other driver left" as the English literal inside a Spanish document', () => {
+    const c: Claim = {
+      ...sample(),
+      incident: { ...sample().incident, language: 'es' },
+      people: [{ ...newPerson('driver', 'b'), name: UNKNOWN_DRIVER }],
+    }
+    // it is data the insurer reads, not a sentence the customer is shown
+    expect(toDocument(c).people[0].name).toBe(UNKNOWN_DRIVER)
+    expect(toDocument(c).people[0].name).toBe('Unknown — left the scene')
+    expect(parseClaim(JSON.parse(JSON.stringify(toDocument(c)))).value.people[0].name).toBe(UNKNOWN_DRIVER)
   })
 })
 

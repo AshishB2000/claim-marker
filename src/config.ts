@@ -19,6 +19,7 @@
  * suits development and nothing else. Everything that arrives is parsed, never trusted, and
  * events go back only to the origin the config came from.
  */
+import { isLang, type Lang } from './i18n'
 import { parsePrefill, type Prefill } from './claim/prefill'
 
 export type Config = {
@@ -30,6 +31,11 @@ export type Config = {
   fraudNotice: string
   /** an endpoint speaking `claim-assist/1`; null means no AI exists in the page */
   assistUrl: string | null
+  /**
+   * the language the host fixed the page to; null leaves the choice to the customer. Set, it
+   * also hides the switch: an insurer that serves a Spanish page did not mean "Spanish first".
+   */
+  lang: Lang | null
   prefill: Prefill | null
   /** include the whole document in the `submitted` event to the host, not just the reference */
   returnDocument: boolean
@@ -42,18 +48,33 @@ export type Config = {
 const env = import.meta.env
 const DEFAULT_FRAUD_NOTICE =
   'Any person who knowingly and with intent to defraud any insurance company or other person files a statement of claim containing any materially false information, or conceals for the purpose of misleading, information concerning any fact material thereto, commits a fraudulent insurance act, which is a crime and subjects such person to criminal and civil penalties.'
+/**
+ * The same warning so a Spanish reader can read it, and nothing more than that: it is a
+ * plain-language translation, **not legal text**. Fraud warnings are mandated per state, in
+ * wording the state sets, and several states mandate a Spanish one of their own. An insurer
+ * deploying this supplies its own through `fraudNotice`; this is what stands until it does.
+ */
+const DEFAULT_FRAUD_NOTICE_ES =
+  'Toda persona que, a sabiendas y con la intención de defraudar a una compañía de seguros o a otra persona, presente una declaración de reclamo con información falsa sobre un punto importante, u oculte información sobre un hecho importante para engañar, comete un acto fraudulento de seguros, que es un delito y expone a esa persona a sanciones penales y civiles.'
+/** the wording the deployment supplied, if it supplied one; null means the defaults above stand */
+let suppliedFraudNotice: string | null = (env.VITE_FRAUD_NOTICE as string | undefined) || null
 
 export const config: Config = {
   submitUrl: (env.VITE_SUBMIT_URL as string | undefined) || null,
   token: null,
   brand: (env.VITE_BRAND as string | undefined) || 'claim-marker',
-  fraudNotice: (env.VITE_FRAUD_NOTICE as string | undefined) || DEFAULT_FRAUD_NOTICE,
+  fraudNotice: suppliedFraudNotice || DEFAULT_FRAUD_NOTICE,
   assistUrl: (env.VITE_ASSIST_URL as string | undefined) || null,
+  lang: null,
   prefill: null,
   returnDocument: false,
   embedded: false,
   hostOrigin: null,
 }
+
+/** the fraud warning to show: the insurer's own whatever the language, else the default for it */
+export const fraudNoticeFor = (lang: Lang): string =>
+  suppliedFraudNotice ?? (lang === 'es' ? DEFAULT_FRAUD_NOTICE_ES : DEFAULT_FRAUD_NOTICE)
 
 const ENV_ALLOWED: string[] = ((env.VITE_ALLOWED_HOSTS as string | undefined) ?? '')
   .split(',')
@@ -101,7 +122,9 @@ export function applyConfig(input: unknown): void {
   if ('assistUrl' in c) config.assistUrl = url(c.assistUrl)
   if ('token' in c) config.token = str(c.token)
   if (str(c.brand)) config.brand = str(c.brand)!.slice(0, 80)
-  if (str(c.fraudNotice)) config.fraudNotice = str(c.fraudNotice)!.slice(0, 4000)
+  if (str(c.fraudNotice)) config.fraudNotice = suppliedFraudNotice = str(c.fraudNotice)!.slice(0, 4000)
+  // a language this page does not speak is no language at all: the customer chooses instead
+  if ('lang' in c) config.lang = isLang(c.lang) ? c.lang : null
   if ('returnDocument' in c) config.returnDocument = c.returnDocument === true
   if ('prefill' in c) {
     const p = parsePrefill(c.prefill)

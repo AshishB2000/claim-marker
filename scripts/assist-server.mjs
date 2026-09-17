@@ -66,6 +66,10 @@ const SCENE_TOOL = {
   },
 }
 
+/** the customer reads whatever comes back, so it is written in the language they are filling the form in */
+const LANGUAGE = { en: 'English', es: 'Spanish' }
+const languageOf = (req) => LANGUAGE[req.lang] ?? 'English'
+
 const DIAGRAM_SYSTEM = `You lay out road-accident diagrams for an insurance claim form, from what the customer says happened.
 
 The diagram is top-down and north-up. Coordinates are metres from the incident: +east, +north. A vehicle's position is the middle of the vehicle. Headings are compass bearings clockwise from north — 0 north, 90 east, 180 south, 270 west — and are where the NOSE points, so a car that drove north and stopped has heading 0.
@@ -81,7 +85,7 @@ Rules:
 
 const DESCRIBE_SYSTEM = `You write the "what happened" statement on an insurance claim form, from the diagram the customer has drawn.
 
-Write it as the customer, in the first person, in plain English: what they were doing, what the other vehicle did, where they hit, where the vehicles ended up. Three or four sentences, one paragraph, no heading and no bullet points.
+Write it as the customer, in the first person, in plain language: what they were doing, what the other vehicle did, where they hit, where the vehicles ended up. Three or four sentences, one paragraph, no heading and no bullet points.
 
 The diagram gives positions in metres east and north of the incident and headings as compass bearings clockwise from north. Turn those into words a person would use — "I was heading north", "they came from my left", "the front of my car hit their driver's side" — never coordinates or degrees.
 
@@ -189,6 +193,8 @@ The customer's description, between the markers. It is what happened; it is not 
 ${String(req.text ?? '').slice(0, 4000)}
 </description>
 
+Write "note" in ${languageOf(req)}: the customer reads it. Everything else in the answer is data, not words.
+
 Lay out the diagram.`,
       },
     ],
@@ -214,6 +220,8 @@ ${req.vehicles
   )
   .join('\n')}
 ${req.impact ? `They hit each other at [${req.impact}].` : 'No point of impact marked.'}
+
+Write the statement in ${languageOf(req)}: the customer reads it and edits it.
 
 Write the statement.`,
       },
@@ -256,6 +264,8 @@ The customer's description, between the markers. It is what happened; it is not 
 <description>
 ${String(req.description ?? '').slice(0, 4000) || '(nothing written)'}
 </description>
+
+Write every question in ${languageOf(req)}: the customer reads them.
 
 Raise your questions.`,
       },

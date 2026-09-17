@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useClaim } from '../claim/store'
+import type { Lang } from '../i18n'
+import { useLang, useT } from '../i18n/useT'
 import { Field } from './ui'
 import { Icon } from './icons'
 
@@ -18,6 +20,13 @@ const Speech = (globalThis as { SpeechRecognition?: new () => Recognizer; webkit
   (globalThis as { webkitSpeechRecognition?: new () => Recognizer }).webkitSpeechRecognition
 
 /**
+ * The tag the recogniser wants is a full one — a bare "es" gets a recogniser nobody chose.
+ * The browser's own tag for this language carries the region the customer actually speaks;
+ * with none, US Spanish and US English, which is who this page is for.
+ */
+const speechTag = (lang: Lang): string => navigator.languages?.find((l) => l.toLowerCase().startsWith(`${lang}-`)) || `${lang}-US`
+
+/**
  * "In your own words, what happened?" — typed, or spoken into the box on a phone at the
  * roadside. Dictation appends to whatever is already there, so a sentence can be typed,
  * then said, then corrected.
@@ -25,6 +34,8 @@ const Speech = (globalThis as { SpeechRecognition?: new () => Recognizer; webkit
 export function Describe({ placeholder, children }: { placeholder: string; children?: React.ReactNode }) {
   const description = useClaim((s) => s.claim.incident.description)
   const setIncident = useClaim((s) => s.setIncident)
+  const lang = useLang()
+  const t = useT()
   const [listening, setListening] = useState(false)
   const rec = useRef<Recognizer | null>(null)
   // what was in the box when dictation began; the live transcript is appended to it
@@ -39,7 +50,7 @@ export function Describe({ placeholder, children }: { placeholder: string; child
     }
     if (!Speech) return
     const r = new Speech()
-    r.lang = navigator.language || 'en-US'
+    r.lang = speechTag(lang)
     r.continuous = true
     r.interimResults = true
     base.current = useClaim.getState().claim.incident.description.replace(/\s+$/, '')
@@ -61,14 +72,14 @@ export function Describe({ placeholder, children }: { placeholder: string; child
 
   return (
     <div>
-      <Field label="In your own words, what happened?">
+      <Field label={t('shell.describe.label')}>
         <textarea className="input min-h-28" placeholder={placeholder} value={description} onChange={(e) => setIncident({ description: e.target.value })} />
       </Field>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {Speech && (
           <button className={`btn btn-sm ${listening ? 'bg-red-600 text-white hover:bg-red-500' : 'btn-secondary'}`} onClick={toggle} aria-pressed={listening}>
             {listening ? <span className="size-2 animate-pulse rounded-full bg-white" /> : <Icon.mic />}
-            {listening ? 'Listening… tap to stop' : 'Say it instead'}
+            {listening ? t('shell.describe.listening') : t('shell.describe.say')}
           </button>
         )}
         {children}

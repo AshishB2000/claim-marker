@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useClaim, STEP_TITLE, stepsFor, type Step } from '../claim/store'
+import { useClaim, stepsFor, type Step } from '../claim/store'
 import { KIND_INFO, type Claim } from '../claim/schema'
 import { config, tell } from '../config'
+import { LANGS, type Key, type Vars } from '../i18n'
+import { useLang, useT } from '../i18n/useT'
 import { Icon } from './icons'
 import { WhatHappened } from './steps/Kind'
 import { Where } from './steps/Where'
@@ -12,35 +14,24 @@ import { Damage } from './steps/Damage'
 import { Review } from './steps/Review'
 import { Done } from './steps/Done'
 
-function heading(step: Step, claim: Claim): { title: string; lead: string } {
+type T = (key: Key, vars?: Vars) => string
+
+/** which of the headings a step shows: some steps have a second one for a kind with no other party */
+function headingKey(step: Step, claim: Claim): string {
   const kind = claim.incident.kind
-  switch (step) {
-    case 'kind':
-      return { title: 'What happened?', lead: 'Start with the kind of thing it was.' }
-    case 'where':
-      return { title: 'Where and when did it happen?', lead: 'Find the spot on the map. The next steps happen right there.' }
-    case 'vehicles':
-      return KIND_INFO[kind].others
-        ? { title: 'Which vehicles were involved?', lead: 'Yours first, then anyone else’s. Closest type and colour is fine.' }
-        : { title: 'Which vehicle is it?', lead: 'The one on your policy. Closest type and colour is fine.' }
-    case 'people':
-      return { title: 'Who was there, and was anyone hurt?', lead: 'Drivers, passengers, witnesses, the police. Only what you know.' }
-    case 'scene':
-      return kind === 'collision'
-        ? { title: 'Show us what happened', lead: 'Put the vehicles where they ended up and draw where they came from.' }
-        : kind === 'parked'
-          ? { title: 'Show us where it was', lead: 'Put your car where it was parked and, if you saw it, where the other vehicle came from.' }
-          : { title: 'Show us what happened', lead: 'Put your car where it ended up, draw where it came from, and tap where it hit.' }
-    case 'damage':
-      return { title: 'Where is the damage?', lead: 'Tap the car where it is damaged, say how bad it is, and add photos if you have them.' }
-    case 'review':
-      return { title: 'Check it over', lead: 'This is what we will receive. Edit anything that is not right, then confirm and send.' }
-  }
+  if (step === 'vehicles') return KIND_INFO[kind].others ? 'vehicles' : 'vehicles.one'
+  if (step === 'scene') return kind === 'collision' ? 'scene.collision' : kind === 'parked' ? 'scene.parked' : 'scene.other'
+  return step
+}
+
+const heading = (step: Step, claim: Claim, t: T): { title: string; lead: string } => {
+  const id = headingKey(step, claim)
+  return { title: t(`shell.head.${id}.title` as Key), lead: t(`shell.head.${id}.lead` as Key) }
 }
 
 /** what has to be true before the customer can leave a step */
-function ready(step: Step, claim: Claim): string | null {
-  if (step === 'where' && !claim.incident.location) return 'Choose where it happened first'
+function ready(step: Step, claim: Claim, t: T): string | null {
+  if (step === 'where' && !claim.incident.location) return t('shell.need.where')
   return null
 }
 
@@ -51,6 +42,9 @@ export function App() {
   const next = useClaim((s) => s.next)
   const back = useClaim((s) => s.back)
   const reset = useClaim((s) => s.reset)
+  const setLang = useClaim((s) => s.setLang)
+  const lang = useLang()
+  const t = useT()
   const [done, setDone] = useState(!!claim.reference)
 
   useEffect(() => {
@@ -70,8 +64,8 @@ export function App() {
     ro.observe(document.body)
     return () => ro.disconnect()
   }, [])
-  const blocker = ready(step, claim)
-  const { title, lead } = heading(step, claim)
+  const blocker = ready(step, claim, t)
+  const { title, lead } = heading(step, claim, t)
 
   return (
     <div className={config.embedded ? 'pb-4' : 'min-h-screen pb-28'}>
@@ -82,20 +76,38 @@ export function App() {
               <Icon.car />
             </span>
             <div className="leading-tight">
-              <div className="text-[15px] font-semibold">Report an accident</div>
+              <div className="text-[15px] font-semibold">{t('shell.title')}</div>
               <div className="text-xs text-slate-500">{config.brand}</div>
             </div>
           </div>
-          {!done && (
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => {
-                if (window.confirm('Start over? Everything you have entered will be cleared.')) reset()
-              }}
-            >
-              Start over
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* the switch is the customer's, unless the host fixed the language for them */}
+            {!config.lang && (
+              <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5" role="group" aria-label={t('shell.lang.label')}>
+                {LANGS.map((l) => (
+                  <button
+                    key={l}
+                    className={`rounded-md px-2 py-1 text-xs font-semibold ${l === lang ? 'bg-white text-ink shadow-sm' : 'text-slate-500 hover:text-ink'}`}
+                    aria-label={t(`shell.lang.${l}` as Key)}
+                    aria-pressed={l === lang}
+                    onClick={() => setLang(l)}
+                  >
+                    {l.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!done && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  if (window.confirm(t('shell.startOver.confirm'))) reset()
+                }}
+              >
+                {t('shell.startOver')}
+              </button>
+            )}
+          </div>
         </div>
         {!done && (
           <div className="mx-auto max-w-6xl px-5 pb-3">
@@ -122,7 +134,7 @@ export function App() {
                         {state === 'done' ? <Icon.check /> : i + 1}
                       </span>
                       <span className={`hidden truncate text-xs sm:block ${state === 'current' ? 'font-semibold' : 'text-slate-500'}`}>
-                        {STEP_TITLE[s]}
+                        {t(`step.${s}` as Key)}
                       </span>
                     </button>
                     <div className={`mt-2 h-1 rounded-full ${state === 'todo' ? 'bg-slate-200' : 'bg-brand-600'}`} />
@@ -131,11 +143,9 @@ export function App() {
               })}
             </ol>
             <p className="mt-2 text-xs text-slate-500 sm:hidden">
-              <span className="font-semibold text-ink">
-                Step {index + 1} of {steps.length}
-              </span>
+              <span className="font-semibold text-ink">{t('shell.progress', { n: index + 1, count: steps.length })}</span>
               {' · '}
-              {STEP_TITLE[step]}
+              {t(`step.${step}` as Key)}
             </p>
           </div>
         )}
@@ -168,21 +178,19 @@ export function App() {
           {blocker && <p className="pt-2 text-center text-xs text-slate-500 sm:hidden">{blocker}</p>}
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-5 py-3">
             <button className="btn btn-ghost" onClick={back} disabled={index === 0}>
-              <Icon.back /> Back
+              <Icon.back /> {t('common.back')}
             </button>
             <div className="flex items-center gap-3">
               {blocker && <span className="hidden text-sm text-slate-500 sm:block">{blocker}</span>}
               <button className="btn btn-primary" onClick={next} disabled={!!blocker}>
-                Continue <Icon.next />
+                {t('common.continue')} <Icon.next />
               </button>
             </div>
           </div>
         </footer>
       )}
       {!done && (
-        <p className="mx-auto mt-10 max-w-6xl px-5 text-center text-xs text-slate-400">
-          Your progress is saved on this device until you send the report.
-        </p>
+        <p className="mx-auto mt-10 max-w-6xl px-5 text-center text-xs text-slate-400">{t('shell.saved')}</p>
       )}
     </div>
   )

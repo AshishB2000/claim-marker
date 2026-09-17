@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import Ajv from 'ajv/dist/2020'
 import { readFileSync } from 'node:fs'
 import { damage, SEVERITIES } from '../src/schema'
-import { KINDS, LIGHT, ROAD, SURFACES, WEATHER, emptyClaim, newPerson, newVehicle, parseClaim, toDocument } from '../src/claim/schema'
+import { KINDS, LANGUAGES, LIGHT, ROAD, SURFACES, WEATHER, emptyClaim, newPerson, newVehicle, parseClaim, toDocument } from '../src/claim/schema'
 import { BODY_ORDER } from '../src/vehicles/bodies'
 
 const schema = JSON.parse(readFileSync(new URL('../docs/claim-1.schema.json', import.meta.url), 'utf8'))
@@ -64,8 +64,15 @@ describe('the published JSON Schema for claim/1', () => {
     expect(validate({ ...d, attachments: { ...d.attachments, scene: 'data:text/plain;base64,QUJD' } })).toBe(false)
   })
 
+  it('accepts a report written in Spanish', () => {
+    const d = full()
+    expect(validate({ ...d, incident: { ...d.incident, language: 'es' } }), JSON.stringify(validate.errors)).toBe(true)
+    expect(validate({ ...d, incident: { ...d.incident, language: 'fr' } })).toBe(false)
+  })
+
   it('lists the same values the code does', () => {
     const p = schema.properties
+    expect(p.incident.properties.language.enum).toEqual([...LANGUAGES])
     expect(p.incident.properties.kind.enum).toEqual([...KINDS])
     expect(p.incident.properties.surface.enum).toEqual([...SURFACES])
     expect(p.incident.properties.conditions.properties.weather.enum).toEqual(['', ...WEATHER])

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useT } from '../i18n/useT'
 import { Icon } from './icons'
 
 export function Section({ title, hint, action, children }: { title: string; hint?: string; action?: ReactNode; children: ReactNode }) {
@@ -35,13 +36,14 @@ export function Spinner({ label }: { label?: string }) {
 
 /** yes / no as two buttons, with a third for "not sure" when `unsure` is given; null is unanswered */
 export function YesNo({ value, onChange, unsure, name }: { value: boolean | null; onChange: (v: boolean | null) => void; unsure?: string; name: string }) {
+  const t = useT()
   return (
     <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={name}>
       <button className="seg" role="radio" aria-checked={value === true} aria-pressed={value === true} onClick={() => onChange(true)}>
-        Yes
+        {t('common.yes')}
       </button>
       <button className="seg" role="radio" aria-checked={value === false} aria-pressed={value === false} onClick={() => onChange(false)}>
-        No
+        {t('common.no')}
       </button>
       {/* "not sure" is stored as no answer, so it clears the choice rather than lighting up as one */}
       {unsure && (

@@ -234,7 +234,8 @@ export const useClaim = create<ClaimState>()(
         policy: [],
         delivery: null,
         lang: null,
-        setLang: (lang) => set({ lang }),
+        // the document says which language its free text is in, so the desk knows what it is reading
+        setLang: (lang) => set((s) => ({ lang, claim: { ...s.claim, incident: { ...s.claim.incident, language: lang } } })),
 
         prefill: (p) => set((s) => ({ policy: p.vehicles ?? [], claim: s.claim.reference ? s.claim : applyPrefill(s.claim, p) })),
         pickPolicyVehicle: (index) => {
@@ -423,7 +424,13 @@ export const useClaim = create<ClaimState>()(
         submitted: (reference, submittedAt, delivery) => set((s) => ({ delivery, claim: { ...s.claim, reference, submittedAt } })),
         delivered: (local, reference) =>
           set((s) => (s.claim.reference === local ? { delivery: 'sent', claim: { ...s.claim, reference } } : {})),
-        reset: () => set({ claim: emptyClaim(), step: 'kind', impactManual: false, autoDamage: {}, delivery: null }),
+        // starting over keeps the language: it is how the customer is reading, not part of the report
+        reset: () =>
+          set((s) => {
+            const claim = emptyClaim()
+            claim.incident.language = s.lang ?? 'en'
+            return { claim, step: 'kind', impactManual: false, autoDamage: {}, delivery: null }
+          }),
       }
     },
     {
