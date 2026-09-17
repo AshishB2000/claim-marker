@@ -36,6 +36,7 @@ import { fromFrame } from '../assist/frame'
 import type { Scene } from '../assist/schema'
 import { SIZE } from '../vehicles/bodies'
 import { suggestDamage } from './suggest'
+import type { Lang } from '../i18n'
 
 // the flow's own steps live in the schema, where the assistant can name one without
 // dragging the store in; everything here still imports them from the store as it did
@@ -93,6 +94,9 @@ export type ClaimState = {
   policy: PrefillVehicle[]
   /** how the report left: sent, or waiting in the outbox for a signal; null until it has */
   delivery: 'sent' | 'queued' | null
+  /** the language the customer is reading in; null until the host, the browser or they chose */
+  lang: Lang | null
+  setLang: (lang: Lang) => void
 
   /** what the host page knows already: fills what is empty, never what the customer typed */
   prefill: (p: Prefill) => void
@@ -229,6 +233,8 @@ export const useClaim = create<ClaimState>()(
         autoDamage: {},
         policy: [],
         delivery: null,
+        lang: null,
+        setLang: (lang) => set({ lang }),
 
         prefill: (p) => set((s) => ({ policy: p.vehicles ?? [], claim: s.claim.reference ? s.claim : applyPrefill(s.claim, p) })),
         pickPolicyVehicle: (index) => {
@@ -422,10 +428,10 @@ export const useClaim = create<ClaimState>()(
     },
     {
       name: 'claim-marker/draft',
-      version: 5,
+      version: 6,
       // every section added since a draft was saved takes its default: v3 added the ground,
       // v4 the kind, the people, the police, the photos and the rest of the report, v5 the
-      // policy's vehicles and how the report left
+      // policy's vehicles and how the report left, v6 the language (null: not chosen yet)
       migrate: (persisted) => {
         const s = persisted as { claim?: Partial<Claim> & { incident?: Partial<Incident>; vehicles?: Partial<ClaimVehicle>[] } }
         if (!s.claim) return persisted
@@ -447,6 +453,7 @@ export const useClaim = create<ClaimState>()(
         autoDamage: s.autoDamage,
         policy: s.policy,
         delivery: s.delivery,
+        lang: s.lang,
       }),
     },
   ),
