@@ -104,7 +104,8 @@
       "properties": {
         "data": { "type": "string", "pattern": "^data:image/(jpeg|png|webp);base64," },
         "of": { "type": ["string", "null"], "description": "the vehicle it shows, or null for the scene" },
-        "caption": { "type": "string" }
+        "caption": { "type": "string" },
+        "shows": { "type": ["string", "null"], "description": "the zone id of the vehicle in `of` this photo shows, set when a mark was added from it; absent when it shows no one panel" }
       }
     },
     "damage": {

@@ -132,6 +132,23 @@ describe('claim round-trip', () => {
     expect(toDocument(c).attachments.photos).toHaveLength(MAX_PHOTOS)
   })
 
+  it('keeps the panel a photo shows, byte-identical, only when that vehicle has the panel', () => {
+    const c = sample()
+    c.attachments.photos = [
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'hood', shows: 'hood' },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'no such panel', shows: 'rear_door' },
+      { data: 'data:image/jpeg;base64,AAAA', of: null, caption: 'the scene', shows: 'hood' },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'zz', caption: 'of nobody', shows: 'hood' },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'untagged' },
+    ]
+    const first = toDocument(c)
+    expect(first.attachments.photos.map((p) => p.shows)).toEqual(['hood', undefined, undefined, undefined, undefined])
+    // absent, not null: a document from before `shows` existed comes back exactly as it was
+    expect(first.attachments.photos.filter((p) => 'shows' in p)).toHaveLength(1)
+    const again = toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value)
+    expect(JSON.stringify(again)).toBe(JSON.stringify(first))
+  })
+
   it('defaults the kind and the conditions, and rejects values off the lists', () => {
     const raw = JSON.parse(JSON.stringify(toDocument(sample())))
     raw.incident.kind = 'asteroid'

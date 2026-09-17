@@ -604,6 +604,66 @@ adjuster's voice, and that visitor's own token lists exactly one report. `script
 is the one-off that records `docs/demo.gif` from the same journey, sped up and palette-mapped
 through ffmpeg.
 
+## Photo-first damage on a phone
+
+Standing at the roadside with one hand free, the first thing anyone does is photograph the car.
+The damage step led with a 3D model and kept the photographs in a card below it, which is the
+right order on a desk and the wrong one on a phone. So on a narrow screen, **with the assistant
+switched on**, the step runs photos → what we read in them → the car for anything they missed.
+
+**Both conditions, not one.** `photoFirst = assistOn() && narrow` (`useNarrow()`,
+`matchMedia('(max-width: 640px)')`). Without an endpoint the tiles would ask for photographs
+and then have nothing to say about them, which is worse than the layout we had; on a wide
+screen the two columns already show the car and the photographs at once. Everywhere else the
+step is unchanged — the same DOM, proven against `main` by capturing the step's markup on both
+and diffing it, and `scripts/assist-smoke.mjs` fails at 1280 if the tiles appear or if the
+photographs are read without the button.
+
+**`useNarrow` is `useSyncExternalStore`**, not an effect that copies `matchMedia` into state: an
+effect renders the wrong layout once and then corrects it, and the compiler rules forbid the
+synchronous `setState` that would hide the flicker.
+
+**The step is three components now** (`src/app/steps/damage/`): `Capture`, `Suggestions`,
+`MarkerPanel`. `Damage.tsx` only chooses the order. Nothing moved between them — the desktop
+path renders exactly what it rendered before, including the suggestions card at the foot of the
+side column, which is now `children` of `MarkerPanel`.
+
+**Four named shots beat "add photos".** The damage close up, the same from a step back, the whole
+side, and the other vehicle with its plate — each a tile with a line drawing that opens the
+camera (`capture="environment"`) and then shows what it took. Naming the shot is what gets the
+useful photograph; "add photos" gets one blurry close-up. The fourth tile is filed against the
+*other* vehicle and is only offered from the customer's own car. Which tile took which photograph
+is component state keyed by the data URL, so removing the photograph clears the tile and a
+reload leaves the tiles blank while the photographs stay — a fair trade for keeping the
+document free of a field only the tiles would use.
+
+**Nothing is pressed to read them.** An effect keyed on the vehicle and its photographs (their
+count and sizes, so a swapped photograph reads again and a caption does not) waits 1.2 s for the
+burst of shots to end, then calls the same `damageFromPhotos` the desktop button calls, under an
+`AbortController`. The loading state is derived — an answer whose key is not the current one is
+no answer — because a `setState` inside the effect is what the lint forbids and what makes two
+renders out of one. A panel already marked on the car is not offered twice, so a second
+photograph of the same dent does not produce a duplicate.
+
+**A failure is one quiet line**: "We could not read the photos this time. Mark the damage on the
+car below." Nothing in the card touches Continue, and the car underneath still takes a tap — the
+assist smoke proves that with a 502 and then marks the car by hand.
+
+**`Photo.shows` links a photograph to a mark.** Adding a suggestion tags this vehicle's untagged
+photographs with the zone it names (`tagPhoto`), and `ReportDocument` shows those thumbnails
+beside the mark, so an adjuster reads "front bumper, crack" with the photograph it was read off
+next to it. It is additive to `claim/1`: kept only when `of` is a vehicle and the zone exists on
+that body, and **absent** rather than null when it is not, so every document written before it
+existed still round-trips byte-identically. The caption stays the customer's.
+
+**The three rules hold.** The mark is the zone's own anchor (`parseSuggestions`, untouched);
+adding goes through `setDamages`, so the vehicle's damage becomes the customer's; nothing
+mentions fault, cost or speed; nothing blocks Continue or sending.
+
+**What none of this proves** is how well a model reads a real dent in a real photograph. The
+scripts prove the contract, the parsing and the layout; the judgement needs a key,
+`scripts/assist-server.mjs` and photographs of actual cars.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:

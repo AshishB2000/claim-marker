@@ -15,7 +15,7 @@
  * test. `parseClaim` funnels through `toDocument` so the two can never disagree on shape.
  */
 import { parseDamages, type Damage } from '../schema'
-import { isVehicle, type Vehicle } from '../zones'
+import { isVehicle, zoneById, type Vehicle } from '../zones'
 import { normalizeBearing, roundLngLat, type LngLat } from '../geo'
 
 export const CLAIM_SCHEMA = 'claim/1'
@@ -135,6 +135,12 @@ export type Photo = {
   /** the vehicle it shows, or null for the scene */
   of: string | null
   caption: string
+  /**
+   * the panel of that vehicle it shows, a zone id — set when the customer adds a mark the
+   * assistant read off this photo, so the report can put the photo beside the mark. Absent
+   * in documents written before it existed, and dropped when the zone is not on that body.
+   */
+  shows?: string | null
 }
 
 /** the state the vehicle is in now — what decides a tow, a rental and where to inspect */
@@ -342,6 +348,7 @@ export const emptyClaim = (): Claim => ({
 /** the normalised document, the shape that is sent and stored */
 export const toDocument = (claim: Claim): Claim => {
   const ids = new Set(claim.vehicles.map((v) => v.id))
+  const bodies = new Map(claim.vehicles.map((v) => [v.id, v.body]))
   // a driver or passenger must be in a vehicle that exists; one driver per vehicle
   const driven = new Set<string>()
   const people: Person[] = []
@@ -400,7 +407,13 @@ export const toDocument = (claim: Claim): Claim => {
       photos: claim.attachments.photos
         .filter((p) => isPhotoData(p.data))
         .slice(0, MAX_PHOTOS)
-        .map((p) => ({ data: p.data, of: p.of && ids.has(p.of) ? p.of : null, caption: str(p.caption) })),
+        .map((p) => {
+          const of = p.of && ids.has(p.of) ? p.of : null
+          const photo: Photo = { data: p.data, of, caption: str(p.caption) }
+          // only when present, so every document written before `shows` existed stays byte-identical
+          if (of && p.shows && zoneById(bodies.get(of)!, p.shows)) photo.shows = p.shows
+          return photo
+        }),
     },
   }
 }
@@ -502,7 +515,7 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
   for (const entry of Array.isArray(att.photos) ? att.photos : []) {
     const p = obj(entry)
     if (!isPhotoData(p.data)) continue
-    photos.push({ data: p.data, of: typeof p.of === 'string' ? p.of : null, caption: str(p.caption) })
+    photos.push({ data: p.data, of: typeof p.of === 'string' ? p.of : null, caption: str(p.caption), shows: typeof p.shows === 'string' ? p.shows : null })
   }
 
   const rep = obj(raw.reporter)
