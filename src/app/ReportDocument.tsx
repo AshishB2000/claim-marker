@@ -10,6 +10,7 @@ import { zoneById } from '../zones'
 import { paintLabel } from '../vehicles/paint'
 import { Icon } from './icons'
 import { VehiclePhoto } from './VehiclePhoto'
+import { MarkPhotos } from './MarkPhotos'
 import { usePlayback } from '../map/usePlayback'
 
 // ── the pieces the document is written in ────────────────────────────
@@ -70,7 +71,7 @@ const when = (at: string) => {
 }
 
 /** the marks on one vehicle, numbered as they are on the car */
-function Marks({ v }: { v: ClaimVehicle }) {
+function Marks({ v, photos }: { v: ClaimVehicle; photos: Claim['attachments']['photos'] }) {
   return (
     <ol className="space-y-1.5 text-sm">
       {v.damages.map((d, i) => (
@@ -82,6 +83,7 @@ function Marks({ v }: { v: ClaimVehicle }) {
             <span className="font-medium">{zoneById(v.body, d.zone)?.label ?? d.zone}</span>
             <span className="text-slate-500"> — {d.severity}</span>
             {d.note && <span className="block text-slate-600">“{d.note}”</span>}
+            <MarkPhotos photos={photos} of={v.id} zone={d.zone} />
           </span>
         </li>
       ))}
@@ -415,7 +417,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                     <Tag v={v} />
                     {cap(whose(v, voice))} {vehicleName(v)}
                   </div>
-                  <Marks v={v} />
+                  <Marks v={v} photos={photos} />
                 </div>
               </div>
             ))}

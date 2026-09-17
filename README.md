@@ -70,6 +70,11 @@ flowchart LR
   </tr>
 </table>
 
+<p align="center">
+  <img src="docs/damage-phone.png" alt="The damage step on a phone: guided camera tiles, then the panels read off the photos with Add and Not this" width="300">
+</p>
+<p align="center"><sub><b>On a phone, with the assistant on</b> — the camera comes first, the panels it read come back to confirm, and the 3D car is there for whatever they missed</sub></p>
+
 <br>
 
 ## ✨ What makes it different

@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, ~250 tests across 17 files
+npm test               # vitest, 252 tests across 17 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -42,8 +42,10 @@ node scripts/smoke.mjs     # the whole flow: search, vehicles, drag a car and it
 node scripts/shoot.mjs     # regenerates docs/*.png and asserts the attachments aren't blank frames
 ```
 
-`node scripts/assist-smoke.mjs` starts its own stub endpoint and its own dev server on 5174,
-so it needs no API key: it covers this page's half of the assistant contract, all four tasks.
+`node scripts/assist-smoke.mjs` starts its own stub endpoint and its own dev server on **ports
+it finds free** (several of these scripts run side by side on this machine), so it needs no API
+key: it covers this page's half of the assistant contract, all four tasks, and walks the damage
+step twice — at 1280, where the layout must be the one it always was, and at 390, photo-first.
 
 `node scripts/offline-smoke.mjs` needs only a build: it serves `dist/` with `vite preview` on
 a free port, waits for the shell to land, then **kills the preview process** and goes offline
@@ -202,6 +204,19 @@ always uses the **zone's own anchor** as the point, never anything the endpoint 
 mark that misses the panel it names makes the marked-up car a lie. Nothing anywhere mentions
 fault, liability, speed or cost.
 
+**The damage step is photo-first only on a phone with the assistant on.**
+`photoFirst = assistOn() && narrow` (`useNarrow()`, `matchMedia('(max-width: 640px)')`, read
+through `useSyncExternalStore`): guided camera tiles, then the panels read off the photographs,
+then the car. Assistant off, or wider than 640px, and the step is **unchanged** — same DOM, and
+the assist smoke fails at 1280 if a tile appears or the photos are read without the button. The
+step's three parts live in `src/app/steps/damage/` (`Capture`, `Suggestions`, `MarkerPanel`) and
+`Damage.tsx` only picks the order. The photo-first suggestions read themselves: an effect keyed
+on the vehicle and its photographs, debounced 1.2 s, aborted on change, with the loading state
+*derived* — never a `setState` inside the effect. `Photo.shows` (a zone id, additive to
+`claim/1`, kept only when `of` is a vehicle and the zone is on that body, **absent** otherwise so
+old documents stay byte-identical) is set by `tagPhoto` when a suggestion is added, and
+`ReportDocument` puts those thumbnails beside the mark.
+
 **The kind of incident drives the flow** (`KIND_INFO` in `src/claim/schema.ts`, `stepsFor` in the
 store): `others` says whether other vehicles are expected, `diagram` whether the map step is shown.
 `setKind` drops the other vehicles — and the people in them — when the kind has no other party.
@@ -257,6 +272,7 @@ era that still suits it. The app itself is Tailwind (`src/app.css`).
 
 ```
 src/app/          the seven steps, the shell, the shared ReportDocument, submit
+src/app/steps/damage/   the damage step's three parts: the camera, the suggestions, the marker
 src/adjuster/     the claims desk (adjuster.html), the insurer's side
 src/claim/        the claim/1 document, the persisted store, prefill, the outbox
 src/config.ts     runtime configuration and the host-page channel

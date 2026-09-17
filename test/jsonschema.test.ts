@@ -40,13 +40,19 @@ const full = () =>
     police: { called: true, department: 'NYPD', report: '2026-0042', citations: '' },
     property: { description: 'A pole', owner: 'The city' },
     attestation: { agreed: true, name: 'Ashish B', at: '2026-09-07T22:14:03.000Z' },
-    attachments: { scene: png, damage: { a: png }, photos: [{ data: jpg, of: 'a', caption: 'Front bumper' }] },
+    attachments: { scene: png, damage: { a: png }, photos: [{ data: jpg, of: 'a', caption: 'Front bumper', shows: 'front_bumper' }, { data: jpg, of: null, caption: 'The junction' }] },
   })
 
 describe('the published JSON Schema for claim/1', () => {
   it('accepts what the page sends', () => {
     expect(validate(full()), JSON.stringify(validate.errors)).toBe(true)
     expect(validate(toDocument(emptyClaim())), JSON.stringify(validate.errors)).toBe(true)
+  })
+
+  it('carries the panel a photo shows', () => {
+    const d = full()
+    expect(d.attachments.photos[0].shows).toBe('front_bumper')
+    expect(validate({ ...d, attachments: { ...d.attachments, photos: [{ ...d.attachments.photos[0], shows: 7 }] } })).toBe(false)
   })
 
   it('accepts what the parser accepts, after the round trip', () => {

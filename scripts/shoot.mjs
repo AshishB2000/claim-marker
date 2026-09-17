@@ -91,6 +91,9 @@ await shot('docs/scene.png')
 await next()
 await page.waitForSelector('.cm-root canvas', { timeout: 20000 })
 await page.waitForTimeout(6000)
+// the car as the marker drew it, before the picker opens over it: the phone shot below uses it
+// as the customer's photograph, so the tile is a real frame and not a white square
+const carShot = await page.locator('.cm-root canvas').screenshot()
 const c = await page.locator('.cm-root canvas').boundingBox()
 await page.mouse.click(c.x + c.width * 0.42, c.y + c.height * 0.55)
 await page.waitForTimeout(500)
@@ -99,6 +102,48 @@ await page.waitForTimeout(500)
 await page.getByRole('button', { name: 'dent', exact: true }).click({ force: true })
 await page.waitForTimeout(1800)
 await shot('docs/damage.png')
+
+// ── the same step on a phone, with the assistant on: photos first ──────
+// The stub answers for the endpoint the insurer would run, and the "photograph" is the car as
+// the marker drew it — a real frame, so the tile is not a white square in the README.
+const saved = JSON.parse(await page.evaluate(() => localStorage.getItem('claim-marker/draft')))
+// from the top of the step: no marks yet, no photos, so the walk is the one a customer sees
+saved.state.claim.vehicles[0].damages = []
+saved.state.claim.attachments.photos = []
+saved.state.autoDamage = {}
+const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
+const phone = await phoneCtx.newPage()
+await phone.addInitScript(() => {
+  window.CLAIM_MARKER = { assistUrl: 'https://assist.example/read' }
+})
+await phone.route('https://assist.example/read', (r) =>
+  r.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      schema: 'claim-assist/1',
+      task: 'damage',
+      damages: [
+        { zone: 'front_bumper', severity: 'crack', note: 'Split below the number plate' },
+        { zone: 'hood', severity: 'dent', note: 'Creased along the front edge' },
+      ],
+    }),
+  }),
+)
+await phone.goto(`${origin}/`, { waitUntil: 'networkidle' })
+await phone.evaluate((s) => localStorage.setItem('claim-marker/draft', s), JSON.stringify(saved))
+await phone.reload({ waitUntil: 'networkidle' })
+await phone.getByRole('button', { name: 'The damage, close up' }).waitFor({ timeout: 20000 })
+const [chooser] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The damage, close up' }).click()])
+await chooser.setFiles({ name: 'damage.png', mimeType: 'image/png', buffer: carShot })
+await phone.getByRole('button', { name: /^Add / }).first().waitFor({ timeout: 20000 })
+await phone.waitForTimeout(500)
+await phone.locator('section[aria-label="What the photos show"]').scrollIntoViewIfNeeded()
+await phone.mouse.wheel(0, -280)
+await phone.waitForTimeout(400)
+await phone.screenshot({ path: 'docs/damage-phone.png' })
+console.log('docs/damage-phone.png')
+await phoneCtx.close()
 
 await next()
 await page.waitForSelector('text=Send my report', { timeout: 20000 })

@@ -8,15 +8,25 @@
  * half of the contract for all four tasks — the diagram, the statement, the damage read off
  * the photographs and the second look before sending: the request it sends, the answer it
  * accepts, what lands on the car and on the map, and that a malicious or broken answer cannot
- * put anything there. The model's own judgement is not tested here — that needs a key and
+ * put anything there. It walks the damage step twice: at desktop width, where the customer asks
+ * for the photos to be read, and at phone width, where the step leads with the camera and reads
+ * them by itself. The model's own judgement is not tested here — that needs a key and
  * `scripts/assist-server.mjs`.
  */
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import { chromium } from 'playwright'
 
-const ASSIST_PORT = 8788
-const DEV_PORT = 5174
+/** its own ports, found free: several of these scripts run beside each other on one machine */
+const freePort = () =>
+  new Promise((resolve) => {
+    const s = createServer().listen(0, () => {
+      const { port } = s.address()
+      s.close(() => resolve(port))
+    })
+  })
+const ASSIST_PORT = await freePort()
+const DEV_PORT = await freePort()
 const origin = `http://localhost:${DEV_PORT}`
 
 const fail = (msg) => {
@@ -214,6 +224,15 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 await page.getByLabel('Add photos').setInputFiles({ name: 'damage.png', mimeType: 'image/png', buffer: PNG })
 await page.locator('text=From your photos').waitFor({ timeout: 15000 }).catch(() => fail('a photo of this vehicle did not offer to be read'))
 
+// at this width the step is the one it always was: the photos wait to be asked about, and the
+// phone's capture tiles are nowhere
+const quiet = seen.length
+await page.waitForTimeout(2500)
+if (seen.length !== quiet) fail('the desktop step read the photos without being asked')
+if (await page.getByRole('button', { name: 'The damage, close up' }).count()) fail('the phone capture tiles are in the desktop layout')
+if (!(await page.getByRole('button', { name: 'Suggest from photos' }).count())) fail('the desktop button to read the photos is gone')
+ok('assist: at 1280 the damage step is unchanged — the photos are read only when the button is pressed')
+
 // one panel this body has, and one it does not: a sedan has left/right rear doors, not "rear_door"
 answer = () => [
   200,
@@ -326,6 +345,118 @@ ok('assist: only the signature decides whether the report can go')
 await page.getByRole('button', { name: 'Go to that step' }).click()
 await page.waitForFunction(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.step === 'people', null, { timeout: 5000 }).catch(() => fail('"Go to that step" did not navigate'))
 ok('assist: "Go to that step" opens the step that answers the question')
+
+// ── 8 · the phone: the camera first, and the photos read by themselves ─
+
+const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
+const phone = await phoneCtx.newPage()
+phone.on('console', (m) => m.type() === 'error' && !expected.test(m.text()) && errors.push(m.text()))
+phone.on('pageerror', (e) => errors.push(String(e)))
+const state = () => phone.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state)
+
+await phone.goto(`${origin}/`, { waitUntil: 'networkidle' })
+await phone.evaluate((here) => {
+  const v = (id, role, body, color, make, model, year) => ({ id, role, body, color, make, model, year, plate: '', position: null, heading: 0, path: [], damages: [] })
+  const claim = {
+    schema: 'claim/1',
+    reference: null,
+    submittedAt: null,
+    incident: { at: '2026-09-08T09:15', location: { ...here, address: 'Times Square, Manhattan, New York' }, surface: 'satellite', description: '' },
+    vehicles: [v('a', 'insured', 'sedan', '#b91c1c', 'Toyota', 'Camry', 2021), v('b', 'other', 'suv', '#1c1f26', 'Honda', 'CR-V', 2019)],
+    impact: null,
+    attachments: { scene: null, damage: {} },
+  }
+  localStorage.setItem('claim-marker/draft', JSON.stringify({ state: { claim, step: 'damage', impactManual: false, autoDamage: {} }, version: 3 }))
+}, HERE)
+await phone.reload({ waitUntil: 'networkidle' })
+await phone.locator('.cm-root canvas').waitFor({ timeout: 30000 })
+
+for (const tile of ['The damage, close up', 'The same, from a step back', 'The whole side of the car', 'The other vehicle and its plate']) {
+  if (!(await phone.getByRole('button', { name: tile }).count())) fail(`the phone layout is missing the "${tile}" tile`)
+}
+if (await phone.getByRole('button', { name: 'Suggest from photos' }).count()) fail('the phone layout still asks the customer to press a button')
+ok('assist: at 390 the damage step leads with the camera — four guided shots and no button to press')
+
+// a photograph taken from a tile, through the camera input the tile opens
+answer = () => [
+  200,
+  {
+    schema: 'claim-assist/1',
+    task: 'damage',
+    damages: [
+      { zone: 'hood', severity: 'dent', note: 'crumpled at the front edge' },
+      { zone: 'rear_door', severity: 'crack' },
+    ],
+  },
+]
+const before8 = seen.length
+const [chooser] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The damage, close up' }).click()])
+await chooser.setFiles({ name: 'damage.png', mimeType: 'image/png', buffer: PNG })
+await phone
+  .getByRole('button', { name: 'Add Hood' })
+  .waitFor({ timeout: 20000 })
+  .catch(() => fail('the photos were not read without a button press'))
+if (seen.length !== before8 + 1) fail(`one photo should be one read, got ${seen.length - before8}`)
+const read = seen.at(-1)
+if (read.task !== 'damage' || read.vehicle !== 'sedan' || read.photos?.length !== 1) fail(`wrong damage request from the phone: ${JSON.stringify(read).slice(0, 200)}`)
+if ((await phone.getByRole('button', { name: /^Add / }).count()) !== 1) fail('a panel this body does not have was offered')
+if (!(await phone.getByRole('button', { name: /The damage, close up, taken/ }).count())) fail('the tile does not show the photo it took')
+ok('assist: a photo taken from a tile is read on its own; the tile shows it, and a panel this body has not is dropped')
+
+await phone.getByRole('button', { name: 'Add Hood' }).click()
+await phone.waitForFunction(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.vehicles[0].damages.length === 1, null, { timeout: 5000 })
+const added = await state()
+const mark = added.claim.vehicles[0].damages[0]
+if (JSON.stringify(mark.point) !== JSON.stringify([0, 0.76, 0.78])) fail(`the mark did not land on the hood's own anchor: ${JSON.stringify(mark.point)}`)
+if (added.autoDamage.a !== 'user') fail('adding a suggestion did not make this vehicle’s damage the customer’s own')
+if (added.claim.attachments.photos[0].shows !== 'hood') fail(`the photo was not tagged with the panel it shows: ${JSON.stringify(added.claim.attachments.photos[0].shows)}`)
+if (await phone.getByRole('button', { name: 'Add Hood' }).count()) fail('the card stayed after it was added')
+ok('assist: "Add" lands the mark on the anchor, makes the damage the customer’s, and tags the photo it was read off')
+
+// a second photo reads again; a panel already on the car is not offered twice, and "Not this" clears one
+answer = () => [
+  200,
+  {
+    schema: 'claim-assist/1',
+    task: 'damage',
+    damages: [
+      { zone: 'hood', severity: 'dent', note: 'the same dent again' },
+      { zone: 'front_bumper', severity: 'scratch', note: 'scuffed along the corner' },
+    ],
+  },
+]
+const [chooser2] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The same, from a step back' }).click()])
+await chooser2.setFiles({ name: 'step-back.png', mimeType: 'image/png', buffer: PNG })
+await phone
+  .getByRole('button', { name: 'Add Front bumper' })
+  .waitFor({ timeout: 20000 })
+  .catch(() => fail('a second photo was not read'))
+if ((await phone.getByRole('button', { name: /^Add / }).count()) !== 1) fail('a panel already marked on the car was offered again')
+await phone.getByRole('button', { name: 'Not this: Front bumper' }).click()
+await phone.waitForTimeout(300)
+if (await phone.getByRole('button', { name: 'Add Front bumper' }).count()) fail('"Not this" left the card up')
+if ((await state()).claim.vehicles[0].damages.length !== 1) fail('"Not this" changed the car')
+ok('assist: another photo reads again, a panel already marked is not offered twice, and "Not this" leaves the car alone')
+
+// the endpoint failing is a quiet line, and the car underneath still takes a tap
+answer = () => [502, { error: 'the assistant could not answer' }]
+const [chooser3] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The whole side of the car' }).click()])
+await chooser3.setFiles({ name: 'side.png', mimeType: 'image/png', buffer: PNG })
+await phone.waitForFunction(() => document.body.innerText.includes('We could not read the photos this time'), null, { timeout: 20000 }).catch(() => fail('a failed read did not say so'))
+if (await phone.getByRole('button', { name: /^Add / }).count()) fail('a failed read left a suggestion up')
+
+const canvas = phone.locator('.cm-root canvas')
+await canvas.scrollIntoViewIfNeeded()
+// three.js is still linking shaders for the first seconds under software GL: tap until the car is there
+for (let i = 0; i < 20 && !(await phone.locator('.cm-pop').count()); i++) {
+  const b = await canvas.boundingBox()
+  await phone.mouse.click(b.x + b.width / 2, b.y + b.height / 2)
+  await phone.waitForTimeout(700)
+}
+if (!(await phone.locator('.cm-pop').count())) fail('the car under the failed read did not take a tap')
+await phone.getByRole('button', { name: 'dent', exact: true }).click({ force: true })
+await phone.waitForFunction(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.vehicles[0].damages.length === 2, null, { timeout: 5000 }).catch(() => fail('the tap did not mark the car'))
+ok('assist: a failed read is one quiet line and the car below still takes a mark by hand')
 
 if (errors.length) fail(`console errors:\n${errors.join('\n')}`)
 console.log('\nall assist checks passed')
