@@ -50,13 +50,55 @@ never cached. `dist/lib/` is not served: it is the parser this server validates 
 | `ALLOWED_HOSTS` | origins allowed to embed the page; sets `frame-ancestors` and the page's own trust list |
 | `BRAND` · `ASSIST_URL` | injected into the page |
 | `CONNECT_SRC` | extra origins the page may reach — your own tiles or geocoder — added to the CSP |
-| `RATE_LIMIT` · `TRUST_PROXY` | POSTs per minute per IP (default 30), and whether to believe `X-Forwarded-For` |
+| `RATE_LIMIT` · `TRUST_PROXY` | POSTs per minute per IP (default 30), and whether to believe `Fly-Client-IP` or `X-Forwarded-For` |
 | `WEBHOOK_URL` · `WEBHOOK_SECRET` | where new reports are announced, and the key for the signature |
 | `CLAIM_ORIGIN` | an extra origin for CORS. Leave it unset in production: a page served from here needs none. |
+| `RETAIN_DAYS` | forget reports older than this many days — the folder, its photographs and the page's reference to it — at startup and every six hours. Unset keeps them for ever. |
+
+Every one of these is in [`.env.example`](../.env.example) with a line of explanation; copy it
+to `.env` for `docker compose` or `node --env-file=.env server/claim-server.mjs`.
 
 With `NODE_ENV=production` the server refuses to start unless `CLAIM_TOKEN` or
 `SESSION_SECRET` is set, `DESK_TOKEN` is set, and `CLAIM_ORIGIN` is not `*`. Better a failed
 deploy than an open claims inbox.
+
+### Deploy to Fly
+
+`fly.toml` builds the `Dockerfile` on Fly's own builders — no Docker needed on your machine —
+with reports on a volume at `/data`, TLS on `<app>.fly.dev`, a health check on `/health`, and
+the machine stopped while nobody is using it. **None of this has been run against Fly yet**:
+the files are written to Fly's documented configuration, and the first deploy is the test.
+
+```bash
+brew install flyctl
+fly auth signup                          # or `fly auth login` with an account already
+fly launch --no-deploy --copy-config     # accept fly.toml; rename the app if the name is taken
+fly volumes create claims --size 1 --region iad    # the primary_region in fly.toml
+export API_KEY=$(openssl rand -hex 32) DESK_TOKEN=$(openssl rand -hex 32)
+fly secrets set SESSION_SECRET=$(openssl rand -hex 32) API_KEY=$API_KEY DESK_TOKEN=$DESK_TOKEN \
+  RETAIN_DAYS=7 BRAND='Acme Mutual'
+fly deploy --ha=false                    # one volume, so one machine
+node scripts/live-check.mjs https://<app>.fly.dev   # with the API_KEY and DESK_TOKEN above
+```
+
+Keep `API_KEY` and `DESK_TOKEN` somewhere safe: Fly will not show a secret again. Add
+`ALLOWED_HOSTS` (the portal that embeds the page), `WEBHOOK_URL`/`WEBHOOK_SECRET` and
+`ASSIST_URL` the same way when there is one. `fly.toml` itself sets `NODE_ENV=production`,
+`CLAIM_DIR=/data/claims`, `PORT=8788` and `TRUST_PROXY=1`, and the server refuses to start
+without the three secrets above.
+
+`scripts/live-check.mjs` checks the result from outside with plain `fetch`: `/health`; the
+page's CSP, injected config and immutable assets; `/lib` and a path out of `dist/` refused;
+a session minted only with the key; a report filed, and filed once when sent again; the desk
+locked without its token and listing the report with it — which it then closes.
+
+The image starts as root for one step: a Fly volume (or a Render disk) is mounted over `/data`
+owned by root, so it hands the reports folder to the `node` user and then runs the server as
+`node`.
+
+**Render** is the documented alternative: `render.yaml` is the same service as a Blueprint
+(Dashboard → New → Blueprint), with the three secrets generated for you. A disk needs a paid
+instance — a free one would lose every report on each deploy — and it is equally unverified.
 
 Hosting the static build behind your own CDN still works — `dist/` is a plain static site —
 but then the API, the CSP and the runtime config are yours to arrange.

@@ -508,6 +508,58 @@ which needs the body, the environment map and the textures. It reads the marker'
 rather than a vehicle card's, because the marker is the one kept with `preserveDrawingBuffer`
 — the card previews render fine and read back blank.
 
+## A live instance
+
+Until now nobody could see the product without cloning the repo. This is what it takes to put
+the one-port server on a public URL, and what that URL has to refuse to do. **It has not been
+deployed**: there is no Fly account behind it yet, flyctl and Docker are not installed on the
+machine it was written on, and everything below is proven against a local server started in
+production mode, not against Fly.
+
+**Fly, because it builds the Dockerfile for us.** No Docker here means an image cannot be built
+locally; Fly builds it on its own builders from `fly.toml`, gives it a volume for `CLAIM_DIR`,
+TLS on a `fly.dev` hostname, secrets as environment, and stops the machine when nobody is
+looking. Render does the same from `render.yaml` and is the documented alternative, at the cost
+of a paid instance for the disk. The six commands are Ashish's to run
+([integration.md](integration.md#deploy-to-fly)): an account and credentials are not something
+to create on someone's behalf.
+
+**Retention (`RETAIN_DAYS`), because a public demo collects strangers' photographs.** A report
+older than the limit is deleted — the folder with its images, and the `by-client/` entry that
+mapped the page's reference to it — at startup and every six hours on an `unref`ed timer.
+Unset keeps everything, which is still the default for an insurer's own deployment where
+retention is a policy decision and not this server's. The age test is a pure
+`expired(receivedAt, days, now)` in `server/retention.mjs` with its own test; it never deletes
+a report whose date does not parse. `/health` says what the limit is, so the live check can
+report it. The integration smoke seeds a report from 2000 and asserts it is gone by the time
+the server answers.
+
+**Three things found by reading, not by deploying**, each a line:
+
+- A Fly volume is mounted over `/data` owned by root, and the image ran as `node`: the first
+  `mkdir` would have failed with `EACCES` and the machine would never have passed a health
+  check. The image now starts as root, takes the reports folder for `node`, and `su-exec`s to
+  `node` — what the official postgres and redis images do. Not recursive, because everything
+  inside was written by `node`.
+- With `TRUST_PROXY=1` the rate limit keyed on the *first* `X-Forwarded-For` entry, which is
+  whatever the client sent when a proxy appends. Fly's rightmost entry is its own address, so
+  "last" would have put every visitor in one bucket. It now prefers `Fly-Client-IP`, which the
+  proxy sets itself, and falls back to the first entry elsewhere.
+- `PORT`, `CLAIM_DIR`, `STATIC_DIR` and `RATE_LIMIT` were read with `??`, so the empty values an
+  `.env` or compose's `${X:-}` produce meant port 0, the current directory (whose `index.html`
+  is the Vite *source*), or zero requests a minute. They are `||` now.
+
+**The proof is `scripts/live-check.mjs <url>`, and it needs no browser.** A deployed instance is
+checked from outside with `fetch`, using the `API_KEY` and `DESK_TOKEN` it was deployed with:
+`/health` up and serving the page; `/` is HTML whose CSP has `frame-ancestors` and the hash of
+the injected config, which says `"submitUrl":"/claims"`; a hashed asset is `immutable`;
+`/lib/claim.js` and a `%2f`-encoded `..` path are 404 (encoded so `fetch` does not fold the
+`..` away before it leaves the machine); `/sessions` is 401 without the key and mints with it;
+a `claim/1` built by `toDocument(emptyClaim())` from `dist/lib/claim.js` is filed with an `INS-`
+reference and sent again is a `200` duplicate; the desk is 401 without its token and lists the
+report with it; and the report is then PATCHed `closed`, so the inbox a prospect opens is not a
+wall of test reports.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:

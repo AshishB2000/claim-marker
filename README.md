@@ -109,6 +109,10 @@ flowchart LR
 
 ## ⚡ Quick start
 
+> **Live instance: TODO** — there is no public URL yet. Deploying it is six commands and an
+> account: [Deploy to Fly](docs/integration.md#deploy-to-fly). Replace this line with the link
+> once `fly deploy` has run.
+
 ```bash
 npm install
 npm run dev      # http://localhost:5173
@@ -121,6 +125,10 @@ sends — on one port:
 ```bash
 docker compose up --build            # http://localhost:8788
 ```
+
+Public hosting is `fly.toml` (or `render.yaml`): the same image, a volume for the reports, TLS,
+and `RETAIN_DAYS` so a public instance forgets strangers' photographs — see
+[Deploy to Fly](docs/integration.md#deploy-to-fly).
 
 > [!TIP]
 > Built, it installs itself: the page, the seven car bodies, the environment map and the map
@@ -242,9 +250,10 @@ The full shape, and the reasoning behind every design decision, is in [docs/spec
 
 ```bash
 npm run lint                         # oxlint, must be silent
-npm test                             # vitest, ~240 tests
+npm test                             # vitest, ~250 tests
 node scripts/smoke.mjs               # the whole flow in a headless browser, dev server running
 node scripts/integration-smoke.mjs   # embed, prefill, offline send, server, webhook, desk
+node scripts/live-check.mjs <url>    # a deployed instance, from outside: page, CSP, sessions, claims, desk
 node scripts/shoot.mjs               # regenerate the screenshots above
 npm run server                       # the reference claim server, after a build
 ```

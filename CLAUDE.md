@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, ~250 tests across 17 files
+npm test               # vitest, 254 tests across 18 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -44,6 +44,14 @@ node scripts/shoot.mjs     # regenerates docs/*.png and asserts the attachments 
 
 `node scripts/assist-smoke.mjs` starts its own stub endpoint and its own dev server on 5174,
 so it needs no API key: it covers this page's half of the assistant contract, all four tasks.
+
+`node scripts/live-check.mjs <url>` checks a **deployed** instance from outside with plain
+`fetch` — no browser — using the `API_KEY` and `DESK_TOKEN` it was deployed with: the page and
+its CSP, what must not be served, a session, a report filed and deduped, the desk. `fly.toml`
+and `render.yaml` describe that deployment; neither has been run, and Docker is not installed
+here, so both are unverified. Run the live check against a local server in production mode
+(`NODE_ENV=production`, `SESSION_SECRET`, `API_KEY`, `DESK_TOKEN`, `CLAIM_DIR`) for anything
+touching `server/`.
 
 `node scripts/offline-smoke.mjs` needs only a build: it serves `dist/` with `vite preview` on
 a free port, waits for the shell to land, then **kills the preview process** and goes offline
@@ -150,6 +158,12 @@ is one metre everywhere. Zone anchors and stored damage points stay in kit units
 `scripts/profile-body.mjs` output, and `scripts/probe-zones.ts` must show every zone reachable.
 The unit tests assert no zone's anchor classifies as a neighbour's — if that fails, the anchors
 are wrong, not the test.
+
+**Reports do not live for ever** (`RETAIN_DAYS`, `server/retention.mjs`). `expired(receivedAt,
+days, now)` is pure and tested; `sweep()` in the server deletes the folder and its
+`by-client/<ref>` entry at startup and every six hours. Unset keeps everything — that is still
+the default for an insurer's own deployment. A public instance that keeps strangers'
+photographs for ever is a liability.
 
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
