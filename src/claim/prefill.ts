@@ -12,6 +12,8 @@
 import { isHex, type Claim, type ClaimVehicle, type Reporter } from './schema'
 import { isVehicle, type Vehicle } from '../zones'
 import { guessBody } from '../vehicles/catalog'
+import { namedVehicle } from './describe'
+import { translate, type Lang } from '../i18n'
 
 export type PrefillVehicle = {
   make?: string
@@ -80,9 +82,9 @@ export function parsePrefill(input: unknown): Prefill {
   return out
 }
 
-/** "2021 Toyota Camry · ABC 123", or whatever of that is known */
-export const policyVehicleLabel = (v: PrefillVehicle): string =>
-  [[v.year, v.make, v.model].filter(Boolean).join(' '), v.plate].filter(Boolean).join(' · ') || 'A vehicle on the policy'
+/** "2021 Toyota Camry · ABC 123" / "Toyota Camry 2021 · ABC 123", or whatever of that is known */
+export const policyVehicleLabel = (v: PrefillVehicle, lang: Lang = 'en'): string =>
+  [namedVehicle(v, lang), v.plate].filter(Boolean).join(' · ') || translate(lang, 'common.aPolicyVehicle')
 
 /**
  * A vehicle on the policy written onto a card. `overwrite` is for the customer picking it

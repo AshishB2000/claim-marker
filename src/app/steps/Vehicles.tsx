@@ -4,25 +4,19 @@ import { KIND_INFO, ROLE_COLOR, type ClaimVehicle } from '../../claim/schema'
 import { isVehicle, type Vehicle } from '../../zones'
 import { BODY_ORDER } from '../../vehicles/bodies'
 import { FALLBACK, MAKES, OTHER, YEARS, decodeVin, guessBody, isVin, modelsFor, type Decoded } from '../../vehicles/catalog'
-import { ownerLabel, vehicleName } from '../../claim/describe'
+import { namedVehicle, ownerLabel, vehicleName } from '../../claim/describe'
 import { policyVehicleLabel, type PrefillVehicle } from '../../claim/prefill'
-import { PAINTS } from '../../vehicles/paint'
+import { PAINTS, paintId } from '../../vehicles/paint'
 import { BodyPreview } from '../../vehicles/BodyPreview'
 import { VehiclePhoto } from '../VehiclePhoto'
 import { Field, Section } from '../ui'
 import { Icon } from '../icons'
-import { plural, type Key, type Lang } from '../../i18n'
+import { plural, type Key } from '../../i18n'
 import { useLang, useT } from '../../i18n/useT'
 
 const BODIES = BODY_ORDER.filter(isVehicle) as Vehicle[]
 
 /** a hex back to its paint id, so the colour is named from the shared vocabulary; anything else is "custom" */
-const paintId = (hex: string) => PAINTS.find((p) => p.hex === hex.toLowerCase())?.id ?? 'custom'
-
-/** "2021 Honda CR-V" / "Honda CR-V 2021" — the year goes last in Spanish, as `vehicleName` puts it */
-const named = (lang: Lang, year: number | null, make: string, model: string) =>
-  (lang === 'es' ? [make, model, year] : [year, make, model]).filter(Boolean).join(' ')
-
 /** the model list for a make and year, live from the vehicle database with a bundled fallback */
 function useModels(make: string, year: number | null) {
   const [state, setState] = useState<{ key: string; models: string[]; offline: boolean }>({ key: '', models: [], offline: false })
@@ -132,7 +126,7 @@ function VehicleCard({ vehicle: v }: { vehicle: ClaimVehicle }) {
           <VehiclePhoto vehicle={v} lang={lang} credit contain className="absolute inset-0" fallback={<BodyPreview body={v.body} paint={v.color} className="!absolute inset-0" />} />
           <span className="absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-white/90 px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-slate-600 backdrop-blur">
             <span className="size-2.5 rounded-full ring-1 ring-black/10" style={{ background: v.color }} />
-            {named(lang, v.year, v.make, v.model) || t(`body.${v.body}` as Key)} · {t(`paint.${paintId(v.color)}` as Key)}
+            {namedVehicle(v, lang) || t(`body.${v.body}` as Key)} · {t(`paint.${paintId(v.color)}` as Key)}
           </span>
         </div>
 
@@ -244,7 +238,7 @@ function VehicleCard({ vehicle: v }: { vehicle: ClaimVehicle }) {
               {vinNote === 'differs' && vin.found && (
                 <span className="mt-1 block text-xs text-amber-800">
                   {t('start.vehicles.vinDiffers', {
-                    found: named(lang, vin.found.year, vin.found.make, vin.found.model),
+                    found: namedVehicle(vin.found, lang),
                     chosen: vehicleName(v, lang),
                   })}{' '}
                   <button className="font-semibold underline underline-offset-2" onClick={() => takeVin(v.id, vin.found!)}>
@@ -290,7 +284,7 @@ export function Vehicles() {
               return (
                 <button key={i} className="seg" role="radio" aria-checked={on} aria-pressed={on} onClick={() => pickPolicyVehicle(i)}>
                   {p.color && <span className="mr-2 inline-block size-3 rounded-full ring-1 ring-black/10" style={{ background: p.color }} />}
-                  {policyVehicleLabel(p)}
+                  {policyVehicleLabel(p, lang)}
                 </button>
               )
             })}

@@ -20,7 +20,7 @@
  * what it always was.
  */
 import { translate, type Key, type Lang } from '../i18n'
-import { PAINTS, paintLabel } from '../vehicles/paint'
+import { paintId, paintLabel } from '../vehicles/paint'
 import { VEHICLES } from '../zones'
 import { KIND_INFO, LIGHT_LABEL, type Claim, type ClaimVehicle, type Conditions, type Person } from './schema'
 
@@ -33,15 +33,22 @@ const uncap = (s: string) => (s ? s[0].toLowerCase() + s.slice(1) : s)
 /** "de" before a noun phrase, contracting "de el" the way Spanish always does */
 const de = (phrase: string) => (phrase.startsWith('el ') ? `del ${phrase.slice(3)}` : `de ${phrase}`)
 
+/**
+ * "2022 Toyota Camry" in English, "Toyota Camry 2022" in Spanish, which puts the year last.
+ * Takes the parts loose, because the policy's vehicles and the photo credit have them before
+ * there is a `ClaimVehicle` to ask.
+ */
+export const namedVehicle = (v: { year?: number | null; make?: string; model?: string }, lang: Lang = 'en'): string =>
+  (lang === 'es' ? [v.make, v.model, v.year] : [v.year, v.make, v.model]).filter(Boolean).join(' ')
+
 /** "2022 Toyota Camry" / "Toyota Camry 2022", or "red sedan" / "sedán de color rojo" when the make is not known */
 export function vehicleName(v: ClaimVehicle, lang: Lang = 'en'): string {
   if (lang === 'es') {
-    const named = [v.make, v.model, v.year].filter(Boolean).join(' ')
+    const named = namedVehicle(v, 'es')
     if (named) return named
-    const paint = PAINTS.find((p) => p.hex === v.color.toLowerCase())?.id ?? 'custom'
-    return `${uncap(translate('es', `body.${v.body}` as Key))} de color ${translate('es', `paint.${paint}` as Key).toLowerCase()}`
+    return `${uncap(translate('es', `body.${v.body}` as Key))} de color ${translate('es', `paint.${paintId(v.color)}` as Key).toLowerCase()}`
   }
-  return [v.year, v.make, v.model].filter(Boolean).join(' ') || `${paintLabel(v.color).toLowerCase()} ${VEHICLES[v.body].label.toLowerCase()}`
+  return namedVehicle(v) || `${paintLabel(v.color).toLowerCase()} ${VEHICLES[v.body].label.toLowerCase()}`
 }
 
 /** "your" for the customer's vehicle, "their" for anyone else's; "the policyholder's" / "the other party's" to the desk */

@@ -6,7 +6,7 @@ import type { DamageMarkerHandle } from '../../marker/DamageMarker'
 import { Icon } from '../icons'
 import { Field, YesNo } from '../ui'
 import { submitClaim } from '../submit'
-import { config } from '../../config'
+import { fraudNoticeFor } from '../../config'
 import { ReportDocument } from '../ReportDocument'
 import { assistOn, checkReport } from '../../assist/client'
 import type { Check } from '../../assist/schema'
@@ -187,7 +187,7 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
       {/* ── confirm and send ─────────────────────────────────────── */}
       <div className="card p-6">
         <h2 className="eyebrow">{t('scene.send.title')}</h2>
-        <p className="mt-3 rounded-xl bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-600 ring-1 ring-slate-200">{config.fraudNotice}</p>
+        <p className="mt-3 rounded-xl bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-600 ring-1 ring-slate-200">{fraudNoticeFor(lang)}</p>
         <label className="mt-4 flex items-start gap-3 text-sm">
           <input
             type="checkbox"

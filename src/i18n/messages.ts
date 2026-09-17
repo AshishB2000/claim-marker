@@ -3,11 +3,11 @@
  * translates, so the steps can be translated side by side without two people editing one
  * enormous file; a key defined in two areas is a test failure (`test/i18n.test.ts`).
  */
-import * as vocab from './areas/vocab'
-import * as shell from './areas/shell'
-import * as start from './areas/start'
-import * as scene from './areas/scene'
-import * as damage from './areas/damage'
+import * as vocab from './areas/vocab.ts'
+import * as shell from './areas/shell.ts'
+import * as start from './areas/start.ts'
+import * as scene from './areas/scene.ts'
+import * as damage from './areas/damage.ts'
 
 export const en = { ...vocab.en, ...shell.en, ...start.en, ...scene.en, ...damage.en } as const
 export type Key = keyof typeof en

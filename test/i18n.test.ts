@@ -10,6 +10,20 @@ import { LANGUAGES } from '../src/claim/schema'
  */
 const SAME_IN_BOTH = ['No', 'SUV', 'Hatchback', 'Beige', 'Van', 'VIN']
 
+/**
+ * Whole sentences that are the same in both dictionaries on purpose, which no list of words
+ * can express. Each one needs a reason, and the reason is here rather than in a commit
+ * message: this list is the only thing standing between "deliberately identical" and
+ * "forgotten".
+ */
+const SAME_BY_KEY: Record<string, string> = {
+  // a proper noun and a placeholder; there is nothing in it to translate
+  'start.photo.creditTitle': 'the Wikimedia Commons credit',
+  // the desk reads English whatever language the customer wrote in, so this line is English
+  // in the Spanish dictionary too — it is the adjuster being told which language to expect
+  'scene.doc.reportedInSpanish': "the desk's note that the report is in Spanish",
+}
+
 const placeholders = (s: string) => (s.match(/\{(\w+)\}/g) ?? []).sort()
 
 describe('the two dictionaries', () => {
@@ -24,7 +38,7 @@ describe('the two dictionaries', () => {
   })
 
   it('say something different in Spanish, except where the word is the same word', () => {
-    const copied = (Object.keys(en) as Key[]).filter((k) => es[k] === en[k] && !SAME_IN_BOTH.includes(en[k]))
+    const copied = (Object.keys(en) as Key[]).filter((k) => es[k] === en[k] && !SAME_IN_BOTH.includes(en[k]) && !(k in SAME_BY_KEY))
     expect(copied, 'English left in the Spanish dictionary').toEqual([])
   })
 

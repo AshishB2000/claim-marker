@@ -146,6 +146,7 @@ export const en = {
   'common.add': 'Add',
   'common.remove': 'Remove',
   'common.close': 'Close',
+  'common.aPolicyVehicle': 'A vehicle on the policy',
 } as const
 
 export const es: Record<keyof typeof en, string> = {
@@ -222,7 +223,9 @@ export const es: Record<keyof typeof en, string> = {
   'severity.scratch': 'rayón',
   'severity.dent': 'abolladura',
   'severity.crack': 'grieta',
-  'severity.missing': 'falta la pieza',
+  // one word, because the marker's picker capitalises every word it is given ('.cm-sev button'
+  // in src/style.ts is text-transform: capitalize), and "Falta La Pieza" is not a severity
+  'severity.missing': 'faltante',
 
   'zone.front_bumper': 'Parachoques delantero',
   'zone.hood': 'Capó',
@@ -271,4 +274,5 @@ export const es: Record<keyof typeof en, string> = {
   'common.add': 'Agregar',
   'common.remove': 'Quitar',
   'common.close': 'Cerrar',
+  'common.aPolicyVehicle': 'Un vehículo de la póliza',
 }

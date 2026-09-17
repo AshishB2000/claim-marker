@@ -18,3 +18,6 @@ export const PAINTS = [
 export type PaintId = (typeof PAINTS)[number]['id']
 
 export const paintLabel = (hex: string) => PAINTS.find((p) => p.hex === hex.toLowerCase())?.label ?? 'Custom'
+
+/** the paint's id, which is how the page looks its name up in a language */
+export const paintId = (hex: string): PaintId | 'custom' => PAINTS.find((p) => p.hex === hex.toLowerCase())?.id ?? 'custom'

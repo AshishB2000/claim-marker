@@ -42,16 +42,6 @@ import type { Lang } from '../i18n'
 // dragging the store in; everything here still imports them from the store as it did
 export { STEPS, type Step }
 
-export const STEP_TITLE: Record<Step, string> = {
-  kind: 'What happened',
-  where: 'Where and when',
-  vehicles: 'The vehicles',
-  people: 'People and injuries',
-  scene: 'Show us',
-  damage: 'The damage',
-  review: 'Review and send',
-}
-
 /** the steps this kind of incident goes through: a hail claim has nothing to diagram */
 export const stepsFor = (kind: Kind): Step[] => STEPS.filter((s) => s !== 'scene' || KIND_INFO[kind].diagram)
 

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { ClaimVehicle } from '../claim/schema'
+import { namedVehicle } from '../claim/describe'
 import { photoFor, type Photo } from '../vehicles/photo'
 import { translate, type Lang } from '../i18n'
 
@@ -47,7 +48,7 @@ export function VehiclePhoto({
   const photo = state.key === key ? state.photo : null
   if (!photo || photo.url === broken) return <>{fallback}</>
   // the year goes last in Spanish, as every other name for a vehicle does
-  const name = (lang === 'es' ? [v.make, v.model, v.year] : [v.year, v.make, v.model]).filter(Boolean).join(' ')
+  const name = namedVehicle(v, lang)
   return (
     <figure className={className}>
       {contain && <img src={photo.url} alt="" aria-hidden className="absolute inset-0 size-full scale-110 object-cover opacity-70 blur-2xl" />}

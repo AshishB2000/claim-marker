@@ -1,5 +1,5 @@
 import { defineConfig, type Plugin } from 'vite'
-import { en, es } from './src/i18n/messages'
+import { en, es } from './src/i18n/messages.ts'
 
 /**
  * Both dictionaries as plain JSON beside the parser, so anything outside the bundle can read
