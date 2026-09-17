@@ -53,6 +53,7 @@ never cached. `dist/lib/` is not served: it is the parser this server validates 
 | `RATE_LIMIT` · `TRUST_PROXY` | POSTs per minute per IP (default 30), and whether to believe `Fly-Client-IP` or `X-Forwarded-For` |
 | `WEBHOOK_URL` · `WEBHOOK_SECRET` | where new reports are announced, and the key for the signature |
 | `CLAIM_ORIGIN` | an extra origin for CORS. Leave it unset in production: a page served from here needs none. |
+| `DEMO` | `1` serves the demo portal at `/demo/` (`server/demo/`) and keeps what it files for a day |
 | `RETAIN_DAYS` | forget reports older than this many days — the folder, its photographs and the page's reference to it — at startup and every six hours. Unset keeps them for ever. |
 
 Every one of these is in [`.env.example`](../.env.example) with a line of explanation; copy it
@@ -282,6 +283,30 @@ ok = hmac.compare_digest(request.headers['X-Claim-Signature'], expected)
 
 Delivery is retried three times; make the receiver idempotent on `reference`.
 
+## 3b. The demo portal: an insurer's site in a few hundred lines
+
+`server/demo/` is everything on this page put together, as a prospect meets it. Started with
+`DEMO=1`, the claim server serves it at `/demo/`:
+
+```bash
+SESSION_SECRET=$(openssl rand -hex 32) DESK_TOKEN=desk-token DEMO=1 BRAND='Acme Mutual' \
+node server/claim-server.mjs              # http://localhost:8788/demo/
+```
+
+Sign in as one of three sample customers (`customers.mjs`, shaped exactly as `/sessions` takes
+them) and `POST /demo/login` mints a session the way your backend would — the same
+`createSession` behind `/sessions`, minus the network hop and minus any authentication.
+`policy.html` is the customer's policy screen with the report embedded in it by `embed.js`, and
+`claims.html` is where `onSubmitted` sends them: the claim number, what happens next, and a link
+into the claims desk the report landed on. Plain HTML and one script, deliberately a different
+stack from the React page it embeds — that is the part worth demonstrating.
+
+It is a demonstration, so it is built not to leak: each sign-in gets a customer id of its own,
+a visitor's session opens the report they filed and nothing else (`DESK_TOKEN` still reads
+every report), everything filed through it is swept after a day whatever `RETAIN_DAYS` says,
+and `NODE_ENV=production` still refuses to start without the secrets. Do not set `DEMO=1` on an
+instance taking real claims: the portal mints sessions for anyone who asks.
+
 ## 4. The claims desk
 
 `adjuster.html` (in the same build) lists what the server has and opens each report as the
@@ -299,8 +324,9 @@ A claims system with its own inbox does not need it: `ReportDocument` in
 done) runs the whole thing: a host page embedding the report with a token and prefill, the
 customer picking a policy vehicle, sending with no signal and the report leaving by itself
 when the signal returns, the server filing it with the files unpacked, a resend filed once,
-the webhook's signature verifying, and the desk opening it and changing its status. It also
-mints a session and hands its token and prefill to the embed, proves an expired or forged one
+the webhook's signature verifying, and the desk opening it and changing its status. It also walks the demo portal
+at `/demo/` — which embeds the *built* page, not the dev one — from sign-in to the claim number
+to the desk, mints a session and hands its token and prefill to the embed, proves an expired or forged one
 is refused, floods the server until it answers `429`, and checks the built page is served
 with its CSP, its injected config and immutable assets — with `dist/lib` and anything outside
 `dist/` unreachable.

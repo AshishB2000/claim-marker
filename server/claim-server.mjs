@@ -12,6 +12,7 @@
  *   GET   /claims/:ref/files/x  the diagram, the marked-up car and the photographs as files
  *   PATCH /claims/:ref          { status } — new, reviewing, closed
  *   GET   /health
+ *   GET   /demo/*              with DEMO=1, an insurer's portal that embeds all of this
  *   GET   /*                    the built page, when dist/ is beside this file
  *
  * Every report is validated with the page's own parser, then written under CLAIM_DIR as a
@@ -47,6 +48,7 @@
  *   WEBHOOK_SECRET   the HMAC key for X-Claim-Signature
  *   CLAIM_ORIGIN     an extra origin for CORS; * in development, unset in production
  *   RETAIN_DAYS      forget reports older than this many days; unset keeps them for ever
+ *   DEMO             1 serves the demo portal at /demo (server/demo/); its reports last a day
  *
  * No dependencies: node's own http, fs and crypto.
  */
@@ -58,6 +60,7 @@ import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verify as verifySession, sign as signSession } from './session.mjs'
 import { expired } from './retention.mjs'
+import { CUSTOMERS } from './demo/customers.mjs'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const LIB = resolve(here, '../dist/lib/claim.js')
@@ -89,6 +92,10 @@ const MAX_BODY = 40 * 1024 * 1024
 const STATUSES = ['new', 'reviewing', 'closed']
 /** null keeps every report for ever */
 const RETAIN_DAYS = Number(process.env.RETAIN_DAYS) > 0 ? Number(process.env.RETAIN_DAYS) : null
+const DEMO = process.env.DEMO === '1'
+/** whatever RETAIN_DAYS says, a stranger's demonstration is not kept beyond a day */
+const DEMO_DAYS = 1
+const DEMO_TTL = 3600
 
 // ── what an insurer must have decided before this faces the internet ──
 
@@ -101,6 +108,10 @@ if (PRODUCTION) {
     console.error(`claim-server: refusing to start with NODE_ENV=production:\n  - ${missing.join('\n  - ')}`)
     process.exit(1)
   }
+}
+if (DEMO && !SESSION_SECRET) {
+  console.error('claim-server: DEMO=1 needs SESSION_SECRET — the portal signs its visitors in with session tokens')
+  process.exit(1)
 }
 if (!ALLOWED_HOSTS.length) console.warn('claim-server: ALLOWED_HOSTS is unset — any site may embed the page. Set it in production.')
 
@@ -264,10 +275,58 @@ const CSP = [
   `connect-src 'self' data: blob: ${CONNECT.join(' ')}`,
   // the MapLibre worker is a file in /assets; three and the codecs make theirs from blobs
   "worker-src 'self' blob:",
-  `frame-ancestors ${ALLOWED_HOSTS.length ? ALLOWED_HOSTS.join(' ') : '*'}`,
+  // 'self': with DEMO=1 the portal at /demo embeds this page from this very origin
+  `frame-ancestors ${[...ALLOWED_HOSTS, ...(DEMO ? ["'self'"] : [])].join(' ') || '*'}`,
   "base-uri 'self'",
   "form-action 'self'",
 ].join('; ')
+
+/**
+ * The demo portal: an insurer's site, plain HTML, read once at startup like the page is. Its
+ * pages get a policy of their own — they run one script of their own and embed one iframe, and
+ * that is all they may ever do. `customers.mjs` stays on this side of the wire; the cards on
+ * the sign-in page are rendered from it here, because a static page cannot read a module.
+ */
+const DEMO_FILES = ['index.html', 'policy.html', 'claims.html', 'demo.css', 'demo.js']
+const DEMO_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  "frame-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ')
+const escapeHtml = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+const CUSTOMER_CARDS = Object.entries(CUSTOMERS)
+  .map(
+    ([key, c]) =>
+      `<button class="customer" data-customer="${escapeHtml(key)}"><b>${escapeHtml(c.label)}</b>` +
+      `<span class="policy">${escapeHtml(c.customer.policy)}</span><span>${escapeHtml(c.blurb)}</span></button>`,
+  )
+  .join('\n')
+const DEMO_PAGES = DEMO
+  ? Object.fromEntries(
+      DEMO_FILES.map((name) => [name, Buffer.from(readFileSync(join(here, 'demo', name), 'utf8').replace('<!--customers-->', CUSTOMER_CARDS), 'utf8')]),
+    )
+  : {}
+
+function serveDemo(req, res, parts) {
+  if (parts.length > 2) return json(res, 404, { error: 'not found' })
+  const name = parts[1] || 'index.html'
+  const file = DEMO_PAGES[name]
+  if (!file) return json(res, 404, { error: 'not found' })
+  const html = name.endsWith('.html')
+  res.writeHead(200, {
+    'content-type': typeOf(name),
+    'content-length': file.length,
+    'cache-control': 'no-cache',
+    'x-content-type-options': 'nosniff',
+    ...(html ? { 'content-security-policy': DEMO_CSP, 'referrer-policy': 'no-referrer' } : {}),
+  })
+  res.end(req.method === 'HEAD' ? undefined : file)
+}
 
 /** the two HTML pages, read once and patched with the runtime config */
 function loadPages() {
@@ -378,6 +437,8 @@ async function store(doc, clientRef, customer) {
     clientReference: clientRef,
     // who the session said this was, when it came with one: the report is on their policy
     customer,
+    // filed by a visitor to the demo portal, and swept a day later whatever RETAIN_DAYS says
+    ...(DEMO && customer?.id?.startsWith('demo-') ? { demo: true } : {}),
     receivedAt: new Date().toISOString(),
     status: 'new',
     files,
@@ -432,7 +493,7 @@ async function list() {
 async function sweep() {
   for (const r of await list()) {
     // the reference names the folder to delete; one that is not a reference names nothing
-    if (!safeRef(r.reference) || !expired(r.receivedAt, RETAIN_DAYS)) continue
+    if (!safeRef(r.reference) || !expired(r.receivedAt, r.demo ? DEMO_DAYS : RETAIN_DAYS)) continue
     await rm(folder(r.reference), { recursive: true, force: true })
     if (r.clientReference && safeRef(r.clientReference)) await rm(join(DIR, 'by-client', r.clientReference), { force: true })
     console.log(`swept ${r.reference}, received ${r.receivedAt}`)
@@ -494,21 +555,50 @@ async function mintSession(req, res) {
   const customer = typeof body?.customer === 'object' && body.customer !== null ? body.customer : {}
   const id = typeof customer.id === 'string' ? customer.id.trim() : ''
   if (!id || id.length > MAX_ID) return json(res, 400, { error: 'customer.id is required and must be at most 80 characters' })
+  json(res, 200, createSession({ ...customer, id }, body.vehicles, body.ttlSeconds ?? 3600))
+}
+
+/**
+ * A token for one customer and the prefill to hand the page along with it. Whoever calls this
+ * has already established who the customer is — with an API key from their backend, or, in the
+ * demo portal, by being a demonstration.
+ */
+function createSession(customer, vehicles, ttlSeconds) {
   const policy = typeof customer.policy === 'string' ? customer.policy.trim().slice(0, MAX_ID) : ''
-  const token = signSession({ sub: id, policy }, SESSION_SECRET, body.ttlSeconds ?? 3600)
+  const token = signSession({ sub: customer.id, policy }, SESSION_SECRET, ttlSeconds)
   const session = verifySession(token, SESSION_SECRET)
   const reporter = {}
   for (const k of ['name', 'phone', 'email']) if (typeof customer[k] === 'string' && customer[k].trim()) reporter[k] = customer[k].trim()
   if (policy) reporter.policy = policy
-  json(res, 200, {
+  return {
     token,
     expiresAt: new Date(session.exp * 1000).toISOString(),
     // ready to hand to ClaimMarker.mount({ prefill }); the page parses it again anyway
     prefill: {
       ...(Object.keys(reporter).length ? { reporter } : {}),
-      ...(Array.isArray(body.vehicles) ? { vehicles: body.vehicles.slice(0, 6) } : {}),
+      ...(Array.isArray(vehicles) ? { vehicles: vehicles.slice(0, 6) } : {}),
     },
-  })
+  }
+}
+
+/**
+ * The demo portal signs a visitor in as one of three sample customers: the same minting the
+ * insurer's backend does after authenticating someone, minus the network hop, and minus any
+ * authentication — there is nobody to authenticate. Each sign-in gets an id of its own, so two
+ * visitors who pick the same customer never read each other's reports.
+ */
+async function demoLogin(req, res) {
+  let body
+  try {
+    body = JSON.parse(await readBody(req))
+  } catch (e) {
+    return json(res, e.status ?? 400, { error: e.status ? e.message : 'the body is not JSON' })
+  }
+  const key = typeof body?.customer === 'string' ? body.customer : ''
+  const who = Object.hasOwn(CUSTOMERS, key) ? CUSTOMERS[key] : null
+  if (!who) return json(res, 404, { error: `no such demo customer; they are ${Object.keys(CUSTOMERS).join(', ')}` })
+  const id = `demo-${key}-${randomBytes(6).toString('hex')}`
+  json(res, 200, createSession({ ...who.customer, id }, who.vehicles, DEMO_TTL))
 }
 
 async function receive(req, res) {
@@ -543,6 +633,20 @@ async function receive(req, res) {
   announce(receipt, doc, base).catch(() => {})
 }
 
+/**
+ * Who may read reports: the desk token reads every one of them. A visitor to the demo portal
+ * reads what they filed themselves, with the session token that filed it, and nothing else —
+ * the demo is public, and one stranger's photographs are not a demonstration for the next.
+ * Returns true for the desk, the customer's id for a demo visitor, or null.
+ */
+function deskScope(req) {
+  if (authorised(req, DESK_TOKEN)) return true
+  if (!DEMO || !SESSION_SECRET) return null
+  const session = verifySession(bearer(req), SESSION_SECRET)
+  return session?.sub.startsWith('demo-') ? session.sub : null
+}
+const inScope = (receipt, scope) => scope === true || receipt.customer?.id === scope
+
 async function route(req, res) {
   const url = new URL(req.url, 'http://x')
   const parts = url.pathname.split('/').filter(Boolean)
@@ -555,19 +659,37 @@ async function route(req, res) {
     return mintSession(req, res)
   }
 
+  if (parts[0] === 'demo') {
+    if (!DEMO) return json(res, 404, { error: 'not found' })
+    if (parts[1] === 'login') {
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+      // minting is public here, so the limit is the only thing between it and a flood
+      if (rateLimited(ipOf(req))) return tooMany(res)
+      return demoLogin(req, res)
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' })
+    // /demo without the slash would resolve the portal's own links against the root
+    if (parts.length === 1 && !url.pathname.endsWith('/')) return res.writeHead(302, { location: '/demo/' }).end()
+    return serveDemo(req, res, parts)
+  }
+
   if (parts[0] === 'claims') {
     // the limit comes before the auth: a flood of bad tokens is still a flood
     if (parts.length === 1 && req.method === 'POST') {
       if (rateLimited(ipOf(req))) return tooMany(res)
       return receive(req, res)
     }
-    if (!authorised(req, DESK_TOKEN)) return json(res, 401, { error: 'a bearer token is required' })
-    if (parts.length === 1 && req.method === 'GET') return json(res, 200, { claims: await list() })
+    const scope = deskScope(req)
+    if (!scope) return json(res, 401, { error: 'a bearer token is required' })
+    if (parts.length === 1 && req.method === 'GET') return json(res, 200, { claims: (await list()).filter((r) => inScope(r, scope)) })
 
     const ref = parts[1]
     if (!ref || !safeRef(ref) || !existsSync(folder(ref))) return json(res, 404, { error: 'no such report' })
+    const receipt = await receiptOf(ref)
+    // someone else's report is not "forbidden", it is not there
+    if (!inScope(receipt, scope)) return json(res, 404, { error: 'no such report' })
 
-    if (parts.length === 2 && req.method === 'GET') return json(res, 200, { ...(await receiptOf(ref)), claim: await claimOf(ref) })
+    if (parts.length === 2 && req.method === 'GET') return json(res, 200, { ...receipt, claim: await claimOf(ref) })
     if (parts.length === 2 && req.method === 'PATCH') {
       let body
       try {
@@ -576,13 +698,12 @@ async function route(req, res) {
         return json(res, 400, { error: 'the body is not JSON' })
       }
       if (!STATUSES.includes(body.status)) return json(res, 400, { error: `status must be one of ${STATUSES.join(', ')}` })
-      const receipt = { ...(await receiptOf(ref)), status: body.status, updatedAt: new Date().toISOString() }
-      await writeFile(join(folder(ref), 'receipt.json'), JSON.stringify(receipt, null, 2))
-      return json(res, 200, receipt)
+      const filed = { ...receipt, status: body.status, updatedAt: new Date().toISOString() }
+      await writeFile(join(folder(ref), 'receipt.json'), JSON.stringify(filed, null, 2))
+      return json(res, 200, filed)
     }
     if (parts.length === 4 && parts[2] === 'files' && req.method === 'GET') {
       const name = parts[3]
-      const receipt = await receiptOf(ref)
       if (!Object.values(receipt.files).includes(name)) return json(res, 404, { error: 'no such file' })
       const bytes = await readFile(join(folder(ref), name))
       res.writeHead(200, { 'content-type': typeOf(name), 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff', ...corsHeaders() })
@@ -596,7 +717,7 @@ async function route(req, res) {
 }
 
 await mkdir(DIR, { recursive: true })
-if (RETAIN_DAYS) {
+if (RETAIN_DAYS || DEMO) {
   const sweepNow = () => sweep().catch((e) => console.error(`sweep: ${e.message}`))
   sweepNow()
   // unref: a timer is no reason to keep the process alive
@@ -614,6 +735,7 @@ createServer((req, res) => {
     SESSION_SECRET ? 'sessions on' : CLAIM_TOKEN ? 'POST needs a token' : 'POST is open',
     `${RATE_LIMIT}/min per IP`,
     RETAIN_DAYS ? `reports kept ${RETAIN_DAYS} days` : 'reports kept for ever',
+    ...(DEMO ? ['the demo portal at /demo/'] : []),
   ]
   if (WEBHOOK_URL) bits.push(`announcing to ${WEBHOOK_URL}`)
   console.log(`claim-server on http://localhost:${PORT} — ${bits.join(', ')}`)

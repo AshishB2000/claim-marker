@@ -24,15 +24,17 @@ npm run server         # the whole product on 8788: the page, the desk and the A
 ```
 
 `npm run server` serves `dist/` as well as the API, so http://localhost:8788 is the customer's
-page, `/adjuster.html` the desk and `/claims` the API, on one origin with no CORS. `docker
+page, `/adjuster.html` the desk, `/claims` the API and — with `DEMO=1` — `/demo/` the demo
+insurer portal, on one origin with no CORS. `docker
 compose up --build` is the same thing in a container. Docker is **not installed on this
 machine**: the image cannot be built or verified here, only the server itself.
 
 `node scripts/integration-smoke.mjs` needs `npm run dev` running and one build done: it
 starts its own claim server, webhook receiver and host page and proves sessions, the embed,
 prefill, the offline outbox, the server, the rate limit, the served page's CSP, the webhook
-signature and the desk. Run it for anything touching `src/config.ts`, `src/app/submit.ts`,
-`src/claim/prefill.ts`, `public/embed.js`, `server/` or `src/adjuster/`.
+signature, the desk, retention and the demo portal (a second, shorter walk against the **built**
+page the claim server serves). Run it for anything touching `src/config.ts`,
+`src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`, `server/` or `src/adjuster/`.
 
 Two end-to-end scripts need `npm run dev` running in another shell and reach the internet
 (map tiles, the geocoder):
@@ -44,6 +46,10 @@ node scripts/shoot.mjs     # regenerates docs/*.png and asserts the attachments 
 
 `node scripts/assist-smoke.mjs` starts its own stub endpoint and its own dev server on 5174,
 so it needs no API key: it covers this page's half of the assistant contract, all four tasks.
+
+`node scripts/record-demo.mjs` is a one-off: it starts its own `DEMO=1` server, walks the demo
+portal and writes `docs/demo.gif` (needs ffmpeg; without it, a `.webm`). Run it when that
+journey changes.
 
 `node scripts/live-check.mjs <url>` checks a **deployed** instance from outside with plain
 `fetch` — no browser — using the `API_KEY` and `DESK_TOKEN` it was deployed with: the page and
@@ -165,6 +171,17 @@ days, now)` is pure and tested; `sweep()` in the server deletes the folder and i
 the default for an insurer's own deployment. A public instance that keeps strangers'
 photographs for ever is a liability.
 
+**The demo portal is the insurer's site, not ours** (`server/demo/`, `DEMO=1`, served at
+`/demo/`). Plain HTML and one script — the point is that the page embeds into another stack —
+with the sign-in cards rendered into `index.html` at startup from `customers.mjs`. `/demo/login`
+mints through the same `createSession` as `POST /sessions`, with a fresh `demo-<who>-<random>`
+id per sign-in. Three rules it must keep: a demo receipt is tagged `demo: true` and swept after
+a day whatever `RETAIN_DAYS` says; a demo visitor's session reads only the reports filed under
+its own id (`deskScope`), while `DESK_TOKEN` reads them all; and the production guard is
+untouched by `DEMO`. Never put `DEMO=1` on an instance taking real claims — anyone may mint a
+session there. Config from the page's *own* origin is always trusted (`originAllowed`), which is
+how the portal's same-origin iframe is configured at all.
+
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
 and friends directly; those are only the defaults `config` starts from. `main.tsx` awaits
@@ -280,7 +297,9 @@ src/vehicles/     model loading + paint re-authoring, body previews, the paint p
 src/marker/       the 3D damage marker
 src/assist/       the optional assistant: the wire contract and its parsers, the metric frame, the client
 src/zones.ts models.ts schema.ts geo.ts geocode.ts   shared
-server/           the reference claim server and its session tokens (no dependencies)
+server/           the reference claim server, its session tokens and retention (no dependencies)
+server/demo/      the demo insurer portal at /demo/ with DEMO=1: plain HTML, no build step
+fly.toml render.yaml .env.example   the public deployment, unverified — no account, no Docker here
 Dockerfile docker-compose.yml   the same thing as one image, page included
 public/embed.js   the host-side script that mounts the page in an iframe
 docs/claim-1.schema.json   the published JSON Schema, tested against the parser
