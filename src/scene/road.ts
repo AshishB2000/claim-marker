@@ -17,6 +17,11 @@ const OVERPASS_URL: string = import.meta.env.VITE_ROADS_URL ?? 'https://overpass
 /** metres around the incident that the Overpass query asks for */
 export const ROAD_RADIUS = 60
 
+/** metres from a way's centre line for the car to count as standing on it */
+export const ALIGN_METRES = 3
+/** degrees a car may already be off the road's line and still be "nearly lined up with it" */
+export const ALIGN_DEGREES = 30
+
 /** metres a way or a control node must be within to count as *at* the junction, not just nearby */
 const JUNCTION_RADIUS = 25
 
@@ -196,6 +201,30 @@ export function roadQuery(at: LngLat): string {
     `(way[highway]${around};node[highway~"^(traffic_signals|stop|give_way|crossing)$"]${around};);` +
     `out body; >; out skel qt;`
   )
+}
+
+/**
+ * The compass bearing of the nearest way's line under `position` — but only offered when the
+ * car is already close to that line and already roughly pointing along it, so a car mid-turn
+ * or one that is actually off the road gets no suggestion. "Along it" ignores direction: a car
+ * facing either way down a two-way street is lined up, so the segment's bearing and its
+ * reciprocal are both checked and the nearer of the two to `heading` is what is returned.
+ * Reuses `wayDistance`, the same point-to-segment maths `parseRoad` uses to find the nearest
+ * way, so there is one definition of "distance to a road" in this file, not two.
+ */
+export function alignToRoad(ways: FeatureCollection<LineString> | null, position: LngLat, heading: number): number | null {
+  if (!ways) return null
+  let nearest: { dist: number; segBearing: number } | null = null
+  for (const f of ways.features) {
+    const { dist, segBearing } = wayDistance(position, f.geometry.coordinates as LngLat[])
+    if (!nearest || dist < nearest.dist) nearest = { dist, segBearing }
+  }
+  if (!nearest || nearest.dist > ALIGN_METRES) return null
+  const reciprocal = normalizeBearing(nearest.segBearing + 180)
+  const forwardGap = bearingGap(heading, nearest.segBearing)
+  const backGap = bearingGap(heading, reciprocal)
+  if (Math.min(forwardGap, backGap) > ALIGN_DEGREES) return null
+  return forwardGap <= backGap ? nearest.segBearing : reciprocal
 }
 
 function cacheKey(at: LngLat): string {

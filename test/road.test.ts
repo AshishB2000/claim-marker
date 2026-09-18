@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { ROAD_RADIUS, parseRoad, roadQuery } from '../src/scene/road'
-import type { LngLat } from '../src/geo'
+import type { FeatureCollection, LineString } from 'geojson'
+import { ALIGN_DEGREES, ALIGN_METRES, ROAD_RADIUS, alignToRoad, parseRoad, roadQuery } from '../src/scene/road'
+import { destination, type LngLat } from '../src/geo'
 
 /**
  * The incident point every fixture is built around. Degrees are treated as metres-ish at the
@@ -209,5 +210,52 @@ describe('roadQuery', () => {
     expect(q).toContain('way[highway]')
     expect(q).toContain('traffic_signals|stop|give_way|crossing')
     expect(q.trim().endsWith('out body; >; out skel qt;')).toBe(true)
+  })
+})
+
+describe('alignToRoad', () => {
+  const wayFC = (...lines: LngLat[][]): FeatureCollection<LineString> => ({
+    type: 'FeatureCollection',
+    features: lines.map((coordinates) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } })),
+  })
+
+  // an east–west way through the origin: bearing() reads two points on the same
+  // latitude as due east, 90°
+  const eastWest = wayFC([
+    [-0.001, 0],
+    [0.001, 0],
+  ])
+
+  it('a car on the line and roughly along it gets the way\'s bearing', () => {
+    expect(alignToRoad(eastWest, [0, 0], 90 - (ALIGN_DEGREES - 5))).toBeCloseTo(90, 3)
+  })
+
+  it('the same car facing the other way gets the reciprocal, not the forward bearing', () => {
+    expect(alignToRoad(eastWest, [0, 0], 270 + (ALIGN_DEGREES - 5))).toBeCloseTo(270, 3)
+  })
+
+  it('a car off the line is null', () => {
+    const off = destination([0, 0], 0, ALIGN_METRES + 7) // well north of the line
+    expect(alignToRoad(eastWest, off, 90)).toBeNull()
+  })
+
+  it('a car on the line but broadside is null', () => {
+    expect(alignToRoad(eastWest, [0, 0], 90 - (ALIGN_DEGREES + 60))).toBeNull()
+  })
+
+  it('no ways is null', () => {
+    expect(alignToRoad(null, [0, 0], 90)).toBeNull()
+  })
+
+  it('of two ways under the car, the nearer one wins even when the farther one matches the heading better', () => {
+    const p: LngLat = [0.01, 0.01]
+    // through p, bearing ~70°
+    const near = [destination(p, 250, 5), destination(p, 70, 5)]
+    // 2 m north of p, bearing ~92° — a closer match to the 92° heading below, but farther away
+    const q = destination(p, 0, 2)
+    const far = [destination(q, 272, 5), destination(q, 92, 5)]
+    const result = alignToRoad(wayFC(near, far), p, 92)
+    expect(result).not.toBeNull()
+    expect(result!).toBeCloseTo(70, 0)
   })
 })

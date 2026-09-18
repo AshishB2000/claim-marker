@@ -11,8 +11,8 @@
  */
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import './worker'
-import { GeoJSONSource, Map as MapLibreMap, Marker, NavigationControl, ScaleControl, type LngLatLike } from 'maplibre-gl'
-import type { Feature } from 'geojson'
+import { GeoJSONSource, Map as MapLibreMap, Marker, NavigationControl, ScaleControl, type ExpressionSpecification, type LngLatLike } from 'maplibre-gl'
+import type { Feature, FeatureCollection } from 'geojson'
 import { bearing, destination, type LngLat } from '../geo'
 import { plural, translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
@@ -35,6 +35,8 @@ export type MapSceneProps = {
   style: MapStyle
   /** only vehicles with a position are drawn */
   vehicles: ClaimVehicle[]
+  /** the ways around the incident, drawn as a road under the cars; on the two real-map grounds only */
+  roads?: FeatureCollection | null
   impact: LngLat | null
   selected: string | null
   /** false on the review page: no handles, no dragging, no map controls */
@@ -69,6 +71,28 @@ const fromLL = (p: { lng: number; lat: number }): LngLat => [p.lng, p.lat]
 
 /** ground metres per screen pixel at this latitude and zoom, for 512 px tiles */
 const metresPerPixel = (lat: number, zoom: number) => (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** zoom)
+
+/** the map's own minZoom/maxZoom, below — the range the road layers' width has to stay correct across */
+const ROAD_ZOOM_MIN = 16
+const ROAD_ZOOM_MAX = 21
+
+/** a lane's width in metres; OSM's `lanes` tag when the way has one, two lanes otherwise */
+const roadMetres: ExpressionSpecification = ['*', ['coalesce', ['get', 'lanes'], 2], 3.5]
+
+/**
+ * A road drawn in real metres, not screen pixels. A constant pixel width would read as a
+ * hairline at street zoom and swallow the cars zoomed in on them, because the ground one
+ * pixel covers halves with every zoom level the map goes up. `interpolate`/`exponential` base
+ * 2 on `['zoom']` doubles the same way, so two stops a zoom level apart — in pixels-per-metre
+ * at the incident's own latitude — reproduce that exact curve at every zoom in between.
+ */
+function roadLineWidth(lat: number, metres: ExpressionSpecification): ExpressionSpecification {
+  const pxPerMetre = (zoom: number) => 1 / metresPerPixel(lat, zoom)
+  return ['*', metres, ['interpolate', ['exponential', 2], ['zoom'], ROAD_ZOOM_MIN, pxPerMetre(ROAD_ZOOM_MIN), ROAD_ZOOM_MAX, pxPerMetre(ROAD_ZOOM_MAX)]]
+}
+
+/** the road is a real thing, so it belongs only on the two real-map grounds, never a drawn one */
+const roadsVisible = (style: MapStyle): 'visible' | 'none' => (style === 'satellite' || style === 'streets' ? 'visible' : 'none')
 
 const el = (className: string, color?: string) => {
   const d = document.createElement('div')
@@ -182,6 +206,31 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
 
     map.on('style.load', () => {
       map.addImage('cm-arrow', arrowImage(), { sdf: true })
+
+      // the road under the cars: a dark casing and a white core, added — hence drawn — before
+      // (below) the travel paths, so a path always reads as drawn over the road, never under
+      // it. style.load fires again on every ground switch, a full style replacement rather
+      // than a diff, so this handler has to pick the right initial visibility and geometry
+      // itself each time rather than relying on whatever an effect set on the previous style.
+      map.addSource('roads', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      const roadVisibility = roadsVisible(state.style)
+      const roadLat = init.center[1]
+      map.addLayer({
+        id: 'roads-casing',
+        type: 'line',
+        source: 'roads',
+        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: roadVisibility },
+        paint: { 'line-color': '#3a4150', 'line-width': roadLineWidth(roadLat, roadMetres), 'line-opacity': 0.9 },
+      })
+      map.addLayer({
+        id: 'roads-core',
+        type: 'line',
+        source: 'roads',
+        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: roadVisibility },
+        paint: { 'line-color': '#ffffff', 'line-width': roadLineWidth(roadLat, ['*', roadMetres, 0.6]), 'line-opacity': 0.85 },
+      })
+      pushRoads(map, latest.current.roads)
+
       map.addSource('paths', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       map.addSource('heads', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       map.addLayer({
@@ -272,6 +321,18 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     // already has everything the handler adds
     s.map.setStyle(styleFor(props.style, [lng, lat]), { diff: false })
   }, [props.style, lng, lat])
+
+  // ── the road is only real on the two real-map grounds ────────────────
+  // The style.load handler above already sets the right visibility whenever the style itself
+  // reloads (which every ground switch does); this effect is what applies it the rest of the
+  // time, so it degrades gracefully if the layers do not exist yet.
+  useEffect(() => {
+    const s = live.current
+    if (!s) return
+    const visibility = roadsVisible(props.style)
+    if (s.map.getLayer('roads-casing')) s.map.setLayoutProperty('roads-casing', 'visibility', visibility)
+    if (s.map.getLayer('roads-core')) s.map.setLayoutProperty('roads-core', 'visibility', visibility)
+  }, [props.style])
 
   // ── the location moved: recentre and move the floating origin ───────
   useEffect(() => {
@@ -392,6 +453,15 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     s.cars.setPoses(latest.current.poses ?? posesOf(vehicles))
   }, [vehicles, selected, interactive, lang])
 
+  // ── the road under the cars, from OpenStreetMap ──────────────────────
+  // The style.load handler pushes the current roads once when the layers are (re)created;
+  // this is what pushes a later change, the same way the vehicles effect above pushes paths.
+  const { roads } = props
+  useEffect(() => {
+    const s = live.current
+    if (s?.styleReady) pushRoads(s.map, roads)
+  }, [roads])
+
   // ── playback: the cars follow the frame, the handles step aside ─────
   const { poses } = props
   useEffect(() => {
@@ -471,6 +541,12 @@ function pushGeometry(map: MapLibreMap, vehicles: ClaimVehicle[]) {
   const headSource = map.getSource('heads')
   if (pathSource instanceof GeoJSONSource) pathSource.setData({ type: 'FeatureCollection', features: paths })
   if (headSource instanceof GeoJSONSource) headSource.setData({ type: 'FeatureCollection', features: heads })
+}
+
+/** the road under the cars, exactly as the ways lookup returned it; decoration, never picked */
+function pushRoads(map: MapLibreMap, roads: FeatureCollection | null | undefined) {
+  const source = map.getSource('roads')
+  if (source instanceof GeoJSONSource) source.setData(roads ?? { type: 'FeatureCollection', features: [] })
 }
 
 /**

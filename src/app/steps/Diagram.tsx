@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { FeatureCollection, LineString } from 'geojson'
 import { useClaim } from '../../claim/store'
 import { assistOn, buildDiagram, writeStatement } from '../../assist/client'
 import type { LngLat } from '../../geo'
@@ -8,15 +9,28 @@ import type { Key } from '../../i18n'
 import { useLang, useT } from '../../i18n/useT'
 import { MapScene, type MapSceneHandle, type TapMode } from '../../map/MapScene'
 import { usePlayback } from '../../map/usePlayback'
+import { alignToRoad } from '../../scene/road'
 import { zoneById } from '../../zones'
 import { Describe } from '../Describe'
 import { Icon } from '../icons'
 
 type Tap = { kind: 'waypoint'; id: string } | { kind: 'impact' } | null
+/** a suggestion offered after a drop: turn this vehicle to this bearing to line it up with the road */
+type Align = { id: string; bearing: number } | null
+
+/** worth acting on only past a couple of degrees, so a car already lined up gets no chip */
+const ALIGN_OFFER_DEGREES = 2
+
+/** the smaller of the two ways round the compass from `a` to `b`, 0–180° */
+const angleDiff = (a: number, b: number) => {
+  const d = Math.abs(a - b) % 360
+  return d > 180 ? 360 - d : d
+}
 
 export function Diagram() {
   const claim = useClaim((s) => s.claim)
   const autoDamage = useClaim((s) => s.autoDamage)
+  const roadWays = useClaim((s) => s.roadWays)
   const placeVehicles = useClaim((s) => s.placeVehicles)
   const grabVehicle = useClaim((s) => s.grabVehicle)
   const dragVehicle = useClaim((s) => s.dragVehicle)
@@ -33,6 +47,9 @@ export function Diagram() {
   const lang = useLang()
   const [selected, setSelected] = useState<string | null>(claim.vehicles[0]?.id ?? null)
   const [tap, setTap] = useState<Tap>(null)
+  // offered after a drop, never after a slider or the turn handle: those are already a
+  // deliberate choice of heading, not a car left wherever the drag happened to end
+  const [align, setAlign] = useState<Align>(null)
   // the one-line hint on the map goes once the customer has moved or turned anything
   const [touched, setTouched] = useState(() => claim.vehicles.some((v) => v.path.length > 1))
   const map = useRef<MapSceneHandle>(null)
@@ -92,6 +109,23 @@ export function Diagram() {
   const select = (id: string | null) => {
     setSelected(id)
     if (tap?.kind === 'waypoint' && tap.id !== id) setTap(null)
+    if (align && align.id !== id) setAlign(null)
+  }
+
+  /**
+   * A drag just ended: if the road under where it landed runs close to the way the car is
+   * already facing, offer to square it up exactly. Only the heading is ever touched here —
+   * moving the car for the customer would be putting words in their mouth about where it
+   * actually stopped, which is theirs to say, not the road's.
+   */
+  const onDrop = (id: string) => {
+    dropVehicle(id)
+    const v = useClaim.getState().claim.vehicles.find((x) => x.id === id)
+    // the store keeps `roadWays` untyped past "GeoJSON" since it only ever draws it; every way
+    // in it is a LineString, straight off `RoadResult.ways` in src/scene/road.ts
+    const ways = roadWays as FeatureCollection<LineString> | null
+    const bearing = v?.position ? alignToRoad(ways, v.position, v.heading) : null
+    setAlign(bearing !== null && v && angleDiff(bearing, v.heading) > ALIGN_OFFER_DEGREES ? { id, bearing } : null)
   }
 
   const banner =
@@ -112,6 +146,7 @@ export function Diagram() {
           center={center}
           style={claim.incident.surface}
           vehicles={claim.vehicles}
+          roads={roadWays}
           impact={claim.impact}
           selected={selected}
           lang={lang}
@@ -121,10 +156,11 @@ export function Diagram() {
           onSelect={select}
           onGrab={(id) => {
             setTouched(true)
+            setAlign(null)
             grabVehicle(id)
           }}
           onDrag={dragVehicle}
-          onDrop={dropVehicle}
+          onDrop={onDrop}
           onTurn={(id, heading) => {
             setTouched(true)
             turnVehicle(id, heading)
@@ -232,6 +268,22 @@ export function Diagram() {
                           ))}
                       </div>
                       <p className="mt-1 text-xs text-slate-500">{t('scene.facing.note')}</p>
+                      {align?.id === v.id && (
+                        <div className="mt-2 flex items-center gap-1.5">
+                          <button
+                            className="chip"
+                            onClick={() => {
+                              turnVehicle(v.id, align.bearing)
+                              setAlign(null)
+                            }}
+                          >
+                            <Icon.rotate /> {t('scene.road.align')}
+                          </button>
+                          <button className="btn btn-ghost btn-sm" onClick={() => setAlign(null)} aria-label={t('scene.road.dismiss')}>
+                            <Icon.x />
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div>
                       <span className="label">{t('scene.path.label')}</span>

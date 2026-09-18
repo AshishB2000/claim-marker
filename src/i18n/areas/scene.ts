@@ -57,6 +57,10 @@ export const en = {
   'scene.path.tap': 'Tap it on the map',
   'scene.path.clear': 'Clear path',
 
+  // ── offered after a drop, when the way it landed on runs close to the car's own heading
+  'scene.road.align': 'Line it up with the road',
+  'scene.road.dismiss': 'Dismiss',
+
   // ── the point of impact
   'scene.impact.title': 'Point of impact',
   'scene.impact.found': 'Found',
@@ -239,6 +243,9 @@ export const es: Record<keyof typeof en, string> = {
   'scene.path.bend': 'Agregar una curva',
   'scene.path.tap': 'Tócalo en el mapa',
   'scene.path.clear': 'Borrar recorrido',
+
+  'scene.road.align': 'Alinearlo con la vía',
+  'scene.road.dismiss': 'Descartar',
 
   'scene.impact.title': 'Punto de impacto',
   'scene.impact.found': 'Encontrado',
