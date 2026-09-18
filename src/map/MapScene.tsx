@@ -47,6 +47,12 @@ export type MapSceneProps = {
   vehicles: ClaimVehicle[]
   /** the ways around the incident, drawn as a road under the cars; on the two real-map grounds only */
   roads?: FeatureCollection | null
+  /**
+   * The building footprints around the incident, extruded to the `height` property each one
+   * carries. Flat footprints under everything while the map is flat, a city once a cinematic
+   * replay tilts the camera; like the road, only on the two real-map grounds.
+   */
+  buildings?: FeatureCollection | null
   impact: LngLat | null
   selected: string | null
   /** false on the review page: no handles, no dragging, no map controls */
@@ -129,8 +135,8 @@ function roadLineWidth(lat: number, metres: ExpressionSpecification): Expression
   return ['interpolate', ['exponential', 2], ['zoom'], ROAD_ZOOM_MIN, px(ROAD_ZOOM_MIN), ROAD_ZOOM_MAX, px(ROAD_ZOOM_MAX)]
 }
 
-/** the road is a real thing, so it belongs only on the two real-map grounds, never a drawn one */
-const roadsVisible = (style: MapStyle): 'visible' | 'none' => (style === 'satellite' || style === 'streets' ? 'visible' : 'none')
+/** the road and the buildings are real things, so they belong only on the two real-map grounds */
+const onRealGround = (style: MapStyle): 'visible' | 'none' => (style === 'satellite' || style === 'streets' ? 'visible' : 'none')
 
 const el = (className: string, color?: string) => {
   const d = document.createElement('div')
@@ -264,24 +270,48 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       // it. style.load fires again on every ground switch, a full style replacement rather
       // than a diff, so this handler has to pick the right initial visibility and geometry
       // itself each time rather than relying on whatever an effect set on the previous style.
+      const groundVisibility = onRealGround(state.style)
+
+      // the city around the crash, added — hence drawn — first of everything this handler
+      // adds, so the road, the paths, the markers' cars and the shockwave are all over it.
+      // Flat map, flat footprint; it is only a city when the cinematic replay tilts the camera.
+      //
+      // The grey is light but deliberately short of white: everything the replay draws over it
+      // — the shockwave's ring, the travel paths' flow line, the labels — is white, and a city
+      // of near-white blocks would swallow all three. At 0.85 over the brightest imagery there
+      // is, no channel of this colour reaches 200, so a wall never passes for one of them.
+      map.addSource('buildings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addLayer({
+        id: 'buildings',
+        type: 'fill-extrusion',
+        source: 'buildings',
+        layout: { visibility: groundVisibility },
+        paint: {
+          'fill-extrusion-color': '#b4b8bf',
+          'fill-extrusion-opacity': 0.85,
+          'fill-extrusion-height': ['get', 'height'],
+          'fill-extrusion-base': 0,
+        },
+      })
+      pushCollection(map, 'buildings', latest.current.buildings)
+
       map.addSource('roads', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-      const roadVisibility = roadsVisible(state.style)
       const roadLat = init.center[1]
       map.addLayer({
         id: 'roads-casing',
         type: 'line',
         source: 'roads',
-        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: roadVisibility },
+        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: groundVisibility },
         paint: { 'line-color': '#3a4150', 'line-width': roadLineWidth(roadLat, roadMetres), 'line-opacity': 0.9 },
       })
       map.addLayer({
         id: 'roads-core',
         type: 'line',
         source: 'roads',
-        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: roadVisibility },
+        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: groundVisibility },
         paint: { 'line-color': '#ffffff', 'line-width': roadLineWidth(roadLat, ['*', roadMetres, 0.6]), 'line-opacity': 0.85 },
       })
-      pushRoads(map, latest.current.roads)
+      pushCollection(map, 'roads', latest.current.roads)
 
       // the other account's travel paths: dashed, same colour family, under the first
       // account's own paths and heads so a ghost never reads as the primary story
@@ -388,16 +418,17 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     s.map.setStyle(styleFor(props.style, [lng, lat]), { diff: false })
   }, [props.style, lng, lat])
 
-  // ── the road is only real on the two real-map grounds ────────────────
+  // ── the road and the buildings are only real on the two real-map grounds ─
   // The style.load handler above already sets the right visibility whenever the style itself
   // reloads (which every ground switch does); this effect is what applies it the rest of the
   // time, so it degrades gracefully if the layers do not exist yet.
   useEffect(() => {
     const s = live.current
     if (!s) return
-    const visibility = roadsVisible(props.style)
-    if (s.map.getLayer('roads-casing')) s.map.setLayoutProperty('roads-casing', 'visibility', visibility)
-    if (s.map.getLayer('roads-core')) s.map.setLayoutProperty('roads-core', 'visibility', visibility)
+    const visibility = onRealGround(props.style)
+    for (const id of ['buildings', 'roads-casing', 'roads-core']) {
+      if (s.map.getLayer(id)) s.map.setLayoutProperty(id, 'visibility', visibility)
+    }
   }, [props.style])
 
   // ── the location moved: recentre and move the floating origin ───────
@@ -522,11 +553,15 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
   // ── the road under the cars, from OpenStreetMap ──────────────────────
   // The style.load handler pushes the current roads once when the layers are (re)created;
   // this is what pushes a later change, the same way the vehicles effect above pushes paths.
-  const { roads } = props
+  const { roads, buildings } = props
   useEffect(() => {
     const s = live.current
-    if (s?.styleReady) pushRoads(s.map, roads)
+    if (s?.styleReady) pushCollection(s.map, 'roads', roads)
   }, [roads])
+  useEffect(() => {
+    const s = live.current
+    if (s?.styleReady) pushCollection(s.map, 'buildings', buildings)
+  }, [buildings])
 
   // ── ghosts: the other account's cars and paths, decoration only ──────
   const { ghosts } = props
@@ -680,10 +715,10 @@ function pushGeometry(map: MapLibreMap, vehicles: ClaimVehicle[]) {
   if (headSource instanceof GeoJSONSource) headSource.setData({ type: 'FeatureCollection', features: heads })
 }
 
-/** the road under the cars, exactly as the ways lookup returned it; decoration, never picked */
-function pushRoads(map: MapLibreMap, roads: FeatureCollection | null | undefined) {
-  const source = map.getSource('roads')
-  if (source instanceof GeoJSONSource) source.setData(roads ?? { type: 'FeatureCollection', features: [] })
+/** the road, or the buildings, exactly as the lookup returned them; decoration, never picked */
+function pushCollection(map: MapLibreMap, id: string, data: FeatureCollection | null | undefined) {
+  const source = map.getSource(id)
+  if (source instanceof GeoJSONSource) source.setData(data ?? { type: 'FeatureCollection', features: [] })
 }
 
 /** the other account's travel paths — no arrowhead, no flow animation: decoration, never picked */

@@ -32,6 +32,7 @@ export function Diagram() {
   const claim = useClaim((s) => s.claim)
   const autoDamage = useClaim((s) => s.autoDamage)
   const roadWays = useClaim((s) => s.roadWays)
+  const buildings = useClaim((s) => s.buildings)
   // only the policyholder invites, only when there is somebody to invite, and only when there
   // is a server to make the link: the other driver's own page must never offer this
   const canInvite = !!config.submitUrl && claim.reporter.party === 'policyholder' && othersOf(claim).length > 0
@@ -166,6 +167,7 @@ export function Diagram() {
           style={claim.incident.surface}
           vehicles={claim.vehicles}
           roads={roadWays}
+          buildings={buildings}
           impact={claim.impact}
           selected={selected}
           lang={lang}

@@ -146,7 +146,7 @@ export function Where() {
         source: SOURCE,
         fetchedAt: new Date().toISOString(),
       })
-      sceneLookedUp(key, context, utcOffset, fill, r?.ways ?? null)
+      sceneLookedUp(key, context, utcOffset, fill, r)
     })()
     return () => ac.abort()
   }, [key, contextKey, incident.location, incident.at, sceneLookedUp])

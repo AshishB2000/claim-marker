@@ -138,8 +138,9 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
  * answer: measured from here, one request in three hangs past thirty seconds. A build gate
  * that depends on somebody else's spare capacity is not a gate. The fixture below is a real
  * answer, recorded from the live mirror for the coordinates this walk uses, so everything the
- * page does with it — the parse, the store, the layer, the words in the document — is proved
- * against real data. The live endpoint itself is proved by the page and by live-check.
+ * page does with it — the parse, the store, the layers, the words in the document — is proved
+ * against real data, the roads and the building footprints alike (the file says which half was
+ * recorded when). The live endpoint itself is proved by the page and by live-check.
  */
 const OVERPASS_FIXTURE = readFileSync(new URL('./fixtures/overpass-times-square.json', import.meta.url), 'utf8')
 let overpassHits = 0
@@ -559,6 +560,29 @@ await page.waitForFunction(() => !document.querySelector('.maplibregl-map').clas
 if ((await page.locator('.mk-car').count()) !== 3) fail('the cars did not come back after playback')
 ok('map: playback ran and handed the map back')
 
+// the city around the crash: the buildings the same Overpass answer carried, extruded under
+// everything else. The flat map shows them as flat footprints; the tilt below is the point.
+const city = await page.evaluate(async () => {
+  const map = window.__map
+  if (!map.getLayer('buildings')) return null
+  const fc = await map.getSource('buildings').getData()
+  return fc.features.map((f) => {
+    const ring = f.geometry.coordinates[0]
+    const n = ring.length - 1
+    let x = 0
+    let y = 0
+    for (let i = 0; i < n; i++) {
+      x += ring[i][0]
+      y += ring[i][1]
+    }
+    return { at: [x / n, y / n], height: f.properties.height }
+  })
+})
+if (!city) fail('the map has no building-extrusion layer')
+if (city.length <= 20) fail(`Times Square should be full of buildings; the layer holds ${city.length}`)
+if (!city.every((b) => b.height > 0)) fail(`a building has no height to extrude to: ${JSON.stringify(city.filter((b) => !(b.height > 0)))}`)
+ok(`map: ${city.length} building footprints on the map, the tallest ${Math.max(...city.map((b) => b.height))} m`)
+
 // watch it: the camera opens up and chases, the shockwave rings the impact, and the diagram
 // comes back exactly as it was — flat, north-up, every marker where it stood
 const carsBefore = await page.evaluate(() => [...document.querySelectorAll('.mk-car')].map((e) => [e.getBoundingClientRect().left, e.getBoundingClientRect().top]))
@@ -571,6 +595,41 @@ const watched = await page.evaluate(async (impact) => {
   const off = document.createElement('canvas')
   off.width = off.height = size
   const ctx = off.getContext('2d', { willReadFrequently: true })
+  // A building's own wall, once the camera is tilted. Where the map is drawing one is asked of
+  // the map rather than worked out from a footprint: a block's centroid at this zoom is
+  // usually off the top of the frame while the building itself fills it. So a coarse grid is
+  // queried against the extrusion layer, and the first column of pixels with the layer at both
+  // of its ends is read back off the canvas. That column is a wall, and a wall is one flat
+  // grey — the satellite's picture of the same block, at this zoom, never is.
+  const COLUMN = 24
+  const wall = () => {
+    const dpr = src.width / src.clientWidth
+    const on = (x, y) => map.queryRenderedFeatures([x, y], { layers: ['buildings'] })
+    for (let gx = 0.15; gx < 1; gx += 0.2) {
+      for (let gy = 0.08; gy < 0.6; gy += 0.13) {
+        const x = Math.round(gx * src.clientWidth)
+        const y = Math.round(gy * src.clientHeight)
+        const hit = on(x, y)
+        if (!hit.length || !on(x, y + COLUMN).length) continue
+        ctx.clearRect(0, 0, size, size)
+        ctx.drawImage(src, (x - 1) * dpr, y * dpr, 3 * dpr, COLUMN * dpr, 0, 0, 3, COLUMN)
+        const px = ctx.getImageData(0, 0, 3, COLUMN).data
+        const n = px.length / 4
+        let grey = 0
+        const sum = [0, 0, 0]
+        for (let i = 0; i < px.length; i += 4) {
+          const [r, g, bl] = [px[i], px[i + 1], px[i + 2]]
+          sum[0] += r
+          sum[1] += g
+          sum[2] += bl
+          if (Math.max(r, g, bl) - Math.min(r, g, bl) <= 16 && (r + g + bl) / 3 > 80) grey++
+        }
+        return { grey: grey / n, mean: sum.map((v) => Math.round(v / n)), height: hit[0].properties.height }
+      }
+    }
+    return null
+  }
+  const walls = []
   // the share of near-white pixels in a box around the impact, wherever the camera has put it
   const white = () => {
     const p = map.project(impact)
@@ -588,18 +647,38 @@ const watched = await page.evaluate(async (impact) => {
   while (document.querySelector('.maplibregl-map').classList.contains('mk-playing') && performance.now() - t0 < 30000) {
     pitch = Math.max(pitch, map.getPitch())
     whites.push(white())
+    // the wall sampling is the expensive part of this loop and a dozen frames of it is plenty;
+    // the shockwave below is measured every frame and must not be sampled past
+    if (map.getPitch() > 40 && walls.length < 12) {
+      const w = wall()
+      if (w) walls.push(w)
+    }
     await new Promise((r) => setTimeout(r, 50))
   }
   const sorted = [...whites].sort((a, b) => a - b)
-  return { pitch, frames: whites.length, peak: sorted[sorted.length - 1], median: sorted[sorted.length >> 1], after: map.getPitch(), bearing: map.getBearing() }
+  walls.sort((a, b) => b.grey - a.grey)
+  return {
+    pitch,
+    frames: whites.length,
+    peak: sorted[sorted.length - 1],
+    median: sorted[sorted.length >> 1],
+    after: map.getPitch(),
+    bearing: map.getBearing(),
+    walls: walls.length,
+    wall: walls[0] ?? null,
+  }
 }, (await draft()).impact)
 if (watched.pitch < 40) fail(`watching never tilted the map (pitch peaked at ${watched.pitch.toFixed(0)}°)`)
 if (watched.peak < watched.median + 0.08) fail(`no shockwave: white around the impact peaked at ${(watched.peak * 100).toFixed(0)}% against a median of ${(watched.median * 100).toFixed(0)}% over ${watched.frames} frames`)
 if (watched.after !== 0 || watched.bearing !== 0) fail(`the map came back tilted (pitch ${watched.after}, bearing ${watched.bearing})`)
+if (!watched.wall) fail(`no building stood up in front of the tilted camera over ${watched.frames} frames`)
+if (watched.wall.grey < 0.9) fail(`what the extrusion layer drew is not its own flat grey: ${(watched.wall.grey * 100).toFixed(0)}% grey, mean rgb(${watched.wall.mean})`)
 const carsAfter = await page.evaluate(() => [...document.querySelectorAll('.mk-car')].map((e) => [e.getBoundingClientRect().left, e.getBoundingClientRect().top]))
 if (carsAfter.length !== carsBefore.length || carsAfter.some(([x, y], i) => Math.abs(x - carsBefore[i][0]) > 1 || Math.abs(y - carsBefore[i][1]) > 1))
   fail(`the markers came back somewhere else: ${JSON.stringify(carsBefore)} → ${JSON.stringify(carsAfter)}`)
-ok(`map: watched it — the camera tilted to ${watched.pitch.toFixed(0)}°, the shockwave peaked at ${(watched.peak * 100).toFixed(0)}% white around the impact (median ${(watched.median * 100).toFixed(0)}%, ${watched.frames} frames), and the map came back flat with the markers where they were`)
+ok(
+  `map: watched it — the camera tilted to ${watched.pitch.toFixed(0)}°, the shockwave peaked at ${(watched.peak * 100).toFixed(0)}% white around the impact (median ${(watched.median * 100).toFixed(0)}%, ${watched.frames} frames), buildings stood in front of it on ${watched.walls} of them (a ${watched.wall.height} m wall read ${(watched.wall.grey * 100).toFixed(0)}% flat grey, rgb(${watched.wall.mean})), and the map came back flat with the markers where they were`,
+)
 
 // somewhere the map cannot show — a garage, a covered car park: the same diagram on a
 // drawn parking lot. The ground is saved with the claim, and the cars survive the switch.
