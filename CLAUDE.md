@@ -225,6 +225,18 @@ blame and suspicious appear in neither, which is also a test. `Photo.hash` is a 
 computed in the page (`ponytail:` — the server has no image decoder; a forged hash is the
 stated ceiling).
 
+**Two accounts of one accident are linked by `incident.shared` and `reporter.party`.**
+The customer invites the other driver with a QR code (`src/app/Invite.tsx`, the one runtime
+dependency `qrcode-generator`); `POST /incidents` mints a 72-hour party token
+(`PARTY_TTL` — `MAX_TTL` stays a day, `sign` takes an explicit cap). The other driver's page
+is **this page**, opened with `?party=<token>` **read from the URL only**, and it starts from
+`src/claim/seed.ts` — where, when, the ground, the shapes and colours of the cars, and
+nothing else; `test/seed.test.ts` fails on any trace of the first report. In their document
+their own car keeps role `insured` (schema-wise "the reporter's vehicle"), so every step and
+every sentence works unchanged; the copy differences are keyed off `reporter.party`.
+`src/claim/compare.ts` pairs the two accounts' vehicles by **mirrored role**, confirmed by
+body and colour, and never says who is right.
+
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
 and friends directly; those are only the defaults `config` starts from. `main.tsx` awaits

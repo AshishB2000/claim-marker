@@ -897,6 +897,59 @@ stands out in the diagram or the photographs" when there is nothing, and a small
 inbox row. `ReportDocument` gains nothing: it is the one rendering both screens share, and the
 customer renders it too.
 
+## Both drivers, one accident (v9)
+
+Every claim form in the world takes one side of the story. The other driver is standing three
+feet away with a phone in their hand, and nobody asks them anything.
+
+**The invite is a QR code, at the scene.** "Ask the other driver to add their side" on the
+diagram step and again on the done page: the page POSTs a seed to `/incidents`, gets back a
+link and a signed token good for 72 hours, and draws it as a QR code with the URL underneath
+and `navigator.share` beside it. The other driver points their camera at it and is filling in
+their own account, on their own phone, with no app, no account and no email address anyone has
+to spell out over traffic noise.
+
+**What they are given is a seed, and it is a short list.** Where, when, the zone, the ground to
+draw on, and the shapes and colours of the inviting customer's cars. No names, no phone
+numbers, no licences, no plates, no VINs, no people, no damage, no description, no photographs,
+no reference. The server stores only those keys and `src/claim/seed.ts` parses only those keys,
+so the two ends agree; `test/seed.test.ts` builds a seed out of a *complete* report and fails
+on any trace of it.
+
+**Their page is the same page.** `?party=<token>` from the URL only — never from a host page's
+config message, because a host that could name a party token could read an accident that is not
+theirs. In their document their own car carries role `insured`, which schema-wise means "the
+reporter's vehicle", so all seven steps, the damage marker and every sentence in `describe.ts`
+work unchanged. The differences are copy, selected by `reporter.party`: the header says "Add
+your side", the policy field becomes "Your own insurer and policy number". The attestation is
+word for word the same, because it is the same promise.
+
+The page seeds **once per incident**, so a reload or coming back to finish it on the bus home
+keeps what they have typed, and a link to a different accident starts clean instead of
+inheriting a half-written report about another one.
+
+**The two accounts meet on the desk.** `GET /incidents/:id` hands the adjuster both, and
+`src/claim/compare.ts` lays them side by side: where, when, where each car came to rest, which
+way each was facing, the direction each came from, the point of impact, the panel each account
+says was hit, the police, who was hurt, the conditions. Rows land in *agree* or *differ*
+against named thresholds, and anything one account speaks to and the other does not is listed
+separately rather than counted as a disagreement.
+
+Matching the two accounts' vehicles is a **mirror**: the customer's car is `insured` in their
+document and `other` in the other driver's. The pairing is confirmed by body and colour before
+it is trusted, and an unconfirmable pairing leaves both cars unmatched rather than comparing
+the wrong two.
+
+**It never says who is right.** A difference is a difference; two people remember a two-second
+event differently, which is the ordinary case and not a remarkable one. The words fraud, fault,
+liability, blame and suspicious appear nowhere in `compare.ts`, which is a test — and so is the
+fact that "reliable" contains *liab* and "default" contains *fault*.
+
+**What a different backend needs.** `incident.shared` and `reporter.party` are in `claim/1`,
+so an insurer running their own stack can link two accounts themselves from the documents
+alone, whether or not they use the endpoints here. That is written down in
+[docs/integration.md](integration.md).
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:
