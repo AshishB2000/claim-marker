@@ -75,14 +75,27 @@ describe('the invite', () => {
 })
 
 describe('conditions the lookup filled', () => {
-  it('go when a new place’s lookup has no answer for them, and stay when the customer gave them', () => {
-    const s = useClaim.getState()
-    s.sceneLookedUp('old', null, null, { weather: 'rain', road: 'wet', light: 'dusk' })
+  it('go when the place changes, and stay when the customer gave them', () => {
+    useClaim.getState().sceneLookedUp('old', null, null, { weather: 'rain', road: 'wet', light: 'dusk' })
     useClaim.getState().setConditions({ road: 'dry' })
+    useClaim.getState().setLocation({ lng: 1, lat: 2, address: 'somewhere else' })
     // the new place: the record answers the light and nothing else
     useClaim.getState().sceneLookedUp('new', null, null, { light: 'daylight' })
     const { claim, autoConditions } = useClaim.getState()
     expect(claim.incident.conditions).toEqual({ weather: '', road: 'dry', light: 'daylight' })
     expect(autoConditions).toEqual({ road: 'user', light: 'auto' })
+  })
+
+  it('go when the hour changes', () => {
+    useClaim.getState().sceneLookedUp('old', null, null, { weather: 'rain' })
+    useClaim.getState().setIncident({ at: '2020-01-01T03:00' })
+    expect(useClaim.getState().claim.incident.conditions.weather).toBe('')
+  })
+
+  it('survive a lookup that failed — an offline reload must not blank what the customer accepted', () => {
+    useClaim.getState().sceneLookedUp('here', null, null, { weather: 'rain', road: 'wet', light: 'dusk' })
+    // the same place and hour asked again after a reload, with no signal: nothing comes back
+    useClaim.getState().sceneLookedUp('here', null, null, {})
+    expect(useClaim.getState().claim.incident.conditions).toEqual({ weather: 'rain', road: 'wet', light: 'dusk' })
   })
 })

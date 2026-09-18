@@ -144,6 +144,14 @@ describe('two accounts of one accident', () => {
     expect(await signalsFor(dir, docWithVehicle('', 'ABC123'), { ...theirs, incident: INC }, [mine.reference])).toEqual([])
   })
 
+  it('still flag the same photograph on the twin account — one person filing both sides', async () => {
+    const HASH = 'f0e1d2c3b4a59687'
+    await record(dir, docWithPhoto(HASH), { ...mine, incident: INC })
+    expect(await signalsFor(dir, docWithPhoto(HASH), { ...theirs, incident: INC }, [mine.reference])).toEqual([
+      { code: 'photo_seen_before', with: mine.reference, detail: '0 bits apart' },
+    ])
+  })
+
   it('still flag the same plate from another incident', async () => {
     await record(dir, docWithVehicle('', 'ABC123'), { ...mine, incident: 'INC-BBBBBB' })
     expect(await signalsFor(dir, docWithVehicle('', 'ABC123'), { ...theirs, incident: INC })).toEqual([

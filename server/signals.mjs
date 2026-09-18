@@ -121,10 +121,13 @@ const sameCustomer = (a, b) => a !== null && a === b
 /**
  * What an adjuster should know about this report, given everything filed before it. Reads the
  * indexes as they stood before this report was recorded (see the module comment) and never
- * matches the report against its own entries — nor against the other account of the same
- * accident: both drivers enter both plates, and that is the point, not a signal. `linked` is
- * the references already filed under the report's incident, whose lines may predate the link
- * (a report sent first and attached to an invite afterwards).
+ * matches the report against its own entries. Plates and VINs are also not matched against the
+ * other account of the same accident: both drivers enter both plates, and that is the point,
+ * not a signal. **Photographs still are.** Two drivers standing in the same road take different
+ * pictures; the same picture on both accounts means one person filed both sides, which is the
+ * one thing a linked pair must not hide. `linked` is the references already filed under the
+ * report's incident, whose lines may predate the link (a report sent first and attached to an
+ * invite afterwards).
  */
 export async function signalsFor(dir, doc, receipt, linked = []) {
   const own = entriesOf(doc, receipt)
@@ -138,9 +141,11 @@ export async function signalsFor(dir, doc, receipt, linked = []) {
   }
   const incident = receipt?.incident ?? null
   const related = new Set(linked)
-  const unrelated = (e) => e.reference !== receipt?.reference && !(incident && e.incident === incident) && !related.has(e.reference)
+  const notMine = (e) => e.reference !== receipt?.reference
+  const unrelated = (e) => notMine(e) && !(incident && e.incident === incident) && !related.has(e.reference)
   const prior = {}
-  for (const name of Object.keys(FILES)) prior[name] = (await readIndex(dir, name)).filter(unrelated)
+  // photographs against every other report, the twin account included; plates and VINs not
+  for (const name of Object.keys(FILES)) prior[name] = (await readIndex(dir, name)).filter(name === 'photos' ? notMine : unrelated)
 
   for (const mine of own.photos) {
     for (const other of prior.photos) {

@@ -334,6 +334,25 @@ export const useClaim = create<ClaimState>()(
         if (changed) patchClaim((c) => ({ attachments: { ...c.attachments, photos } }))
       }
 
+      /**
+       * The place or the hour changed, so what the record said about the old one is no answer
+       * about the new one: conditions the lookup filled go, and the customer's own stay. Done
+       * here, where the change happens — never in `sceneLookedUp`, which cannot tell "the record
+       * has no answer" from "the fetch failed".
+       */
+      const forgetLookedUp = () => {
+        const { autoConditions, claim } = get()
+        const conditions = { ...claim.incident.conditions }
+        const next = { ...autoConditions }
+        for (const k of ['weather', 'road', 'light'] as const) {
+          if (next[k] !== 'auto') continue
+          delete next[k]
+          conditions[k] = ''
+        }
+        set({ autoConditions: next })
+        patchClaim((c) => ({ incident: { ...c.incident, conditions } }))
+      }
+
       /** the geometry moved: find the impact again, then the damage that follows from it */
       const settle = () => {
         autoImpact()
@@ -404,7 +423,10 @@ export const useClaim = create<ClaimState>()(
 
         setIncident: (patch) => {
           // a new time is a new hour to ask about, and the old answer was about the old one
-          if (patch.at !== undefined && patch.at !== get().claim.incident.at) set({ contextKey: null, roadWays: null })
+          if (patch.at !== undefined && patch.at !== get().claim.incident.at) {
+            set({ contextKey: null, roadWays: null })
+            forgetLookedUp()
+          }
           patchClaim((c) => ({ incident: { ...c.incident, ...patch, ...(patch.at !== undefined && patch.at !== c.incident.at ? { context: null, utcOffset: null } : {}) } }))
           if (patch.at !== undefined) rePlacePhotos()
         },
@@ -418,15 +440,10 @@ export const useClaim = create<ClaimState>()(
           // one key at a time so the union of the three value types never has to be widened
           const take = <K extends keyof Conditions>(k: K) => {
             const v = fill[k]
-            if (v === undefined) {
-              // the record has no answer for this place and hour: one we filled for the old place
-              // is not an answer about this one, so it goes rather than staying marked as ours
-              if (next[k] === 'auto') {
-                delete next[k]
-                conditions[k] = ''
-              }
-              return
-            }
+            // no answer is not "the record says nothing": a failed fetch — an offline reload at
+            // the roadside, a mirror that timed out — must never blank what the customer accepted.
+            // Answers about an *old* place or hour are dropped where the place or hour changes.
+            if (v === undefined) return
             // never over an answer the customer gave, and never over one that was already there
             // before anything looked anything up: a filled select is theirs unless we filled it
             if (next[k] === 'user' || (!next[k] && conditions[k])) return
@@ -461,6 +478,7 @@ export const useClaim = create<ClaimState>()(
         setLocation: (location) => {
           // the looked-up scene belonged to the old spot, exactly as the vehicles' positions did
           set({ contextKey: null, roadWays: null })
+          forgetLookedUp()
           patchClaim((c) => ({
             incident: { ...c.incident, location, context: null, utcOffset: null },
             vehicles: c.vehicles.map((v) => ({ ...v, position: null, path: [] })),
