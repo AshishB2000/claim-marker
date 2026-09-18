@@ -158,6 +158,9 @@ export type Shot = {
 export const ESTABLISH_MS = 800
 /** how long the camera takes to open up, and to come back */
 export const BLEND_MS = 900
+/** an early impact shrinks the overhead and the ease to fit before the slow-motion: never below these */
+export const MIN_ESTABLISH_MS = 50
+export const MIN_BLEND_MS = 250
 export const CHASE_PITCH = 55
 export const CHASE_ZOOM = 20.5
 /** the chase camera's centre sits this far behind the car it follows */
@@ -172,19 +175,32 @@ export const RING_M = 8
 /**
  * The cinematic replay as keyframes: overhead while the eye settles, then behind the
  * customer's own car looking the way it set off, slowed to a quarter into the impact and out
- * of it, held, then back to the diagram. In order by construction — an impact early in a short
- * drive cannot put the slow-motion before the chase, or cut the ease into it.
+ * of it, held, then back to the diagram.
+ *
+ * The overhead and the ease into the chase have to be over before the slow-motion begins,
+ * `SLOW_BEFORE_MS` ahead of the impact — and a short drive with an early impact has less
+ * time than the constants want (`MIN_MS` is shorter than `ESTABLISH_MS + BLEND_MS`). So both
+ * shrink in proportion to what there is, the ease to no less than `MIN_BLEND_MS` (a cut is not
+ * an ease) and the overhead to no less than `MIN_ESTABLISH_MS`, and the slow-motion keeps its
+ * full width around the impact wherever the clock allows: from `MIN_ESTABLISH_MS +
+ * MIN_BLEND_MS` at the earliest to `SLOW_AFTER_MS` past the impact. The keyframes come out
+ * strictly increasing by construction, so `shotAt` never has a tie to break — two shots on one
+ * tick is how the ease, or the slow-motion, silently disappears.
  */
 export function shots(vehicles: ClaimVehicle[], timeline: Timeline): Shot[] {
   const mine = vehicles.find((v) => v.role === 'insured' && v.position) ?? vehicles.find((v) => v.position)
   const chase: Chase | null = mine ? { follow: mine.id, pitch: CHASE_PITCH, bearing: posesAt([mine], 0)[0].heading, zoom: CHASE_ZOOM } : null
-  // no earlier than the chase has finished blending in: a shot that begins on the same tick
-  // wins the lookup, and with a blend of 0 it would cut the ease to the chase out altogether
-  const slowFrom = Math.max(ESTABLISH_MS + BLEND_MS, timeline.impactMs - SLOW_BEFORE_MS)
-  const slowTo = Math.max(slowFrom, timeline.impactMs + SLOW_AFTER_MS)
+  // when the slow-motion begins: SLOW_BEFORE_MS ahead of the impact, or as soon as the shortest
+  // overhead and ease can be done, whichever is later
+  const slowFrom = Math.max(timeline.impactMs - SLOW_BEFORE_MS, MIN_ESTABLISH_MS + MIN_BLEND_MS)
+  const fit = Math.min(1, slowFrom / (ESTABLISH_MS + BLEND_MS))
+  const blend = Math.max(MIN_BLEND_MS, BLEND_MS * fit)
+  const establish = Math.min(ESTABLISH_MS, slowFrom - blend)
+  // an impact before the slow-motion can begin is the start of the drive: the window still runs
+  const slowTo = Math.max(slowFrom, timeline.impactMs) + SLOW_AFTER_MS
   return [
     { at: 0, blend: 0, rate: 1, chase: null },
-    { at: ESTABLISH_MS, blend: BLEND_MS, rate: 1, chase },
+    { at: establish, blend, rate: 1, chase },
     { at: slowFrom, blend: 0, rate: SLOW_RATE, chase },
     { at: slowTo, blend: 0, rate: 1, chase },
     { at: timeline.ms + HOLD_MS, blend: BLEND_MS, rate: 1, chase: null },
