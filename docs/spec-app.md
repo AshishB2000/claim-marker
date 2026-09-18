@@ -370,6 +370,13 @@ policyholder's"/"the other party's", "You, driving" becomes "The policyholder, d
 the tag beside a vehicle becomes "Policyholder's vehicle". `gaps()` stays second person: it
 only ever runs on the customer's own review page.
 
+A third voice, `'desk-other'`, reads **the other driver's own account from their side**. In
+their document their own car is `insured`, so the desk voice would call it "the policyholder's"
+— the one confusion a side-by-side view must not have. In `'desk-other'` it is "the other
+driver's Ford", they are "The other driver, driving …", and anyone else's car is "another
+party's". `deskVoice(receipt.party)` picks it, from the side the server filed the report as —
+never from the document's own `reporter.party`.
+
 It stayed in `describe.ts` rather than becoming a prop drilled through the document because
 that is the rule the project already had — every sentence naming a person, a vehicle or a
 condition comes from one file — and the voice is exactly the kind of thing that would
@@ -721,6 +728,353 @@ insurance wording varies by market and by state, and **a native claims person sh
 once before an insurer sees it**. The Spanish fraud notice is a plain-language translation and
 is *not* legal text; a host must supply its own state's wording, and `fraudNoticeFor()` hands
 back whatever it supplies untouched.
+
+## The scene fills itself in (v9)
+
+Every claim form in the world asks the customer what the weather was like. They were in a
+crash; they are answering from memory, at the roadside, on a phone. The place and the time are
+already in the document, and from those two facts the weather at that hour, the position of the
+sun and the road itself are all a matter of public record. So the page looks them up and the
+customer **confirms** instead of typing, and the adjuster receives facts no customer would have
+given.
+
+**The time had no zone.** `incident.at` is a bare local `YYYY-MM-DDTHH:mm`, which is a wall
+clock, not a moment — and both the weather archive and the sun need a moment.
+`incident.utcOffset` (minutes east of UTC) makes it one. It is filled by the weather lookup,
+which has to resolve the zone for the coordinates anyway; `instantOf(at, utcOffset)` is the
+pure reader and returns null without an offset. Taking the browser's own zone instead would be
+assuming the customer is standing where their phone is, which after an accident on holiday is
+exactly wrong.
+
+**Three keyless sources**, each its own pure module under `src/scene/`, each tested against
+recorded fixtures with no network in the test:
+
+- `weather.ts` — Open-Meteo. The archive (`archive-api.open-meteo.com`) for anything older
+  than five days, the forecast endpoint with `past_days=7` otherwise, `timezone=auto` so the
+  hourly timestamps come back in the incident's own local time and the hour matches `at` by
+  string. `toConditions` maps the WMO code to the `WEATHER` enum and works the road state out
+  of the last two hours: snow codes → `snow`, at or below freezing with recent precipitation →
+  `icy`, any precipitation in the last two hours → `wet`, else `dry`. That two-hour window is
+  the whole point — a road is still wet after the rain has stopped.
+- `sun.ts` — the NOAA solar-position approximation, forty lines and no dependency. Altitude
+  and azimuth, then `lightFrom(altitude, lit)` (above 6° daylight, −6°…6° dusk, below that
+  dark — lit or unlit according to the road's own `lit` tag) and `glare(sun, heading)`, true
+  when the sun was under 25° up and within 25° of straight ahead.
+- `road.ts` — Overpass, one query inside 60 m, against the Kumi Systems mirror because
+  `overpass-api.de` answers 406 to whole networks, `/api/status` included. The nearest way gives the name, class, lanes,
+  direction, posted limit and whether it is lit; the ways meeting within 25 m give the
+  junction (`none`, `T`, `cross`, `roundabout`) and the nodes give what controls it. It also
+  returns the ways as GeoJSON, which is what the diagram draws.
+
+**`incident.context` is additive and separate from `conditions` on purpose.** `conditions`
+stays the customer's own answer — it is what they signed. `context` is what the record said,
+and the two sit side by side on the desk. The lookup *fills* the three selects, and
+`autoConditions` is exactly the bargain `autoDamage` already makes for the damage marks:
+`auto` means the lookup put it there and it still follows the place and the time; touching a
+select makes it `user` and it is the customer's for good. A select the customer had already
+filled is never overwritten, whatever the record says.
+
+**"Still looking it up" is derived**, not stored: `contextKey` is the place (to four decimals,
+about eleven metres) and hour the store has an answer for, and a mismatch with `sceneKey` of
+the current incident *is* the loading state. There is no second flag to keep in step with a
+fetch, which is the same rule the photo-first suggestions follow. `contextKey` and the road
+geometry are deliberately not persisted: sixty metres of public map is cheap to ask for again
+and a cache of it can only go stale.
+
+**On the diagram**, the ways are drawn as a road under the cars — width in ground metres from
+the lane count, so it keeps its real width as the map zooms — on the satellite and street
+grounds only. On the drawn parking lot and the blank sheet there is no real road to draw and
+putting one there would be a lie. When a car is dropped within three metres of a way and
+already within thirty degrees of its line, a chip offers to line it up; accepting turns the
+car and **never moves it**, because moving a customer's car for them puts words in their mouth
+about where it stopped.
+
+**Every one of the three may fail, and nothing depends on any of them.** A blocked host, a
+429, an empty answer: the card does not appear, the selects stay empty, and the step is exactly
+what it was. `scripts/smoke.mjs` proves that path by blocking the three hosts outright.
+
+**The honest limits.** Open-Meteo's archive is a reanalysis model on a grid of a few
+kilometres, not a weather station in that street: it is right about "it was raining at five"
+and says nothing about a squall over one junction. OpenStreetMap is as good as whoever mapped
+that corner, and outside well-mapped cities the lane count and the posted limit are often
+simply absent — which is why every field is nullable and the card prints only what came back.
+Neither is evidence; both are context, and the report labels them "from public records" so
+nobody mistakes them for the customer's answer.
+
+**That block reads the record and nothing else.** `lookedUpLines(ctx)` takes no conditions: the
+weather from its code (`weatherOfCode`, or the archive's own label for a code it does not
+list), the road from that hour's precipitation (`roadOfRecord` — the two hours before it that
+`toConditions` used are not kept, so a dry hour says "no rain or snow that hour", not "dry
+road"), the light from `lightFrom(sun, road.lit)` — "after dark" when the street's lighting is
+unknown. Earlier it followed the customer's selects, which put their account under "public
+records" exactly when the two disagreed. A lookup for a new place that has no answer for a
+select the old lookup filled clears it, rather than leaving the old place's weather marked as
+ours.
+
+## Photos that report for you (v9)
+
+A photograph taken at the scene already knows where and when it was taken. The page reads
+that, uses it, and throws the coordinates away.
+
+**Read it before it is destroyed.** `shrink()` re-encodes every photograph through a canvas to
+get it down to 1280 px, and a canvas keeps no metadata at all. So `addPhotos` reads the
+original bytes first: `src/claim/exif.ts` walks the JPEG's segments to the `APP1` "Exif" block,
+reads the TIFF header in **either byte order**, and picks out `DateTimeOriginal`,
+`OffsetTimeOriginal` and the GPS IFD. About a hundred and twenty lines, no dependency, and
+nothing in it throws — a truncated file, a nonsense offset, a zero denominator in a rational
+all come back as "it did not say".
+
+**The document records distances, never coordinates.** `Photo.minutesFromIncident` and
+`Photo.metresFromScene`, both rounded, absent when the photograph said nothing. This is not a
+nicety: a picture chosen from the gallery can carry the customer's home, their child's school,
+every place they have been. What a claim needs is "taken two hours later and four hundred
+metres away", and that is exactly what it gets. The position itself lives in
+`store.photoExif`, in memory only, never persisted and never sent; `scripts/smoke.mjs` walks
+every photograph in the sent document and fails on anything coordinate-shaped.
+
+Those distances **follow** the claim: move the pin or change the time and every photograph
+still holding its metadata is re-measured. A draft reopened tomorrow keeps the numbers it was
+given and simply stops following, because the metadata is not on disk to re-read.
+
+**A third way in.** On the Where step, beside search and "use my location": start from a photo
+you took. If it carries a position it is offered **rounded to three decimals** — "that photo was
+taken near 40.757, -73.986, 17:42" — and only once the customer taps "use that" is the position
+sent to the geocoder for its address and put on the claim. A gallery photo may have been taken
+at home; until they agree, its coordinates go nowhere. The offline shell never caches Photon's
+`/reverse`, whose query is a raw position, so no position outlives the report in Cache Storage. Offered, never
+relied on: **iOS strips the location out of a picked photo unless the customer has granted full
+library access**, and a camera-capture input frequently carries none at all. When it says
+nothing, the page says so plainly and keeps the photograph anyway, because a photograph of the
+scene is worth having either way.
+
+**The live camera guide** (`src/app/steps/damage/CameraGuide.tsx`) opens from the four guided
+tiles when `getUserMedia` exists — a phone. A full-screen sheet with the real camera behind an
+SVG frame for the shot being asked for: a box for the close-up, the body's own side silhouette
+for the whole side, a plate-shaped box for the other vehicle. Every 300 ms it draws the frame
+into a 160-px greyscale canvas and runs `src/claim/photoQuality.ts` over it: the variance of a
+3×3 Laplacian for blur, the mean and the clipped fractions for exposure. "Hold still", "Too
+dark — turn on the light or move", "Step back a little".
+
+**Those are hints and never gates.** The shutter is always enabled. A blurry photograph of real
+damage beats no photograph, and a form that refuses to take a picture at the roadside because
+it does not like the light is a form people abandon. The shutter draws the full-resolution
+frame to a canvas and hands it to the same `addPhotos`, so the downscaling, the cap of twelve
+and the photo-first suggestions all behave exactly as they did. Everything that ends the
+session — a rejection, Escape, the close button, unmounting — goes through one cleanup that
+calls `track.stop()`: `scripts/assist-smoke.mjs` wraps `getUserMedia`, keeps every track the
+page was handed, and fails if one is still live after the sheet closes. A page that leaves the
+camera light on is a page an insurer stops piloting.
+
+Where `getUserMedia` does not exist the old hidden `<input capture>` path runs, unchanged, and
+a camera that refuses to open falls back to it for that tap. The desktop card never opens the
+guide: a laptop webcam pointed at a bumper is not a thing that happens.
+
+## What the desk sees, and the customer never does (v9)
+
+An adjuster opening a report wants one thing before they read it: is there anything here worth
+a second look? Two independent things can answer that without an AI and without an accusation.
+
+**Three rules hold over all of it.** The customer never sees any of it — `test/desk-only.test.ts`
+walks every file under `src/` and fails if anything outside `src/adjuster/Desk.tsx` imports
+`plausibility.ts`. The words *fraud*, *fault*, *liability*, *blame* and *suspicious* appear
+nowhere, in no code, no message and no comment; a test greps the module's own source for them.
+And nothing here blocks or delays a report: it is computed after the fact, on the desk's side.
+
+**The diagram checked against itself** (`src/claim/plausibility.ts`, pure geometry). The panel
+marked as damaged against the side the point of impact is on, in the car's own frame. A route
+whose last leg arrives from behind the car's nose. Marks on a vehicle standing further from the
+impact than its own bodywork reaches. Two bodies drawn a metre into each other. A rear-end
+where the panels say the opposite. The customer's stated conditions against what the public
+record said. A photograph taken before the stated time, or half a kilometre away.
+
+Each is a `look` or a `note`, each carries its own evidence in numbers, and the phrasing is
+what an adjuster could read aloud to the customer without embarrassment — because the usual
+explanation for every one of these is somebody mis-remembering a bad afternoon. A car really
+can end up facing the way it came after a spin; a memory of the weather is the least reliable
+line on any claim form, which is why that one is only ever a `note`.
+
+**The same thing seen before** (`server/signals.mjs`). The claim server keeps three
+append-only indexes under `CLAIM_DIR/index/`: photograph fingerprints, VINs, plates, each line
+`{ key, reference, customer, at }`. A new report is compared against them *before* it is
+recorded: a photograph within six bits of one on a different report, a VIN or plate filed under
+a **different** customer id, or three or more reports from one customer inside ninety days. The
+result rides on the receipt as `signals`, which is the insurer's own record and never part of
+`claim/1`.
+
+Two VINs under the same customer are just that customer's car and say nothing. A null customer
+id does not match another null. The retention sweep prunes index lines with the folders they
+name, so forgetting a report forgets it here too.
+
+**The fingerprint's ceiling, stated.** It is a difference hash computed **in the page**, at
+downscale time, because a server with no dependencies has no image decoder. A determined sender
+can put any sixteen characters there. It is marked `ponytail:` in `src/claim/photos.ts` with
+the upgrade path — hash server-side with an image library and ignore what the page sent — and
+it is worth having as it stands, because the case it actually catches is the same picture sent
+twice, which is nearly always a duplicate submission rather than anything else.
+
+**On the desk**, all of it is one "Worth a look" card above the document, with a quiet "Nothing
+stands out in the diagram or the photographs" when there is nothing, and a small count on the
+inbox row. `ReportDocument` gains nothing: it is the one rendering both screens share, and the
+customer renders it too.
+
+## Both drivers, one accident (v9)
+
+Every claim form in the world takes one side of the story. The other driver is standing three
+feet away with a phone in their hand, and nobody asks them anything.
+
+**The invite is a QR code, at the scene.** "Ask the other driver to add their side" on the
+diagram step and again on the done page: the page POSTs a seed to `/incidents`, gets back a
+link and a signed token good for 72 hours, and draws it as a QR code with the URL underneath
+and `navigator.share` beside it. The other driver points their camera at it and is filling in
+their own account, on their own phone, with no app, no account and no email address anyone has
+to spell out over traffic noise.
+
+**What they are given is a seed, and it is a short list.** Where, when, the zone, the ground to
+draw on, and the shapes and colours of the inviting customer's cars. No names, no phone
+numbers, no licences, no plates, no VINs, no people, no damage, no description, no photographs,
+no reference. The server stores only those keys and `src/claim/seed.ts` parses only those keys,
+so the two ends agree; `test/seed.test.ts` builds a seed out of a *complete* report and fails
+on any trace of it.
+
+**Their page is the same page.** `?party=<token>` from the URL only — never from a host page's
+config message, because a host that could name a party token could read an accident that is not
+theirs. In their document their own car carries role `insured`, which schema-wise means "the
+reporter's vehicle", so all seven steps, the damage marker and every sentence in `describe.ts`
+work unchanged. The differences are copy, selected by `reporter.party`: the header says "Add
+your side", the policy field becomes "Your own insurer and policy number". The attestation is
+word for word the same, because it is the same promise.
+
+**Their draft is their own.** The party page keeps its draft in a slot of its own,
+`claim-marker/draft/<INC-…>` (`draftName`, read from the URL before any config loads), so opening
+a link never touches the report already on that phone — the other driver's own unsent claim, or
+the inviting customer's, tapping their own link to check it. It seeds **once per incident**: a
+reload or the bus home picks up a stored draft only when it is the other driver's for this
+incident (`partyDraftFor`); anything else in that slot starts again from the seed.
+
+**A link that cannot be opened says so.** Expired after its 72 hours, forged, or the server out
+of reach: the page shows "this link has expired or cannot be opened — ask the other driver for
+a new one" instead of a form that could never be sent. And a party token refused at send is
+`Rejected`, with the same words, rather than queued: nobody can renew it, so retrying it for
+ever would lose the report quietly, which is the one thing the outbox exists not to do.
+
+**The invite is kept.** `{ incident, url, expiresAt }` lives in the draft beside
+`incident.shared`, so the scene step after a reload, and the done page, show *that* code again;
+nothing offers to mint a second incident the other driver never saw. The done page offers no
+invite for a report still in the outbox — its reference is the page's own, which the server has
+never heard of.
+
+**The two accounts meet on the desk.** `GET /incidents/:id` hands the adjuster both, and
+`src/claim/compare.ts` lays them side by side: where, when, where each car came to rest, which
+way each was facing, the direction each came from, the point of impact, the panel each account
+says was hit, who was in each car, the police, who was hurt, the conditions. Rows land in
+*agree* or *differ* against named thresholds, and anything one account speaks to and the other
+does not is listed separately rather than counted as a disagreement. The place and the time
+are marked **seeded** when the other driver's answer is still exactly the one their page opened
+with: "agree" there only means they left it. The columns are ordered by the **receipt's**
+`party`, which the server sets from the token; the inbox shows the accounts of one incident as
+one row, "2 accounts".
+
+Matching the two accounts' vehicles is a **mirror**: the customer's car is `insured` in their
+document and `other` in the other driver's. The pairing is confirmed by body and colour before
+it is trusted, and an unconfirmable pairing leaves both cars unmatched rather than comparing
+the wrong two.
+
+**It never says who is right.** A difference is a difference; two people remember a two-second
+event differently, which is the ordinary case and not a remarkable one. The words fraud, fault,
+liability, blame and suspicious appear nowhere in `compare.ts`, which is a test — and so is the
+fact that "reliable" contains *liab* and "default" contains *fault*.
+
+**What a different backend needs.** `incident.shared` and `reporter.party` are in `claim/1`,
+so an insurer running their own stack can link two accounts themselves from the documents
+alone, whether or not they use the endpoints here. That is written down in
+[docs/integration.md](integration.md).
+
+## The replay as evidence (v9)
+
+The diagram's still PNG says where the cars ended up. The playback says the order it happened
+in — who was moving, who was already in the junction, which way each came from, and when they
+met. That is the part of an account an adjuster most often has to ring up and ask about, and
+the page already draws it; it only needed keeping.
+
+**Recorded at send time** (`src/map/record.ts`). The cars are drawn into MapLibre's own canvas,
+but the ID pills and the impact cross are DOM markers, which is why the PNG export has always
+painted them by hand. The recorder shares that painting rather than copying it: a 960×540 2-D
+canvas, and every animation frame is the map's canvas, the pills and the cross at their
+*projected positions for the current poses*, a thin progress bar and a caption. It drives the
+car layer through the same `poses` the on-screen playback uses — there is one animation, not
+two — then `captureStream(30)` into `MediaRecorder`, one run of `durationOf(vehicles)` plus a
+700 ms hold so the impact is on screen long enough to see.
+
+The codec is the first the browser offers of VP9, VP8, plain WebM, then MP4: Chrome and Firefox
+record WebM, Safari records only MP4, and whichever it is the server files it by its own type.
+
+**Never at the report's expense.** Recording races an 8-second ceiling; losing the race, a
+browser with no `MediaRecorder`, nothing to play, or a file over the 4 MB cap all send the
+report without it, silently. The customer never sees an error about a video. It is not
+persisted in the draft — like the PNGs it is made fresh at send time — and the server unpacks
+it beside the diagram as `replay.webm` or `replay.mp4`, served with that type and listed in the
+webhook's files.
+
+**On the desk** the adjuster gets the recorded video under the live playback, with a
+frame-by-frame step, because "was the red car already moving when the van pulled out" is
+answered by stepping, not by watching. With two accounts of one accident, "Play both" drives
+both sets of cars from one clock so the two versions move together on one map.
+
+**What the smoke proves.** Not that a file came back, which a recorder of a black rectangle
+also manages, but that the frame in the middle of the video is a real picture: it decodes the
+attachment into a `<video>`, seeks to half way, draws it to a canvas and counts distinct colours
+exactly as it does for the PNGs.
+
+## Tell us everything, once (v9)
+
+A form asks forty questions one at a time. A person who has just been in a crash tells you what
+happened in one breath: "this morning on 5th Avenue, in the rain, a black SUV pulled out and hit
+my front, my passenger hurt her neck, the police came". With the assistant on, the first screen
+offers exactly that — speak or type one account — and the rest of the flow starts already
+filled in.
+
+**It leans on the model harder than anything else in the page, so everything it produces is a
+proposal and never an entry.** A fifth task on `claim-assist/1`, `intake`: the customer's words
+go to the insurer's endpoint with the page's own enums (kinds, bodies, paint ids) and the
+current minute, and a *draft* comes back — kind, time, a place as words, conditions, vehicles,
+who was hurt, the police, other property. `parseIntake` builds its result from an allow-list,
+never by spreading the answer: an unknown enum drops that field, a time after "now" is dropped,
+six vehicles and twelve people at most, every string capped, garbage is an empty draft.
+
+**Names, phone numbers, licences, plates and VINs are not part of the shape at all.** The
+endpoint can send them — the assist smoke's stub does — and nothing comes out the other side:
+the customer types identity themselves, on the steps where they can see what they are typing.
+
+**"Here is what we understood"** is a row per proposal, each with its own tick, all ticked, every
+label from `describe.ts` and the dictionaries: the kind by name, the time formatted, each
+vehicle as the page would name it, "1 person hurt", "the police were called", the conditions as
+the review page reads them. The few words of the model's that would land in the claim as
+written — an injury, the property, a report number — are shown under their row, quoted, so
+nothing lands unseen. A police answer is proposed only when the account said yes or no, and
+people are added only to a claim that has none yet. "Use these"
+fills through the store's existing actions under the **prefill rule** — only what is empty,
+never what the customer already typed — and an unticked row changes nothing.
+
+Three things are deliberately not the model's:
+
+- **The statement is the customer's own words, verbatim.** `incident.description` becomes the
+  transcript, never the model's summary: it is their statement, and it is what they sign.
+- **The place is a search the customer finishes.** It lands in the Where step's search box as
+  the words they used, and they pick the match. The model never supplies a coordinate — it
+  cannot do spherical arithmetic, and a confident wrong pin is worse than an empty one.
+- **The diagram is drawn from their words by the step that already does that.** When the draft
+  had vehicles and a description, the scene step runs its existing `draw()` once, from a
+  microtask so the effect never sets state synchronously.
+
+A failing endpoint, an empty draft, or no assistant at all falls straight back to the ordinary
+first step with one quiet line; the kind cards underneath always work. The dictation is the same
+recogniser as the statement box (`src/app/speech.ts`).
+
+**What is not proved here.** The scripts prove the page's half of the contract — the request,
+the parsing, the proposals, the filling, the fallbacks — against a stub. Whether the model reads
+a real account well is a question for a real key and `scripts/assist-server.mjs`, whose
+`fill_the_report` tool inlines the enums so it cannot misspell one and whose prompt says to
+extract only what was said.
 
 ## Document
 

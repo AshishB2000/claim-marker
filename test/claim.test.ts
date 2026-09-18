@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { damage } from '../src/schema'
 import { UNKNOWN_DRIVER } from '../src/claim/describe'
-import { CLAIM_SCHEMA, MAX_PHOTOS, emptyClaim, makeReference, newPerson, newVehicle, nowLocal, parseClaim, toDocument, type Claim } from '../src/claim/schema'
+import { CLAIM_SCHEMA, MAX_PHOTOS, MAX_REPLAY_BYTES, emptyClaim, makeReference, newPerson, newVehicle, nowLocal, parseClaim, toDocument, type Claim } from '../src/claim/schema'
 
 const sample = (): Claim => ({
   ...emptyClaim(),
   incident: {
     kind: 'collision',
     at: '2026-09-06T17:30',
+    shared: null,
+    utcOffset: -240,
     location: { lng: -73.9859, lat: 40.7573, address: 'Times Square, New York' },
+    context: null,
     surface: 'satellite',
     conditions: { weather: 'rain', road: 'wet', light: 'dark_lit' },
     description: 'He turned across me',
@@ -77,7 +80,7 @@ describe('claim round-trip', () => {
   it('round-trips the whole report: people, police, property, photos, the reporter and the attestation', () => {
     const c: Claim = {
       ...sample(),
-      reporter: { name: ' Ashish B ', phone: '555 0100', email: 'ME@Example.com ', policy: 'pol-9', policyholder: true },
+      reporter: { name: ' Ashish B ', phone: '555 0100', email: 'ME@Example.com ', policy: 'pol-9', policyholder: true, party: 'policyholder' as const },
       people: [
         { ...newPerson('driver', 'a'), self: true },
         { ...newPerson('driver', 'b'), name: 'Dana Q', phone: '555 0199', licence: 'd1234 ', injured: true, injury: 'Sore neck, went to A&E' },
@@ -94,7 +97,7 @@ describe('claim round-trip', () => {
     c.attachments.photos = [{ data: 'data:image/jpeg;base64,/9j/4AAQ', of: 'a', caption: ' front bumper ' }]
     const first = toDocument(c)
     expect(JSON.stringify(toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value))).toBe(JSON.stringify(first))
-    expect(first.reporter).toEqual({ name: 'Ashish B', phone: '555 0100', email: 'me@example.com', policy: 'POL-9', policyholder: true })
+    expect(first.reporter).toEqual({ name: 'Ashish B', phone: '555 0100', email: 'me@example.com', policy: 'POL-9', policyholder: true, party: 'policyholder' })
     expect(first.vehicles[0].vin).toBe('1HGCM82633A004352')
     expect(first.vehicles[0].plateState).toBe('NY')
     expect(first.vehicles[0].condition).toEqual({ drivable: false, airbags: true, towed: true, location: "Mike's Towing" })
@@ -149,6 +152,96 @@ describe('claim round-trip', () => {
     expect(first.attachments.photos.filter((p) => 'shows' in p)).toHaveLength(1)
     const again = toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value)
     expect(JSON.stringify(again)).toBe(JSON.stringify(first))
+  })
+
+  it('makes `at` an instant with an offset, and round-trips what the record said', () => {
+    const c = sample()
+    c.incident.context = {
+      weather: { code: 61, label: 'Light rain', tempC: 11.44, precipMm: 0.317, windKph: 12.62 },
+      sun: { altitude: 8.4237, azimuth: 271.318 },
+      road: { name: ' 5th Avenue ', class: 'primary', lanes: 2, oneway: true, maxspeed: '25 mph', lit: true, junction: 'cross', controls: ['traffic_signals', 'crossing', 'crossing'] },
+      source: 'open-meteo+osm',
+      fetchedAt: '2026-09-07T22:10:00.000Z',
+    }
+    const first = toDocument(c)
+    expect(first.incident.utcOffset).toBe(-240)
+    // every number rounded on the way in, exactly like the coordinates, or the round trip drifts
+    expect(first.incident.context!.weather).toEqual({ code: 61, label: 'Light rain', tempC: 11.4, precipMm: 0.32, windKph: 12.6 })
+    expect(first.incident.context!.sun).toEqual({ altitude: 8.42, azimuth: 271.32 })
+    expect(first.incident.context!.road!.name).toBe('5th Avenue')
+    // de-duplicated and sorted, so two Overpass answers in a different order are one document
+    expect(first.incident.context!.road!.controls).toEqual(['crossing', 'traffic_signals'])
+    const again = toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value)
+    expect(JSON.stringify(again)).toBe(JSON.stringify(first))
+  })
+
+  it('drops a context with nothing usable in it, and an offset no zone has', () => {
+    const c = sample()
+    c.incident.context = { weather: null, sun: null, road: null, source: 'open-meteo+osm', fetchedAt: 'x' }
+    expect(toDocument(c).incident.context).toBeNull()
+    c.incident.utcOffset = 20 * 60
+    expect(toDocument(c).incident.utcOffset).toBeNull()
+  })
+
+  it('records how far a photograph was taken from the claim, and never where', () => {
+    const c = sample()
+    c.attachments.photos = [
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'at the scene', hash: 'F0E1D2C3B4A59687', minutesFromIncident: 12.4, metresFromScene: 3.6 },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'taken before', minutesFromIncident: -90, metresFromScene: 0 },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'a camera with a wrong clock', minutesFromIncident: 900_000, metresFromScene: 2_000_000 },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'no metadata at all' },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'fingerprinted', hash: 'f0e1d2c3b4a59687' },
+    ]
+    const first = toDocument(c)
+    expect(first.attachments.photos.map((p) => p.minutesFromIncident)).toEqual([12, -90, undefined, undefined, undefined])
+    expect(first.attachments.photos.map((p) => p.metresFromScene)).toEqual([4, 0, undefined, undefined, undefined])
+    // a fingerprint is sixteen lower-case hex characters or it is not one: the first photo's
+    // is upper case, which is a different sixty-four bits as far as a string comparison goes
+    expect(first.attachments.photos.map((p) => p.hash)).toEqual([undefined, undefined, undefined, undefined, 'f0e1d2c3b4a59687'])
+    // absent, not null, so a document from before these existed is byte-for-byte what it was
+    expect(first.attachments.photos.filter((p) => 'metresFromScene' in p)).toHaveLength(2)
+    // and nowhere in the document is there a coordinate that came off a photograph
+    expect(JSON.stringify(first.attachments.photos)).not.toMatch(/lng|lat|gps/i)
+    const again = toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value)
+    expect(JSON.stringify(again)).toBe(JSON.stringify(first))
+  })
+
+  it('links two accounts of one accident, and says which side it is', () => {
+    const c = sample()
+    c.incident.shared = ' inc-7f3k2q '
+    c.reporter.party = 'other_party'
+    const first = toDocument(c)
+    // one shape for the id whichever side wrote it, so two documents name the same string
+    expect(first.incident.shared).toBe('INC-7F3K2Q')
+    expect(first.reporter.party).toBe('other_party')
+    const again = toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value)
+    expect(JSON.stringify(again)).toBe(JSON.stringify(first))
+  })
+
+  it('is one account by default, and drops an id that is not one of ours', () => {
+    const c = sample()
+    expect(toDocument(c).incident.shared).toBeNull()
+    expect(toDocument(c).reporter.party).toBe('policyholder')
+    c.incident.shared = 'https://evil.example/INC-1'
+    expect(toDocument(c).incident.shared).toBeNull()
+    c.reporter.party = 'the insurer' as never
+    expect(toDocument(c).reporter.party).toBe('policyholder')
+  })
+
+  it('carries the recorded replay, and drops one that is not a video or is too large', () => {
+    const c = sample()
+    c.attachments.replay = 'data:video/webm;codecs=vp9;base64,GkXfow=='
+    const first = toDocument(c)
+    expect(first.attachments.replay).toBe('data:video/webm;codecs=vp9;base64,GkXfow==')
+    expect(JSON.stringify(toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value))).toBe(JSON.stringify(first))
+    c.attachments.replay = 'data:image/png;base64,iVBORw0KGgo='
+    expect(toDocument(c).attachments.replay).toBeNull()
+    c.attachments.replay = 'data:text/html;base64,PHNjcmlwdD4='
+    expect(toDocument(c).attachments.replay).toBeNull()
+    c.attachments.replay = `data:video/mp4;base64,${'A'.repeat(MAX_REPLAY_BYTES)}`
+    expect(toDocument(c).attachments.replay).toBeNull()
+    c.attachments.replay = 'data:video/mp4;base64,AAAAIGZ0eXA='
+    expect(toDocument(c).attachments.replay).toBe('data:video/mp4;base64,AAAAIGZ0eXA=')
   })
 
   it('defaults the kind and the conditions, and rejects values off the lists', () => {
@@ -248,7 +341,7 @@ describe('parseClaim rejects bad input', () => {
     expect(value.vehicles).toEqual([])
     expect(value.incident.location).toBeNull()
     expect(value.impact).toBeNull()
-    expect(value.attachments).toEqual({ scene: null, damage: {}, photos: [] })
+    expect(value.attachments).toEqual({ scene: null, replay: null, damage: {}, photos: [] })
     expect(value.people).toEqual([])
     expect(value.incident.kind).toBe('collision')
   })

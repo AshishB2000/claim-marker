@@ -15,8 +15,9 @@
  * against the customer the session named; the server's reference replaces the page's; the same
  * document sent twice is filed once; an expired or forged token is refused; a flood is rate
  * limited; the built page is served with a CSP and its runtime config; the webhook carries a
- * valid signature; the desk lists, opens and re-files the report; and a report older than
- * RETAIN_DAYS is gone by the time the server is up.
+ * valid signature; the desk lists, opens and re-files the report; a report older than
+ * RETAIN_DAYS is gone by the time the server is up; and who may link what to an incident is
+ * decided by the token, never by the document.
  *
  * Then a second, shorter walk through the demo portal the same server serves at /demo: sign in
  * as a sample customer, report an accident in the *built* page it embeds — not the dev page —
@@ -30,7 +31,7 @@ import { sign } from '../server/session.mjs'
 import { createServer } from 'node:http'
 import { createHmac } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -181,6 +182,9 @@ ok(`rate limit: the first ${RATE_LIMIT} POSTs are answered, the flood after them
  */
 const DICT = JSON.parse(readDictionary(new URL('../dist/lib/messages.json', import.meta.url), 'utf8')).es
 const es = (key, vars = {}) => String(DICT[key]).replace(/\{(\w+)\}/g, (whole, name) => (name in vars ? vars[name] : whole))
+const EN = JSON.parse(readDictionary(new URL('../dist/lib/messages.json', import.meta.url), 'utf8')).en
+/** the other driver's page is not the host's, so it is not fixed to Spanish: it reads English */
+const enT = (key, vars = {}) => String(EN[key]).replace(/\{(\w+)\}/g, (whole, name) => (name in vars ? vars[name] : whole))
 
 const HOST_PAGE = `<!doctype html><meta charset="utf-8"><title>Acme Mutual — my policy</title>
 <h1>Acme Mutual</h1><p>Something happened? Tell us below.</p>
@@ -268,6 +272,16 @@ await frame.locator(`text=${es('start.people.drivingTitle')}`).waitFor()
 await next()
 await frame.locator('.mk-car').first().waitFor({ timeout: 30000 })
 await page.waitForTimeout(3000)
+
+// ── the other driver, invited from the scene step ─────────────────────
+await frame.getByRole('button', { name: es('scene.invite.ask') }).click()
+await frame.locator('[data-invite-url]').waitFor({ timeout: 20000 }).catch(() => fail('the invite did not produce a link'))
+const partyUrl = (await frame.locator('[data-invite-url]').innerText()).trim()
+if (!/\/\?party=[\w.-]+$/.test(partyUrl)) fail(`the invite link looks wrong: ${partyUrl}`)
+if (!(await frame.locator('[data-invite-made] svg').count())) fail('the invite has no QR code to show')
+const partyToken = new URL(partyUrl).searchParams.get('party')
+ok(`invite: the scene step made a link and a QR code for the other driver`)
+
 await next()
 await frame.locator('.cm-root canvas').waitFor({ timeout: 30000 })
 await page.waitForTimeout(3000)
@@ -317,6 +331,12 @@ if (one.claim.incident.language !== 'es') fail(`the stored document says ${one.c
 const files = await readdir(join(dir, shown))
 // no damage was marked on this walk (scripts/smoke.mjs covers that), so there is a diagram but no marked-up car
 for (const f of ['claim.json', 'receipt.json', 'scene.png']) if (!files.includes(f)) fail(`${f} was not unpacked; have ${files.join(', ')}`)
+// the replay is unpacked as a real video file, and served as one
+const replayFile = files.find((f) => /^replay\.(webm|mp4)$/.test(f))
+if (!replayFile) fail(`the replay was not unpacked; have ${files.join(', ')}`)
+const replayRes = await fetch(`http://localhost:${API_PORT}/claims/${shown}/files/${replayFile}`, desk)
+if (replayRes.status !== 200 || !/^video\/(webm|mp4)$/.test(replayRes.headers.get('content-type') ?? '')) fail(`the replay is served as ${replayRes.status} ${replayRes.headers.get('content-type')}`)
+if ((await replayRes.arrayBuffer()).byteLength < 20_000) fail('the replay file is suspiciously small')
 const png = await fetch(`http://localhost:${API_PORT}/claims/${shown}/files/scene.png`, desk)
 if (png.headers.get('content-type') !== 'image/png' || (await png.arrayBuffer()).byteLength < 10000) fail('the scene PNG is not served as a real image')
 ok(`server: filed as ${shown} with ${files.length} files, the diagram served as image/png`)
@@ -374,7 +394,8 @@ const again = await fetch(`http://localhost:${API_PORT}/claims`, {
 })
 const dup = await again.json()
 if (again.status !== 200 || !dup.duplicate || dup.reference !== shown) fail(`a resend was answered ${again.status} ${JSON.stringify(dup)}`)
-if ((await readdir(dir)).filter((n) => n !== 'by-client').length !== 1) fail('a resend was filed twice')
+// report folders only: by-client, the reuse indexes and the invites live beside them
+if ((await readdir(dir)).filter((n) => !['by-client', 'index', 'incidents'].includes(n)).length !== 1) fail('a resend was filed twice')
 ok('server: the same report sent twice is filed once and answered with the same reference')
 
 const nonsense = await fetch(`http://localhost:${API_PORT}/claims`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${CLAIM_TOKEN}` }, body: '{"schema":"claim/9"}' })
@@ -425,6 +446,222 @@ await deskPage.screenshot({ path: 'docs/desk.png' })
 const after = await (await fetch(`http://localhost:${API_PORT}/claims/${shown}`, desk)).json()
 if (after.status !== 'reviewing') fail(`the desk's status change did not reach the server: ${after.status}`)
 ok('desk: lists the report, opens the document, moves it to "in review"')
+
+// ── the other driver gives their side, on their own phone ─────────────
+// A second browser, a stranger's: no session, no prefill, nothing but the link.
+const incidentId = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).incident
+if (!/^INC-/.test(incidentId ?? '')) fail(`the customer's report did not name an incident: ${incidentId}`)
+
+// what the token opens, and what it does not
+const seedRes = await fetch(`${API}/incidents/${incidentId}/seed`, { headers: { authorization: `Bearer ${partyToken}` } })
+const seedBody = await seedRes.json()
+if (seedRes.status !== 200) fail(`the seed answered ${seedRes.status}`)
+const seedText = JSON.stringify(seedBody)
+for (const secret of ['Sam Lee', 'sam@example.com', 'POL-9', 'ABC 123', '4T1BF1FK5CU123456', shown, 'invited']) {
+  if (seedText.includes(secret)) fail(`the seed hands the other driver "${secret}"`)
+}
+if (Object.keys(seedBody).sort().join() !== 'at,location,surface,utcOffset,vehicles') fail(`the seed has keys it should not: ${Object.keys(seedBody).join()}`)
+if ((await fetch(`${API}/incidents/${incidentId}/seed`, { headers: { authorization: `Bearer ${session.token}` } })).status !== 401) fail("the customer's own token opened the party seed")
+if ((await fetch(`${API}/incidents/${incidentId}/seed`, { headers: { authorization: 'Bearer not.a.token' } })).status !== 401) fail('a forged party token opened the seed')
+ok(`invite: the seed is where, when, the ground and the shapes of the cars — and a wrong token is 401`)
+
+const otherCtx = await browser.newContext({ viewport: { width: 390, height: 844 } })
+const other = await otherCtx.newPage()
+const otherErrors = []
+other.on('pageerror', (e) => otherErrors.push(String(e)))
+await other.goto(`${API}/?party=${partyToken}`, { waitUntil: 'networkidle' })
+await other.locator(`text=${enT('shell.title.party')}`).waitFor({ timeout: 20000 }).catch(() => fail('the party link did not open the other driver\'s page'))
+// the other driver's page keeps its own draft, keyed by the incident, so it can never
+// overwrite a report the same browser was already writing
+const partyKey = `claim-marker/draft/${incidentId}`
+const otherState = () => other.evaluate((key) => JSON.parse(localStorage.getItem(key)).state.claim, partyKey)
+const seeded = await otherState()
+if (seeded.reporter.party !== 'other_party') fail(`the other driver's page is not in party mode: ${seeded.reporter.party}`)
+if (seeded.incident.shared !== incidentId) fail(`the other driver's report does not name the incident: ${seeded.incident.shared}`)
+if (!seeded.incident.location) fail('the seed did not fill the place')
+// their own car is the one to fill in; the customer's arrives as the other vehicle
+if (seeded.vehicles[0].role !== 'insured' || seeded.vehicles[1]?.role !== 'other') fail(`the seeded vehicles are wrong: ${JSON.stringify(seeded.vehicles.map((v) => v.role))}`)
+const otherSees = await other.locator('body').innerText()
+for (const secret of ['Sam Lee', 'sam@example.com', 'POL-9', 'ABC 123', '4T1BF1FK5CU123456', shown]) {
+  if (otherSees.includes(secret)) fail(`the other driver's page shows "${secret}"`)
+}
+ok('invite: the other driver lands on a seeded report in party mode, and sees nothing of the first one')
+
+// they fill in the little that is needed and send — describing their own car as the shape and
+// colour it really is, which is how the desk pairs it with the customer's account of it
+const theirCar = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles.find((v) => v.role === 'other')
+await other.evaluate(({ car, key }) => {
+  const raw = JSON.parse(localStorage.getItem(key))
+  raw.state.step = 'review'
+  raw.state.claim.reporter = { ...raw.state.claim.reporter, name: 'Dana Q', phone: '555 0199', email: 'dana@example.com', policy: 'OTHER-1' }
+  raw.state.claim.incident = { ...raw.state.claim.incident, description: 'I was already in the junction.' }
+  // they place the cars themselves, and remember it differently: the same spot, facing the
+  // other way — a real disagreement for the comparison to find
+  const at = raw.state.claim.incident.location
+  raw.state.claim.vehicles = raw.state.claim.vehicles.map((v, i) => ({
+    ...v,
+    ...(i === 0 ? { body: car.body, color: car.color } : {}),
+    position: [at.lng + 0.00004 * (i + 1), at.lat + 0.00003 * (i + 1)],
+    heading: i === 0 ? 10 : 190,
+    path: [],
+  }))
+  localStorage.setItem(key, JSON.stringify(raw))
+}, { car: theirCar, key: partyKey })
+await other.reload({ waitUntil: 'networkidle' })
+await other.getByRole('checkbox', { name: enT('scene.send.agreeAria') }).check()
+await other.getByRole('textbox', { name: enT('scene.send.signAria') }).fill('Dana Q')
+await other.getByRole('button', { name: enT('scene.send.send') }).click()
+await other.locator(`text=${enT('shell.done.party.title')}`).waitFor({ timeout: 40000 }).catch(() => fail("the other driver's report did not send"))
+const partyRef = (await other.locator('.font-mono.text-3xl').textContent())?.trim()
+ok(`invite: the other driver's own account was filed as ${partyRef}`)
+
+// one report per party token
+const second = await fetch(`${API}/claims`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${partyToken}` },
+  body: JSON.stringify({ schema: 'claim/1', incident: { kind: 'collision', shared: incidentId }, vehicles: [] }),
+})
+const secondBody = await second.json()
+if (second.status !== 200 || !secondBody.duplicate || secondBody.reference !== partyRef) fail(`a second report from one party token gave ${second.status} ${JSON.stringify(secondBody)}`)
+ok('invite: a party token files one report; a second is answered with the first')
+
+// the desk has both, on one map, side by side
+const both = await (await fetch(`${API}/incidents/${incidentId}`, desk)).json()
+if (both.reports?.length !== 2) fail(`the incident does not hold two accounts: ${JSON.stringify(both).slice(0, 200)}`)
+if (both.reports.map((r) => r.party).sort().join() !== 'other_party,policyholder') fail(`the two accounts are not tagged: ${both.reports.map((r) => r.party).join()}`)
+// a reload, not a hash change: the desk was opened on this report before the second account
+// existed, and like the rest of the inbox it shows what was there when it loaded
+await deskPage.goto(`${PAGE}/adjuster.html?api=http://localhost:${API_PORT}#/${shown}`)
+await deskPage.reload()
+await deskPage.locator('text=2 accounts').first().waitFor({ timeout: 20000 }).catch(async () =>
+  fail(`the desk does not say there are two accounts; it shows: ${(await deskPage.locator('body').innerText()).slice(0, 600)}`),
+)
+await deskPage.locator('[data-compare]').waitFor({ timeout: 20000 }).catch(() => fail('the desk does not lay the two accounts side by side'))
+// the map mounts first and the table right behind it; wait for the table, not just the wrapper
+await deskPage.locator('[data-compare] table').waitFor({ timeout: 15000 }).catch(async () =>
+  fail(`the comparison has no table: ${(await deskPage.locator('[data-compare]').innerHTML()).slice(0, 800)}`),
+)
+const compared = await deskPage.locator('[data-compare]').innerText()
+const table = await deskPage.locator('[data-compare] table').innerText()
+if (!/agree/i.test(table)) fail(`the comparison lists nothing the two accounts agree on: ${table.slice(0, 600)}`)
+if (!/differ/i.test(table)) fail(`the comparison lists nothing the two accounts differ on: ${table.slice(0, 600)}`)
+for (const word of ['fraud', 'fault', 'liability', 'blame', 'suspicious']) {
+  if (new RegExp(word, 'i').test(compared)) fail(`the comparison says "${word}"`)
+}
+ok('desk: two accounts under one incident, laid side by side, saying nothing about who is right')
+if (otherErrors.length) fail(`the other driver's page threw: ${otherErrors.join('\n')}`)
+await otherCtx.close()
+
+// ── the same photograph, the same VIN, seen before ────────────────────
+// Two reports from two different customers carrying the same picture and the same VIN. The
+// server notices, on the receipt, for the adjuster — and the customer's own page, which has
+// been open this whole walk, says none of it.
+const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
+const SHARED_HASH = 'f0e1d2c3b4a59687'
+const SHARED_VIN = '1HGCM82633A004352'
+const reused = (id) => ({
+  schema: 'claim/1',
+  vehicles: [{ id: 'a', role: 'insured', body: 'sedan', color: '#b91c1c', vin: SHARED_VIN, plate: 'ZZZ 999' }],
+  incident: { kind: 'collision', at: '2026-09-06T17:30', location: { lng: -73.9859, lat: 40.7573, address: 'Times Square' } },
+  attachments: { photos: [{ data: JPEG, of: 'a', caption: id, hash: SHARED_HASH }] },
+})
+const fileAs = async (customerId, body) => {
+  const s = await (await mint({ 'x-api-key': API_KEY }, { customer: { id: customerId, policy: 'POL-X' }, ttlSeconds: 600 })).json()
+  const res = await fetch(`${API}/claims`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${s.token}`, 'idempotency-key': `CM-${customerId.toUpperCase().replace(/[^A-Z0-9]/g, '')}` },
+    body: JSON.stringify(body),
+  })
+  return (await res.json()).reference
+}
+const firstRef = await fileAs('reuse-one', reused('one'))
+const secondRef = await fileAs('reuse-two', reused('two'))
+if (!firstRef || !secondRef) fail(`the two reports were not filed: ${firstRef} ${secondRef}`)
+const firstReceipt = await (await fetch(`${API}/claims/${firstRef}`, desk)).json()
+const secondReceipt = await (await fetch(`${API}/claims/${secondRef}`, desk)).json()
+if (firstReceipt.signals?.length) fail(`the first report of its kind signalled against nothing: ${JSON.stringify(firstReceipt.signals)}`)
+const seenCodes = (secondReceipt.signals ?? []).map((x) => x.code).sort()
+if (!seenCodes.includes('photo_seen_before')) fail(`the reused photograph was not noticed: ${JSON.stringify(secondReceipt.signals)}`)
+if (!seenCodes.includes('vin_seen_before')) fail(`the reused VIN was not noticed: ${JSON.stringify(secondReceipt.signals)}`)
+if (!secondReceipt.signals.some((x) => x.with === firstRef)) fail('a signal does not name the report it saw before')
+ok(`server: the second report carries ${seenCodes.join(', ')}, naming ${firstRef}`)
+
+// the desk shows them, with a link to the other report
+await deskPage.goto(`${PAGE}/adjuster.html?api=http://localhost:${API_PORT}#/${secondRef}`)
+await deskPage.locator('[data-worth-a-look]').waitFor({ timeout: 15000 }).catch(() => fail('the desk does not show what was seen before'))
+const worth = await deskPage.locator('[data-worth-a-look]').innerText()
+if (!worth.includes(firstRef)) fail(`the "Worth a look" card does not link to the other report: ${worth}`)
+if (!/photograph/i.test(worth) || !/VIN/i.test(worth)) fail(`the card does not say what was seen: ${worth}`)
+// the same report is named by each signal, so any one of the links will do
+await deskPage.locator('[data-worth-a-look]').getByRole('button', { name: firstRef }).first().click()
+await deskPage.waitForFunction((r) => window.location.hash.includes(r), firstRef, { timeout: 5000 }).catch(() => fail('the link did not open the other report'))
+ok('desk: "Worth a look" names both, and the link opens the report it saw before')
+
+// and none of it is anywhere the customer has been
+const customerSaw = await frame.locator('body').innerText()
+for (const word of ['Worth a look', 'seen before', 'photo_seen_before', 'vin_seen_before', 'fraud', 'Fraud']) {
+  if (customerSaw.includes(word)) fail(`the customer's page says "${word}"`)
+}
+ok("desk: none of it is on the customer's page")
+
+// ── who may link what: the token decides, never the document ──────────
+// From an address of its own, like the flood, so these extra requests leave the walk's bucket alone.
+const aside = { 'x-forwarded-for': '198.51.100.7' }
+const sessionFor = async (id) => (await (await mint({ 'x-api-key': API_KEY, ...aside }, { customer: { id, policy: 'POL-X' }, ttlSeconds: 600 })).json()).token
+const as = (token) => ({ 'content-type': 'application/json', authorization: `Bearer ${token}`, ...aside })
+const SEED = {
+  location: { lng: -73.9859, lat: 40.7573, address: 'Times Square' },
+  at: '2026-09-06T17:30',
+  utcOffset: -240,
+  surface: 'satellite',
+  vehicles: [{ body: 'sedan', color: '#b91c1c', make: 'Toyota', model: 'Camry' }],
+}
+const invite = (token, extra = {}) => fetch(`${API}/incidents`, { method: 'POST', headers: as(token), body: JSON.stringify({ ...SEED, ...extra }) })
+const fileWith = async (token, doc) => (await (await fetch(`${API}/claims`, { method: 'POST', headers: as(token), body: JSON.stringify({ schema: 'claim/1', vehicles: [], ...doc }) })).json()).reference
+const filed = async (ref) => (await fetch(`${API}/claims/${ref}`, desk)).json()
+
+if ((await mint({ 'x-api-key': API_KEY, ...aside }, { customer: { id: 'party:INC-AAAAAA' } })).status !== 400) fail('a session was minted for a customer named like a party token')
+
+// firstRef belongs to reuse-one and is linked to nothing: nobody else may attach an invite to it
+const untouched = JSON.stringify(await filed(firstRef))
+const byParty = await invite(partyToken, { reference: firstRef })
+if (byParty.status !== 403) fail(`a party token could create an invite: ${byParty.status}`)
+if ((await invite(await sessionFor('intruder'), { reference: firstRef })).status !== 201) fail('another customer could not make an invite of their own')
+if ((await invite(CLAIM_TOKEN, { reference: firstRef })).status !== 201) fail('the shared token could not make an invite')
+if (JSON.stringify(await filed(firstRef)) !== untouched) fail(`someone else's invite was attached to ${firstRef}`)
+const ownInvite = await (await invite(await sessionFor('reuse-one'), { reference: firstRef })).json()
+const attached = await filed(firstRef)
+if (attached.incident !== ownInvite.incident || attached.party !== 'policyholder') fail(`its owner could not attach an invite: ${attached.incident} ${attached.party}`)
+ok("invite: a party token is 403; another customer or the shared token cannot attach an invite to a report that isn't theirs; its owner can")
+
+// the other driver says they are the policyholder, of someone else's incident: the token wins
+const fresh = await (await invite(await sessionFor('liar-host'))).json()
+const liarRef = await fileWith(new URL(fresh.url).searchParams.get('party'), {
+  reporter: { name: 'Lee R', party: 'policyholder' },
+  incident: { kind: 'collision', shared: incidentId },
+})
+const lie = await filed(liarRef)
+if (lie.party !== 'other_party' || lie.claim.reporter.party !== 'other_party') fail(`a party report claiming to be the policyholder was filed as ${lie.party} / ${lie.claim.reporter.party}`)
+if (lie.incident !== fresh.incident || lie.claim.incident.shared !== fresh.incident) fail(`a party report joined ${lie.incident} / ${lie.claim.incident.shared}, not its token's ${fresh.incident}`)
+// a customer names an incident cust-1 created, and one that does not exist
+const crasher = await sessionFor('gatecrasher')
+const crash = await filed(await fileWith(crasher, { incident: { kind: 'collision', shared: incidentId } }))
+if (crash.incident || crash.claim.incident.shared !== null) fail(`a customer joined an incident they did not create: ${crash.incident} / ${crash.claim.incident.shared}`)
+if ((await (await fetch(`${API}/incidents/${incidentId}`, desk)).json()).reports.length !== 2) fail(`${incidentId} gained a third account`)
+await fileWith(crasher, { incident: { kind: 'collision', shared: 'INC-NOPE99' } })
+if (existsSync(join(dir, 'incidents', 'INC-NOPE99'))) fail('a made-up incident id left a folder behind')
+ok('linking: a party report is filed as the other party of its own incident whatever it says; a customer cannot join an incident they did not create')
+
+// the seed keeps a short address and the page's own body shapes, and a large body is no invite at all
+const trimmed = await (await invite(crasher, {
+  location: { ...SEED.location, address: 'x'.repeat(500) },
+  vehicles: [{ body: 'spaceship', color: '#000000', make: 'X', model: 'Y' }, ...SEED.vehicles],
+})).json()
+const trimmedSeed = await (await fetch(`${API}/incidents/${trimmed.incident}/seed`, { headers: { authorization: `Bearer ${new URL(trimmed.url).searchParams.get('party')}` } })).json()
+if (trimmedSeed.location.address.length !== 200 || trimmedSeed.vehicles.length !== 1) fail(`the seed kept ${trimmedSeed.location.address.length} characters and ${trimmedSeed.vehicles.length} vehicles`)
+const huge = await invite(crasher, { padding: 'x'.repeat(20_000) }).then((r) => r.status, () => 'reset')
+if (huge === 201) fail('a 20 kB invite was accepted')
+ok(`invite: the address is capped at 200, an unknown body is dropped, a 20 kB body is refused (${huge})`)
 
 // ── the demo portal, on the same server, embedding the built page ─────
 
@@ -487,6 +724,18 @@ if (!/The policyholder/.test(deskText)) fail('the desk does not read in the adju
 const others = await (await fetch(`${API}/claims`, { headers: { authorization: `Bearer ${await portal.evaluate(() => sessionStorage.getItem('claim-marker/desk-token'))}` } })).json()
 if (others.claims.length !== 1 || others.claims[0].reference !== demoRef) fail(`the demo visitor sees ${others.claims.length} reports, not only their own`)
 ok('demo: its link opens the desk on that report, in the adjuster\'s voice, and that visitor sees no other report')
+
+// a demonstration is neither checked against the reuse indexes nor remembered in them
+if (filedDemo.signals?.length) fail(`a demo report carries signals: ${JSON.stringify(filedDemo.signals)}`)
+const indexed = (await Promise.all(['photos', 'vins', 'plates'].map((n) => readFile(join(dir, 'index', `${n}.jsonl`), 'utf8').catch(() => '')))).join('')
+if (indexed.includes(demoRef)) fail(`${demoRef} was recorded into the reuse indexes`)
+// the other driver a demo visitor invites is part of the demonstration too, and so is the invite
+const visitor = await (await fetch(`${API}/demo/login`, { method: 'POST', headers: { 'content-type': 'application/json', ...aside }, body: '{"customer":"one-car"}' })).json()
+const demoInvite = await (await invite(visitor.token)).json()
+const demoParty = await filed(await fileWith(new URL(demoInvite.url).searchParams.get('party'), { incident: { kind: 'collision' } }))
+if (demoParty.demo !== true || demoParty.incident !== demoInvite.incident) fail(`the other driver of a demo invite is not tagged: demo ${demoParty.demo}, incident ${demoParty.incident}`)
+if (JSON.parse(await readFile(join(dir, 'incidents', demoInvite.incident, 'seed.json'), 'utf8')).invited.demo !== true) fail('a demo invite is not tagged')
+ok('demo: no signals and nothing indexed; a demo invite and the report it brings in are both tagged demo, and swept with it')
 
 const portalReal = portalErrors.filter((e) => !/WebGL|GPU|ResizeObserver/.test(e))
 if (portalReal.length) fail(`demo portal page errors: ${portalReal.join(' | ')}`)

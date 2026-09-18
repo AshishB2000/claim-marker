@@ -1,29 +1,72 @@
 import { useEffect, useRef, useState } from 'react'
-import { useClaim } from '../../claim/store'
-import { LIGHT, ROAD, WEATHER, nowLocal } from '../../claim/schema'
+import { sceneKey, useClaim } from '../../claim/store'
+import { LIGHT, ROAD, WEATHER, instantOf, nowLocal, sceneContext, type Conditions } from '../../claim/schema'
+import { lookedUpLines } from '../../claim/describe'
+import { readExif } from '../../claim/exif'
 import { reversePlace, searchPlaces, type Place } from '../../geocode'
 import type { LngLat } from '../../geo'
-import type { Key } from '../../i18n'
-import { useT } from '../../i18n/useT'
+import type { Key, Lang } from '../../i18n'
+import { useLang, useT } from '../../i18n/useT'
 import { LocationMap } from '../../map/LocationMap'
+import { fetchWeather, toConditions, toSceneWeather } from '../../scene/weather'
+import { fetchRoad } from '../../scene/road'
+import { lightFrom, sunPosition } from '../../scene/sun'
 import { Field, Spinner } from '../ui'
 import { Icon } from '../icons'
+
+/** who the lookup names as its source in the document; the two keyless providers it asks */
+const SOURCE = 'open-meteo+osm'
+
+/**
+ * What a photograph turned out to know: either half may be missing, and usually is. `near` is
+ * where it was taken to three decimals (about a hundred metres), which is all that is shown until
+ * the customer says "use that": a photo picked from the gallery may have been taken at home, and
+ * its exact position is not sent to the geocoder, or anywhere, before they agree.
+ */
+type FromPhoto = { at: LngLat | null; near: string; takenAt: string | null }
+
+const spoken = (at: string, lang: Lang) => {
+  const d = new Date(at)
+  return Number.isNaN(d.getTime()) ? at : d.toLocaleString(lang === 'es' ? 'es' : undefined, { dateStyle: 'long', timeStyle: 'short' })
+}
 
 export function Where() {
   const incident = useClaim((s) => s.claim.incident)
   const setIncident = useClaim((s) => s.setIncident)
+  const setConditions = useClaim((s) => s.setConditions)
   const setLocation = useClaim((s) => s.setLocation)
+  const contextKey = useClaim((s) => s.contextKey)
+  const sceneLookedUp = useClaim((s) => s.sceneLookedUp)
   const t = useT()
+  const lang = useLang()
+  const weatherSelect = useRef<HTMLSelectElement>(null)
+  // "That's right" is an acknowledgement, not an answer: it puts the card's buttons to bed and
+  // changes nothing in the document, because the values are already in the selects below it.
+  // Held as the place-and-hour it was said about, so a new place asks again.
+  const [acknowledged, setAcknowledged] = useState<string | null>(null)
+  const addPhotos = useClaim((s) => s.addPhotos)
+  const photoInput = useRef<HTMLInputElement>(null)
+  // what the last photograph said, waiting to be accepted; `false` means it said nothing
+  const [fromPhoto, setFromPhoto] = useState<FromPhoto | false | null>(null)
 
-  const [query, setQuery] = useState('')
+  // "Just tell us what happened" may have left the place in words, waiting here: read once at
+  // mount, so it starts the box exactly as if the customer had typed it themselves — the
+  // "suggestions as you type" effect below then searches it and opens the list on its own.
+  // The model never supplies coordinates; the customer still has to pick the actual match.
+  const [query, setQuery] = useState(() => useClaim.getState().placeQuery ?? '')
   const [results, setResults] = useState<Place[]>([])
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
-  const [busy, setBusy] = useState<'search' | 'locate' | null>(null)
+  const [busy, setBusy] = useState<'search' | 'locate' | 'photo' | null>(null)
   const [error, setError] = useState<Key | null>(null)
   const abort = useRef<AbortController | null>(null)
   // the address a result put into the box; searching it again would only reopen the list
   const picked = useRef<string | null>(null)
+
+  // consumed once, on the way in; a draft applied twice must not keep re-seeding this box
+  useEffect(() => {
+    if (useClaim.getState().placeQuery) useClaim.setState({ placeQuery: null })
+  }, [])
 
   const center: LngLat | null = incident.location ? [incident.location.lng, incident.location.lat] : null
   // only biases the ranking; a new location must not re-run the search, so it is read, not depended on
@@ -57,6 +100,58 @@ export function Where() {
     }, 280)
     return () => window.clearTimeout(t)
   }, [query])
+
+  /**
+   * The place and hour the looked-up scene belongs to. It not matching the one the store has an
+   * answer for is what "still looking" means — derived, so there is no second flag to keep in
+   * step with the fetch, and so a draft reopened tomorrow asks again rather than showing a
+   * cached answer it cannot date.
+   */
+  const key = sceneKey(incident)
+  const looking = key !== null && key !== contextKey
+
+  // the weather at that hour, where the sun was, and the road — from the place and the time
+  // alone. Every one of them may fail; the step then behaves exactly as it did before any of
+  // this existed, which is why nothing here throws and nothing here blocks.
+  useEffect(() => {
+    const loc = incident.location
+    if (!key || !loc || key === contextKey) return
+    const ac = new AbortController()
+    const at: LngLat = [loc.lng, loc.lat]
+    const when = incident.at
+    void (async () => {
+      const [w, r] = await Promise.all([fetchWeather(at, when, ac.signal), fetchRoad(at, ac.signal)])
+      if (ac.signal.aborted) return
+      // Open-Meteo resolves the zone for the coordinates, which is the only thing on the page
+      // that can: without it `at` is a wall clock and the sun cannot be placed at all
+      const utcOffset = w?.utcOffsetMinutes ?? null
+      const instant = instantOf(when, utcOffset)
+      const sun = instant !== null ? sunPosition(instant, at) : null
+      // only what actually came back: an empty string is an answer ("not given"), and handing
+      // one to the store would mark a select as filled-by-us and then leave it blank
+      const fill: Partial<Conditions> = {}
+      if (w) {
+        const c = toConditions(w)
+        fill.weather = c.weather
+        fill.road = c.road
+      }
+      // only what the record actually knows: after dark on a street with no lighting tag the
+      // select stays the customer's to answer (see `lightFrom`)
+      const light = sun ? lightFrom(sun.altitude, r?.road.lit ?? null) : null
+      if (light) fill.light = light
+      const context = sceneContext({
+        weather: w ? toSceneWeather(w) : null,
+        sun,
+        road: r?.road ?? null,
+        source: SOURCE,
+        fetchedAt: new Date().toISOString(),
+      })
+      sceneLookedUp(key, context, utcOffset, fill, r?.ways ?? null)
+    })()
+    return () => ac.abort()
+  }, [key, contextKey, incident.location, incident.at, sceneLookedUp])
+
+  const looked = incident.context ? lookedUpLines(incident.context, lang) : []
 
   const choose = (p: Place) => {
     setLocation({ lng: p.lng, lat: p.lat, address: p.address })
@@ -96,6 +191,57 @@ export function Where() {
       picked.current = place.address
       setQuery(place.address)
     }
+  }
+
+  /**
+   * The third way in. A photograph taken at the scene often carries the place and the minute
+   * in its EXIF, and reading it beats typing an address on a phone at the roadside.
+   *
+   * Offered, never relied on: iOS strips the location out of a picked photo unless the
+   * customer has granted full library access, and a camera-capture input frequently carries
+   * none at all. When it says nothing we say so plainly and keep the photograph anyway — it
+   * is a photograph of the scene either way, which is worth having.
+   */
+  const startFromPhoto = async (list: FileList | null) => {
+    const file = list?.[0]
+    if (!file) return
+    setBusy('photo')
+    setFromPhoto(null)
+    const exif = await file
+      .arrayBuffer()
+      .then(readExif)
+      .catch(() => null)
+    // kept whatever it turned out to know; the store reads the same EXIF for the distances
+    await addPhotos([file], null)
+    if (!exif || (!exif.at && !exif.takenAt)) {
+      setFromPhoto(false)
+      setBusy(null)
+      return
+    }
+    setFromPhoto({
+      at: exif.at,
+      near: exif.at ? `${exif.at[1].toFixed(3)}, ${exif.at[0].toFixed(3)}` : '',
+      // a time in the future is a camera with a wrong clock, not an accident that has not happened
+      takenAt: exif.takenAt && exif.takenAt <= nowLocal() ? exif.takenAt : null,
+    })
+    setBusy(null)
+  }
+
+  const takePhoto = async () => {
+    if (!fromPhoto) return
+    setFromPhoto(null)
+    if (fromPhoto.at) {
+      // agreed: now, and only now, the position goes to the geocoder for its address
+      const at = fromPhoto.at
+      setBusy('photo')
+      const place = await reversePlace(at).catch(() => null)
+      const address = place?.address ?? `${at[1].toFixed(5)}, ${at[0].toFixed(5)}`
+      setLocation({ lng: at[0], lat: at[1], address })
+      picked.current = address
+      setQuery(address)
+      setBusy(null)
+    }
+    if (fromPhoto.takenAt) setIncident({ at: fromPhoto.takenAt })
   }
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -173,6 +319,48 @@ export function Where() {
           {busy === 'locate' ? t('start.where.finding') : t('start.where.useLocation')}
         </button>
 
+        <input
+          ref={photoInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          aria-label={t('start.where.photo.start')}
+          onChange={(e) => {
+            void startFromPhoto(e.target.files)
+            e.target.value = ''
+          }}
+        />
+        <button className="btn btn-secondary w-full" onClick={() => photoInput.current?.click()} disabled={busy === 'photo'} data-from-photo>
+          {busy === 'photo' ? <Icon.spinner /> : <Icon.camera />}
+          {busy === 'photo' ? t('start.where.photo.reading') : t('start.where.photo.start')}
+        </button>
+
+        {fromPhoto === false && (
+          <p data-photo-none className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200">
+            {t('start.where.photo.none')} <span className="text-slate-400">{t('start.where.photo.hint')}</span>
+          </p>
+        )}
+        {fromPhoto && (
+          <div data-photo-found className="rounded-xl bg-brand-50 px-4 py-3 text-sm ring-1 ring-brand-100">
+            <p>
+              {fromPhoto.at && fromPhoto.takenAt
+                ? t('start.where.photo.both', { place: fromPhoto.near, when: spoken(fromPhoto.takenAt, lang) })
+                : fromPhoto.at
+                  ? t('start.where.photo.place', { place: fromPhoto.near })
+                  : t('start.where.photo.time', { when: spoken(fromPhoto.takenAt!, lang) })}
+            </p>
+            <div className="mt-2.5 flex gap-2">
+              <button className="btn btn-primary btn-sm" onClick={() => void takePhoto()}>
+                {t('start.where.photo.use')}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setFromPhoto(null)}>
+                {t('start.where.photo.ignore')}
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">{t('start.where.photo.kept')}</p>
+          </div>
+        )}
+
         {error && <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">{t(error)}</p>}
 
         {incident.location && (
@@ -212,14 +400,45 @@ export function Where() {
           />
         </Field>
 
+        {incident.location && (looking || looked.length > 0) && (
+          <div data-looked className="rounded-xl bg-slate-50 px-4 py-3 text-sm ring-1 ring-slate-200">
+            <div className="font-medium">{t('start.where.looked.title')}</div>
+            {looking ? (
+              <p className="mt-1.5 flex items-center gap-2 text-xs text-slate-500">
+                <Spinner /> {t('start.where.looked.busy')}
+              </p>
+            ) : (
+              <>
+                <ul data-looked-lines className="mt-1.5 space-y-0.5 text-slate-700">
+                  {looked.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 text-xs text-slate-500">{t('start.where.looked.lead')}</p>
+                {acknowledged !== key && (
+                  <div className="mt-2.5 flex gap-2">
+                    <button className="btn btn-secondary btn-sm" onClick={() => setAcknowledged(key)}>
+                      {t('start.where.looked.right')}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => weatherSelect.current?.focus()}>
+                      {t('start.where.looked.wrong')}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         <div>
           <span className="label">{t('start.where.conditions')}</span>
           <div className="grid grid-cols-3 gap-2">
             <select
+              ref={weatherSelect}
               className="input"
               aria-label={t('start.where.weather')}
               value={incident.conditions.weather}
-              onChange={(e) => setIncident({ conditions: { ...incident.conditions, weather: e.target.value as typeof incident.conditions.weather } })}
+              onChange={(e) => setConditions({ weather: e.target.value as typeof incident.conditions.weather })}
             >
               <option value="">{t('start.where.pickWeather')}</option>
               {WEATHER.map((w) => (
@@ -232,7 +451,7 @@ export function Where() {
               className="input"
               aria-label={t('start.where.road')}
               value={incident.conditions.road}
-              onChange={(e) => setIncident({ conditions: { ...incident.conditions, road: e.target.value as typeof incident.conditions.road } })}
+              onChange={(e) => setConditions({ road: e.target.value as typeof incident.conditions.road })}
             >
               <option value="">{t('start.where.pickRoad')}</option>
               {ROAD.map((r) => (
@@ -245,7 +464,7 @@ export function Where() {
               className="input"
               aria-label={t('start.where.light')}
               value={incident.conditions.light}
-              onChange={(e) => setIncident({ conditions: { ...incident.conditions, light: e.target.value as typeof incident.conditions.light } })}
+              onChange={(e) => setConditions({ light: e.target.value as typeof incident.conditions.light })}
             >
               <option value="">{t('start.where.pickLight')}</option>
               {LIGHT.map((l) => (

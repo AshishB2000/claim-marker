@@ -59,6 +59,15 @@ export const en = {
   'light.dark_lit': 'Dark, street lights on',
   'light.dark_unlit': 'Dark, no street lights',
 
+  // ── what the public record says about the road; looked up, never asked
+  'junction.T': 'a T junction',
+  'junction.cross': 'a crossroads',
+  'junction.roundabout': 'a roundabout',
+  'control.traffic_signals': 'traffic lights',
+  'control.stop': 'a stop sign',
+  'control.give_way': 'a give-way sign',
+  'control.crossing': 'a pedestrian crossing',
+
   // ── what the diagram is drawn on
   'surface.satellite': 'Satellite',
   'surface.streets': 'Street map',
@@ -191,6 +200,14 @@ export const es: Record<keyof typeof en, string> = {
   'light.dusk': 'Al atardecer o al amanecer',
   'light.dark_lit': 'De noche, con alumbrado',
   'light.dark_unlit': 'De noche, sin alumbrado',
+
+  'junction.T': 'un cruce en T',
+  'junction.cross': 'un cruce',
+  'junction.roundabout': 'una glorieta',
+  'control.traffic_signals': 'semáforo',
+  'control.stop': 'señal de alto',
+  'control.give_way': 'señal de ceda el paso',
+  'control.crossing': 'cruce peatonal',
 
   'surface.satellite': 'Satélite',
   'surface.streets': 'Mapa de calles',

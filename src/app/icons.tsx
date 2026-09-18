@@ -49,6 +49,20 @@ export const Icon = {
       <path d="M12 3v12M6 11l6 6 6-6M4 21h16" />
     </svg>
   ),
+  share: () => (
+    <svg {...icon}>
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" />
+    </svg>
+  ),
+  copy: () => (
+    <svg {...icon}>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  ),
   layers: () => (
     <svg {...icon}>
       <path d="m12 3 9 5-9 5-9-5 9-5z" />
@@ -201,6 +215,68 @@ export const Icon = {
       <path d="M9 24l4-10h22l4 10v11H9z" />
       <path d="M11 35v4h6v-4M31 35v4h6v-4M9 24h30M12 28h4M32 28h4" />
       <rect x="18" y="29" width="12" height="4" rx="1" />
+    </svg>
+  ),
+  /**
+   * The seven side silhouettes for the camera guide's `side` shot — guides, not portraits: a
+   * recognisable profile in a dozen path commands, not a detailed drawing. Bodies match
+   * `src/zones.ts` / `src/vehicles/bodies.ts`.
+   */
+  sedanSide: () => (
+    <svg {...art}>
+      {/* low, three-box: hood, cabin, long sloped trunk */}
+      <path d="M4 32v-5l7-2 5-7h12l5 7 7 2v5" />
+      <circle cx="11" cy="32" r="3" />
+      <circle cx="33" cy="32" r="3" />
+    </svg>
+  ),
+  hatchbackSide: () => (
+    <svg {...art}>
+      {/* the same nose, but the roof runs further back and drops steeply into a short tail */}
+      <path d="M4 32v-5l7-2 5-7h12l4 6 3 1v5" />
+      <circle cx="11" cy="32" r="3" />
+      <circle cx="31" cy="32" r="3" />
+    </svg>
+  ),
+  coupeSide: () => (
+    <svg {...art}>
+      {/* lower and shorter cabin than the sedan, with a longer sloped tail */}
+      <path d="M4 32v-4l8-3 6-6h8l4 5 9 3v5" />
+      <circle cx="12" cy="32" r="3" />
+      <circle cx="32" cy="32" r="3" />
+    </svg>
+  ),
+  suvSide: () => (
+    <svg {...art}>
+      {/* tall and boxy, a flat roof over almost the full length, bigger wheels */}
+      <path d="M4 32v-9l4-2h4l3-5h14l3 5h4l4 2v9" />
+      <circle cx="11" cy="32" r="3.4" />
+      <circle cx="33" cy="32" r="3.4" />
+    </svg>
+  ),
+  vanSide: () => (
+    <svg {...art}>
+      {/* one tall box, nearly vertical front and back, a short hood the only interruption */}
+      <path d="M4 32v-14h4l3-4h22l3 4h4v14" />
+      <circle cx="11" cy="32" r="3.2" />
+      <circle cx="33" cy="32" r="3.2" />
+    </svg>
+  ),
+  truckSide: () => (
+    <svg {...art}>
+      {/* a short cab, then a step down to a lower, flat bed rail running to the tailgate */}
+      <path d="M4 32v-5l5-2 4-6h9l4 6v3h11v4" />
+      <circle cx="11" cy="32" r="3" />
+      <circle cx="33" cy="32" r="3" />
+    </svg>
+  ),
+  boxTruckSide: () => (
+    <svg {...art}>
+      {/* the cab, then a taller box behind it whose roof stands above the cab's own */}
+      <path d="M4 32v-5l5-2 4-6h6v11" />
+      <path d="M22 32v-16h13v16" />
+      <circle cx="11" cy="32" r="3" />
+      <circle cx="31" cy="32" r="3" />
     </svg>
   ),
   gallery: () => (

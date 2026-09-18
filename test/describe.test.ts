@@ -3,10 +3,12 @@ import {
   cap,
   conditionLabels,
   contactLine,
+  deskVoice,
   displayName,
   driverName,
   driverShort,
   gaps,
+  glareLine,
   ownerLabel,
   personLine,
   vehicleName,
@@ -14,8 +16,9 @@ import {
   whose,
   yesNo,
   UNKNOWN_DRIVER,
+  lookedUpLines,
 } from '../src/claim/describe'
-import { emptyClaim, newPerson, newVehicle, type Claim } from '../src/claim/schema'
+import { emptyClaim, newPerson, newVehicle, type Claim , type SceneContext } from '../src/claim/schema'
 
 const mine = { ...newVehicle('a', 'insured', 'sedan', '#b91c1c'), make: 'Toyota', model: 'Camry', year: 2022 }
 const theirs = newVehicle('b', 'other', 'suv', '#1c1f26')
@@ -101,6 +104,19 @@ describe('how the report names things', () => {
     // someone who is not the customer reads the same whichever voice is asked for
     expect(driverShort({ ...newPerson('driver', 'b'), name: UNKNOWN_DRIVER }, 'desk')).toBe('The driver — unknown, they left the scene')
     expect(personLine(newPerson('witness'), vehicles, 'desk')).toBe('A witness')
+
+    // the other driver's own account, read from their side: their own car is theirs, not the policyholder's
+    expect(deskVoice('other_party')).toBe('desk-other')
+    expect(deskVoice('policyholder')).toBe('desk')
+    expect(deskVoice(undefined)).toBe('desk')
+    expect(whose(mine, 'desk-other')).toBe("the other driver's")
+    expect(whose(theirs, 'desk-other')).toBe("another party's")
+    expect(ownerLabel(mine, 'desk-other')).toBe("Other driver's vehicle")
+    expect(ownerLabel(theirs, 'desk-other')).toBe("Another party's vehicle")
+    expect(personLine(self, vehicles, 'desk-other')).toBe("The other driver, driving the other driver's 2022 Toyota Camry")
+    expect(driverShort(self, 'desk-other')).toBe('The other driver, driving')
+    expect(driverName(self, 'desk-other')).toBe('The other driver')
+    for (const line of [whose(mine, 'desk-other'), ownerLabel(mine, 'desk-other'), personLine(self, vehicles, 'desk-other')]) expect(line).not.toMatch(/policyholder/i)
 
     // and the customer's own voice is exactly what it was
     expect(whose(mine)).toBe('your')
@@ -201,5 +217,82 @@ describe('how the report names things in Spanish', () => {
     expect(conditionLabels({ weather: 'rain', road: 'wet', light: 'dark_lit' }, 'es')).toEqual(['Lluvia', 'Camino mojado', 'De noche, con alumbrado'])
     expect(conditionLabels({ weather: '', road: 'icy', light: '' }, 'es')).toEqual(['Camino con hielo'])
     expect(conditionLabels({ weather: '', road: '', light: '' }, 'es')).toEqual([])
+  })
+})
+
+describe('what the record said, as the card and the report read it', () => {
+  const ctx: SceneContext = {
+    weather: { code: 61, label: 'Light rain', tempC: 11.4, precipMm: 0.3, windKph: 34 },
+    sun: { altitude: 4, azimuth: 270 },
+    road: { name: '5th Avenue', class: 'primary', lanes: 2, oneway: true, maxspeed: '25 mph', lit: true, junction: 'cross', controls: ['crossing', 'traffic_signals'] },
+    source: 'open-meteo+osm',
+    fetchedAt: '2026-09-07T22:10:00.000Z',
+  }
+
+  it('reads the weather, the road, the light with the low sun, and the street — from the record alone', () => {
+    expect(lookedUpLines(ctx)).toEqual([
+      'Rain, 11 °C, wind 34 km/h',
+      'Wet road',
+      'dusk or dawn, the sun low in the west',
+      '5th Avenue, 2 lanes, one-way, 25 mph, a crossroads, a pedestrian crossing, traffic lights',
+    ])
+  })
+
+  it('never shows the customer’s own answers as the record: the record wins', () => {
+    // the record says rain on a wet road at dusk; a customer who said clear, dry and daylight
+    // cannot change that, because their conditions are not an input here at all
+    const lines = lookedUpLines(ctx)
+    expect(lines[0]).toBe('Rain, 11 °C, wind 34 km/h')
+    expect(lines).toContain('Wet road')
+    expect(lines.join(' ')).not.toMatch(/clear|dry|daylight/i)
+    // a code the table does not list reads as the archive's own label, not a guess
+    expect(lookedUpLines({ ...ctx, weather: { ...ctx.weather!, code: 42, label: 'Haze' } })[0]).toBe('Haze, 11 °C, wind 34 km/h')
+  })
+
+  it('reads the road only as far as the kept hour can say', () => {
+    const at = (w: Partial<NonNullable<SceneContext['weather']>>) => lookedUpLines({ ...ctx, weather: { ...ctx.weather!, ...w } })[1]
+    expect(at({ code: 0, precipMm: 0 })).toBe('No rain or snow that hour')
+    expect(at({ code: 61, precipMm: 1, tempC: -2 })).toBe('Icy road')
+    expect(at({ code: 73, precipMm: 0 })).toBe('Snow road')
+  })
+
+  it('says it was dark from the sun alone when the record cannot say whether the street was lit', () => {
+    const night = { ...ctx, sun: { altitude: -20, azimuth: 0 }, road: { ...ctx.road!, lit: null } }
+    expect(lookedUpLines(night)).toContain('After dark')
+    // and the street's own tag when it has one
+    expect(lookedUpLines({ ...night, road: { ...ctx.road!, lit: true } })).toContain('Dark, street lights on')
+    expect(lookedUpLines({ ...night, road: { ...ctx.road!, lit: true } })).not.toContain('After dark')
+  })
+
+  it('reads in Spanish without English left in it', () => {
+    const lines = lookedUpLines(ctx, 'es')
+    expect(lines[0]).toBe('Lluvia, 11 °C, viento 34 km/h')
+    expect(lines[2]).toBe('al atardecer o al amanecer, con el sol bajo hacia el oeste')
+    expect(lines[3]).toContain('semáforo')
+  })
+
+  it('prints only what came back', () => {
+    expect(lookedUpLines({ ...ctx, weather: null, sun: null, road: null })).toEqual([])
+  })
+})
+
+describe('glare, as the desk reads it', () => {
+  // a low sun in the west
+  const ctx: SceneContext = { weather: null, sun: { altitude: 10, azimuth: 270 }, road: null, source: 'test', fetchedAt: '2026-09-07T22:10:00.000Z' }
+
+  it('fires for the car driving into the sun', () => {
+    expect(glareLine(ctx, 270)).toBe('The sun was low and ahead of this vehicle')
+    expect(glareLine(ctx, 255)).not.toBeNull()
+  })
+
+  it('stays quiet for the car with the sun behind it, or beside it', () => {
+    expect(glareLine(ctx, 90)).toBeNull()
+    expect(glareLine(ctx, 0)).toBeNull()
+  })
+
+  it('stays quiet when the sun is high or down', () => {
+    expect(glareLine({ ...ctx, sun: { altitude: 40, azimuth: 270 } }, 270)).toBeNull()
+    expect(glareLine({ ...ctx, sun: { altitude: -3, azimuth: 270 } }, 270)).toBeNull()
+    expect(glareLine(null, 270)).toBeNull()
   })
 })

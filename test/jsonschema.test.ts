@@ -18,11 +18,20 @@ const full = () =>
     ...emptyClaim(),
     reference: 'CM-7F3K2Q',
     submittedAt: '2026-09-07T22:14:03.000Z',
-    reporter: { name: 'Ashish B', phone: '555 0100', email: 'me@example.com', policy: 'pol-9', policyholder: true },
+    reporter: { name: 'Ashish B', phone: '555 0100', email: 'me@example.com', policy: 'pol-9', policyholder: true, party: 'policyholder' },
     incident: {
       kind: 'collision',
       at: '2026-09-06T17:30',
+      shared: 'INC-7F3K2Q',
+      utcOffset: -240,
       location: { lng: -73.9859, lat: 40.7573, address: 'Times Square' },
+      context: {
+        weather: { code: 61, label: 'Light rain', tempC: 11.4, precipMm: 0.3, windKph: 12.6 },
+        sun: { altitude: 8.42, azimuth: 271.3 },
+        road: { name: '5th Avenue', class: 'primary', lanes: 2, oneway: true, maxspeed: '25 mph', lit: true, junction: 'cross', controls: ['crossing', 'traffic_signals'] },
+        source: 'open-meteo+osm',
+        fetchedAt: '2026-09-07T22:10:00.000Z',
+      },
       surface: 'satellite',
       conditions: { weather: 'rain', road: 'wet', light: 'dark_lit' },
       description: 'The van pulled out across me.',
@@ -41,7 +50,15 @@ const full = () =>
     police: { called: true, department: 'NYPD', report: '2026-0042', citations: '' },
     property: { description: 'A pole', owner: 'The city' },
     attestation: { agreed: true, name: 'Ashish B', at: '2026-09-07T22:14:03.000Z' },
-    attachments: { scene: png, damage: { a: png }, photos: [{ data: jpg, of: 'a', caption: 'Front bumper', shows: 'front_bumper' }, { data: jpg, of: null, caption: 'The junction' }] },
+    attachments: {
+      scene: png,
+      replay: 'data:video/webm;codecs=vp9;base64,GkXfow==',
+      damage: { a: png },
+      photos: [
+        { data: jpg, of: 'a', caption: 'Front bumper', shows: 'front_bumper', hash: 'f0e1d2c3b4a59687', minutesFromIncident: 12, metresFromScene: 4 },
+        { data: jpg, of: null, caption: 'The junction' },
+      ],
+    },
   })
 
 describe('the published JSON Schema for claim/1', () => {

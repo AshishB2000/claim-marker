@@ -44,6 +44,32 @@ function shadowBlob(width: number, length: number): THREE.Mesh {
   return mesh
 }
 
+/**
+ * How faint a second account's cars are drawn — present enough to compare against the first,
+ * never mistaken for it.
+ */
+const GHOST_OPACITY = 0.45
+
+/**
+ * A ghost's own materials, cloned rather than faded in place. `instanceBody` gives every car a
+ * fresh paint material, but its other roles (glass, plastic, rim, …) come straight from the
+ * cached template and are shared by every instance of that body — mutating them would fade the
+ * policyholder's solid car too, the moment it shares a body with a ghost.
+ */
+function fadeForGhost(root: THREE.Object3D) {
+  const fade = (m: THREE.Material) => {
+    const clone = m.clone()
+    clone.transparent = true
+    clone.opacity = GHOST_OPACITY
+    return clone
+  }
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh
+    if (!mesh.isMesh) return
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(fade) : fade(mesh.material)
+  })
+}
+
 const rewound = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry>()
 
 /**
@@ -96,7 +122,11 @@ export class CarLayer implements CustomLayerInterface {
   private readonly scene = new THREE.Scene()
   private readonly camera = new THREE.Camera()
   private readonly cars = new Map<string, Car>()
+  /** a second account's cars — kept in their own map so a ghost sharing a real car's id (both
+   * accounts commonly name their own vehicle "a") never collides with it */
+  private readonly ghostCars = new Map<string, Car>()
   private poses: CarPose[] = []
+  private ghostPoses: CarPose[] = []
   private origin: LngLat
   private readonly shift = new THREE.Matrix4()
   private readonly proj = new THREE.Matrix4()
@@ -125,7 +155,7 @@ export class CarLayer implements CustomLayerInterface {
     // whatever its paint; the reflections are kept faint on the map and strong in the studio
     this.scene.environmentIntensity = 0.3
     pmrem.dispose()
-    void this.sync()
+    void this.sync(false)
   }
 
   onRemove() {
@@ -136,32 +166,57 @@ export class CarLayer implements CustomLayerInterface {
   /** the point the cars are positioned relative to; the layer folds it into the projection */
   setOrigin(origin: LngLat) {
     this.origin = origin
-    for (const [id, car] of this.cars) {
-      const pose = this.poses.find((p) => p.id === id)
+    this.reposition(this.cars, this.poses)
+    this.reposition(this.ghostCars, this.ghostPoses)
+    this.map?.triggerRepaint()
+  }
+
+  private reposition(cars: Map<string, Car>, poses: CarPose[]) {
+    for (const [id, car] of cars) {
+      const pose = poses.find((p) => p.id === id)
       if (pose) vehicleMatrix(pose.position, pose.heading, 1, this.origin, car.root.matrix)
     }
-    this.map?.triggerRepaint()
   }
 
   setPoses(poses: CarPose[]) {
     this.poses = poses
-    void this.sync()
+    void this.sync(false)
   }
 
-  private async sync() {
-    for (const [id, car] of this.cars) {
-      const pose = this.poses.find((p) => p.id === id)
+  /**
+   * The other account's vehicles, drawn by this same layer at {@link GHOST_OPACITY} — sharing
+   * the loaded body cache, the scene and the renderer rather than standing up a second
+   * `CarLayer`, which would need its own `onAdd` wired into the same GL context for nothing a
+   * second pose list does not already give it. `ghostCars` keeps them apart from the real set
+   * only so ids do not collide; `sync` below does not otherwise know or care which set it is
+   * filling.
+   */
+  setGhosts(poses: CarPose[]) {
+    this.ghostPoses = poses
+    void this.sync(true)
+  }
+
+  /**
+   * `poses()` reads `this.poses`/`this.ghostPoses` live rather than a snapshot, so a `setPoses`
+   * or `setGhosts` that lands while a body is still loading is seen by the `continue` guard
+   * below — a stale load cannot add a car nobody asked for any more.
+   */
+  private async sync(ghost: boolean) {
+    const cars = ghost ? this.ghostCars : this.cars
+    const poses = () => (ghost ? this.ghostPoses : this.poses)
+    for (const [id, car] of cars) {
+      const pose = poses().find((p) => p.id === id)
       if (!pose || pose.body !== car.body) {
         this.scene.remove(car.root)
-        this.cars.delete(id)
+        cars.delete(id)
       }
     }
-    for (const pose of this.poses) {
-      let car = this.cars.get(pose.id)
+    for (const pose of poses()) {
+      let car = cars.get(pose.id)
       if (!car) {
         const template = await loadBody(pose.body)
         // the world may have moved on during the load
-        if (this.cars.has(pose.id) || !this.poses.some((p) => p.id === pose.id && p.body === pose.body)) continue
+        if (cars.has(pose.id) || !poses().some((p) => p.id === pose.id && p.body === pose.body)) continue
         const inner = instanceBody(template, pose.color)
         inner.traverse((o) => {
           const mesh = o as THREE.Mesh
@@ -177,10 +232,11 @@ export class CarLayer implements CustomLayerInterface {
         const size = SIZE[pose.body]
         const root = new THREE.Group()
         root.add(inner, shadowBlob(size.width, size.length))
+        if (ghost) fadeForGhost(root)
         root.matrixAutoUpdate = false
         this.scene.add(root)
         car = { root, body: pose.body, color: pose.color }
-        this.cars.set(pose.id, car)
+        cars.set(pose.id, car)
       } else if (car.color !== pose.color) {
         repaint(car.root, pose.color)
         car.color = pose.color

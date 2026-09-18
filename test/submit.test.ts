@@ -54,4 +54,19 @@ describe('delivering the document', () => {
       await expect(deliver(doc, { url: 'u', token: null, fetch: always as typeof globalThis.fetch, wait: noWait, attempts: 2 })).rejects.not.toBeInstanceOf(Rejected)
     }
   })
+
+  it('refuses a dead party token for good: nobody can renew it, so it is not an outage', async () => {
+    const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url')
+    const party = `${b64({ sub: 'party:INC-TEST0001', policy: '', exp: 1 })}.c2ln`
+    for (const status of [401, 403]) {
+      let n = 0
+      const dead = async () => (n++, reply(status))
+      await expect(deliver(doc, { url: 'u', token: party, fetch: dead as typeof globalThis.fetch, wait: noWait })).rejects.toBeInstanceOf(Rejected)
+      expect(n).toBe(1)
+    }
+    // a customer's own token is still waited on, because the host may renew it
+    const customer = `${b64({ sub: 'alice', policy: 'POL-1', exp: 1 })}.c2ln`
+    const always = async () => reply(401)
+    await expect(deliver(doc, { url: 'u', token: customer, fetch: always as typeof globalThis.fetch, wait: noWait, attempts: 2 })).rejects.not.toBeInstanceOf(Rejected)
+  })
 })

@@ -72,6 +72,56 @@ export const LIGHT_LABEL: Record<(typeof LIGHT)[number], string> = {
 /** empty string means not given; the form does not insist */
 export type Conditions = { weather: (typeof WEATHER)[number] | ''; road: (typeof ROAD)[number] | ''; light: (typeof LIGHT)[number] | '' }
 
+// ── what the public record says ──────────────────────────────────────
+
+/**
+ * The scene as the public record has it: the weather at that hour, where the sun was, and the
+ * road itself. Looked up from the place and the time, never typed — `conditions` above stay
+ * the customer's own answer, and this sits beside them so an adjuster can see both.
+ *
+ * Every number is rounded on the way in, like every coordinate, so export → load → export is
+ * byte-identical.
+ */
+export const JUNCTIONS = ['none', 'T', 'cross', 'roundabout'] as const
+export type Junction = (typeof JUNCTIONS)[number]
+
+export type SceneWeather = {
+  /** the WMO present-weather code the archive gave */
+  code: number
+  /** the code in words, English, as the lookup named it */
+  label: string
+  tempC: number | null
+  precipMm: number | null
+  windKph: number | null
+}
+
+/** degrees: altitude above the horizon (negative below it), azimuth clockwise from north */
+export type SceneSun = { altitude: number; azimuth: number }
+
+export type SceneRoad = {
+  name: string
+  /** the OSM `highway` value: residential, primary, motorway… */
+  class: string
+  lanes: number | null
+  oneway: boolean
+  /** as posted, in the units the record uses: "25 mph", "50" */
+  maxspeed: string
+  /** whether it is lit at night; null when the record does not say */
+  lit: boolean | null
+  junction: Junction
+  /** traffic_signals, stop, give_way, crossing — whichever are within the junction */
+  controls: string[]
+}
+
+/** the whole lookup, or null when nothing came back; `source` names who was asked */
+export type SceneContext = {
+  weather: SceneWeather | null
+  sun: SceneSun | null
+  road: SceneRoad | null
+  source: string
+  fetchedAt: string
+}
+
 // ── people ───────────────────────────────────────────────────────────
 
 /**
@@ -112,6 +162,17 @@ export type Police = {
 export type Property = { description: string; owner: string }
 
 /** who is filling this in; on an insurer's own site this comes from the login */
+/**
+ * Which side of the accident this report is. `policyholder` is the customer the page was built
+ * for; `other_party` is the other driver, who scanned a QR code at the scene and gave their own
+ * account on their own phone, with no account and no app. Their own vehicle still carries role
+ * `insured` inside their document — schema-wise that means "the reporter's vehicle" — so every
+ * step, the marker and `describe.ts` work unchanged on either side.
+ */
+export const PARTIES = ['policyholder', 'other_party'] as const
+export type Party = (typeof PARTIES)[number]
+export const isParty = (v: unknown): v is Party => (PARTIES as readonly string[]).includes(v as string)
+
 export type Reporter = {
   name: string
   phone: string
@@ -120,6 +181,8 @@ export type Reporter = {
   policy: string
   /** null until answered */
   policyholder: boolean | null
+  /** whose side of it this is; `policyholder` for every document written before there were two */
+  party: Party
 }
 
 /**
@@ -141,6 +204,27 @@ export type Photo = {
    * in documents written before it existed, and dropped when the zone is not on that body.
    */
   shows?: string | null
+  /**
+   * How far the photograph's own EXIF puts it from the incident the customer described: minutes
+   * from `incident.at` (negative is before) and metres from `incident.location`, both rounded.
+   *
+   * **Distances, never coordinates.** A photograph picked from the gallery can carry the
+   * customer's home, their child's school, everywhere they have been; the claim needs to know
+   * "this was taken two hours later and four hundred metres away", and nothing else. The raw
+   * position is read, used and thrown away in the page and never reaches the document. Both
+   * are absent — not null — when the photograph carried no metadata, so every document written
+   * before this existed stays byte-identical.
+   */
+  minutesFromIncident?: number
+  metresFromScene?: number
+  /**
+   * A difference hash of the picture — sixteen hex characters — so the insurer's own server can
+   * see that the same photograph has arrived before, on this claim or another. Computed in the
+   * page at downscale time, because a claim server with no dependencies has no image decoder.
+   * Absent when the canvas could not be read. What it means is an adjuster's call; the hash
+   * itself says only "this is the same picture".
+   */
+  hash?: string
 }
 
 /** the state the vehicle is in now — what decides a tow, a rental and where to inspect */
@@ -209,7 +293,21 @@ export type Incident = {
   kind: Kind
   /** local date and time, `YYYY-MM-DDTHH:mm`, as the form field holds it */
   at: string
+  /**
+   * The id two reports of one accident share, `INC-…`, when the other driver was invited to add
+   * their side. Null on a report with only one account. A backend that keeps its own records
+   * needs only this and `reporter.party` to link them itself.
+   */
+  shared: string | null
+  /**
+   * minutes east of UTC at the place and moment above, so `at` names an instant rather than a
+   * wall clock. Filled by the weather lookup, which has to resolve the zone anyway; null when
+   * nothing looked it up, which is how every document written before this existed reads.
+   */
+  utcOffset: number | null
   location: Location | null
+  /** what the public record says about that place at that time; null until it is looked up */
+  context: SceneContext | null
   surface: Surface
   conditions: Conditions
   description: string
@@ -220,6 +318,14 @@ export type Incident = {
 export type Attachments = {
   /** PNG data URL of the map with the vehicles on it */
   scene: string | null
+  /**
+   * The playback, recorded as a short video at send time — `data:video/webm` or `video/mp4`,
+   * whichever the browser can make. What the customer drew, moving, is evidence a still
+   * cannot be: the order things happened in, and which car was where when. Null when the
+   * browser cannot record, when there was nothing to play, or when it came out larger than
+   * `MAX_REPLAY_BYTES`; the report goes without it rather than waiting on it.
+   */
+  replay: string | null
   /** PNG data URL of the marked-up car, per vehicle id */
   damage: Record<string, string>
   /** the customer's own photographs */
@@ -253,15 +359,100 @@ export const isLngLat = (v: unknown): v is LngLat =>
 export const isHex = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)
 
 const isPng = (v: unknown): v is string => typeof v === 'string' && v.startsWith('data:image/png;base64,')
+
+/**
+ * The most a recorded replay may weigh, as its data URL: about 3 MB of video, a few seconds at
+ * the rate the recorder asks for. Past that it is dropped rather than sent — the whole document
+ * travels as one JSON body from a phone at the roadside, and the diagram PNG says most of what
+ * the video does.
+ */
+export const MAX_REPLAY_BYTES = 4 * 1024 * 1024
+export const isReplay = (v: unknown): v is string =>
+  typeof v === 'string' && v.length <= MAX_REPLAY_BYTES && /^data:video\/(webm|mp4)(;[^,]*)?;base64,/.test(v)
 const isPhotoData = (v: unknown): v is string => typeof v === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(v)
 
 /** the most photographs one claim carries; each is a few hundred kB after downscaling */
 export const MAX_PHOTOS = 12
 
+/**
+ * How far out a photograph's own metadata can put it and still be worth recording: a fortnight
+ * and a thousand kilometres. Past that the camera's clock or its fix is wrong, not the
+ * customer, and a number that large says nothing to an adjuster.
+ */
+export const MAX_PHOTO_MINUTES = 14 * 24 * 60
+export const MAX_PHOTO_METRES = 1_000_000
+
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
 const bool = (v: unknown) => v === true
 const bool3 = (v: unknown) => (typeof v === 'boolean' ? v : null)
 const oneOf = <T extends string>(list: readonly T[], v: unknown): T | '' => ((list as readonly string[]).includes(v as string) ? (v as T) : '')
+const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {})
+
+/** minutes east of UTC; no zone on earth is further out than this, so anything else is not one */
+const offsetMinutes = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 16 * 60 ? Math.round(v) : null)
+
+const roundTo = (v: unknown, places: number): number | null => {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null
+  const f = 10 ** places
+  return Math.round(v * f) / f
+}
+
+/** `INC-` and up to thirty-two unambiguous characters; anything else is not one of ours */
+const sharedId = (v: unknown): string | null => (typeof v === 'string' && /^INC-[A-Z0-9-]{4,32}$/.test(v.trim().toUpperCase()) ? v.trim().toUpperCase() : null)
+
+/** enough of a junction's furniture to read at a glance, not a survey of it */
+const MAX_CONTROLS = 6
+
+/**
+ * `at` as an instant: the wall clock the customer gave, read in the zone the lookup found.
+ * Null without an offset — a bare local time is not a moment, and taking the browser's own
+ * zone would be assuming the customer is standing where their phone is, which after an
+ * accident on holiday is exactly wrong.
+ */
+export function instantOf(at: string, utcOffset: number | null): number | null {
+  if (utcOffset === null || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at)) return null
+  const ms = Date.parse(`${at.slice(0, 16)}Z`)
+  return Number.isFinite(ms) ? ms - utcOffset * 60_000 : null
+}
+
+/**
+ * The looked-up scene, normalised and capped. A lookup that came back with nothing usable is
+ * no context at all, so it is null rather than an object full of nulls.
+ */
+export const sceneContext = (v: unknown): SceneContext | null => {
+  const c = obj(v)
+  const w = obj(c.weather)
+  const sun = obj(c.sun)
+  const r = obj(c.road)
+  const weather: SceneWeather | null =
+    typeof w.code === 'number' && Number.isFinite(w.code)
+      ? { code: Math.round(w.code), label: str(w.label), tempC: roundTo(w.tempC, 1), precipMm: roundTo(w.precipMm, 2), windKph: roundTo(w.windKph, 1) }
+      : null
+  const altitude = roundTo(sun.altitude, 2)
+  const azimuth = roundTo(sun.azimuth, 2)
+  const road: SceneRoad | null = str(r.class)
+    ? {
+        name: str(r.name),
+        class: str(r.class),
+        lanes: Number.isInteger(r.lanes) && (r.lanes as number) > 0 && (r.lanes as number) <= 12 ? (r.lanes as number) : null,
+        oneway: bool(r.oneway),
+        maxspeed: str(r.maxspeed),
+        lit: typeof r.lit === 'boolean' ? r.lit : null,
+        junction: (JUNCTIONS as readonly string[]).includes(r.junction as string) ? (r.junction as Junction) : 'none',
+        controls: Array.isArray(r.controls)
+          ? [...new Set(r.controls.filter((x): x is string => typeof x === 'string' && !!x.trim()).map((x) => x.trim()))].sort().slice(0, MAX_CONTROLS)
+          : [],
+      }
+    : null
+  if (!weather && !road && (altitude === null || azimuth === null)) return null
+  return {
+    weather,
+    sun: altitude !== null && azimuth !== null ? { altitude, azimuth } : null,
+    road,
+    source: str(c.source) || 'open-meteo+osm',
+    fetchedAt: str(c.fetchedAt),
+  }
+}
 
 /** the current local minute in the shape `<input type="datetime-local">` holds */
 export function nowLocal(now = new Date()): string {
@@ -347,15 +538,15 @@ export const emptyClaim = (): Claim => ({
   schema: CLAIM_SCHEMA,
   reference: null,
   submittedAt: null,
-  reporter: { name: '', phone: '', email: '', policy: '', policyholder: null },
-  incident: { kind: 'collision', at: nowLocal(), location: null, surface: 'satellite', conditions: { weather: '', road: '', light: '' }, description: '', language: 'en' },
+  reporter: { name: '', phone: '', email: '', policy: '', policyholder: null, party: 'policyholder' },
+  incident: { kind: 'collision', at: nowLocal(), shared: null, utcOffset: null, location: null, context: null, surface: 'satellite', conditions: { weather: '', road: '', light: '' }, description: '', language: 'en' },
   vehicles: [newVehicle('a', 'insured', 'sedan', '#b9bec6'), newVehicle('b', 'other', 'suv', '#1c1f26')],
   people: [],
   impact: null,
   police: { called: null, department: '', report: '', citations: '' },
   property: { description: '', owner: '' },
   attestation: { agreed: false, name: '', at: null },
-  attachments: { scene: null, damage: {}, photos: [] },
+  attachments: { scene: null, replay: null, damage: {}, photos: [] },
 })
 
 /** the normalised document, the shape that is sent and stored */
@@ -384,10 +575,13 @@ export const toDocument = (claim: Claim): Claim => {
       email: str(claim.reporter.email).toLowerCase(),
       policy: str(claim.reporter.policy).toUpperCase(),
       policyholder: bool3(claim.reporter.policyholder),
+      party: isParty(claim.reporter.party) ? claim.reporter.party : 'policyholder',
     },
     incident: {
       kind: claim.incident.kind,
       at: claim.incident.at,
+      shared: sharedId(claim.incident.shared),
+      utcOffset: offsetMinutes(claim.incident.utcOffset),
       location: claim.incident.location
         ? {
             lng: roundLngLat([claim.incident.location.lng, claim.incident.location.lat])[0],
@@ -395,6 +589,7 @@ export const toDocument = (claim: Claim): Claim => {
             address: str(claim.incident.location.address),
           }
         : null,
+      context: sceneContext(claim.incident.context),
       surface: claim.incident.surface,
       conditions: {
         weather: oneOf(WEATHER, claim.incident.conditions.weather),
@@ -417,6 +612,7 @@ export const toDocument = (claim: Claim): Claim => {
     attestation: { agreed: bool(claim.attestation.agreed), name: str(claim.attestation.name), at: claim.attestation.at },
     attachments: {
       scene: claim.attachments.scene,
+      replay: isReplay(claim.attachments.replay) ? claim.attachments.replay : null,
       damage: claim.attachments.damage,
       photos: claim.attachments.photos
         .filter((p) => isPhotoData(p.data))
@@ -426,6 +622,11 @@ export const toDocument = (claim: Claim): Claim => {
           const photo: Photo = { data: p.data, of, caption: str(p.caption) }
           // only when present, so every document written before `shows` existed stays byte-identical
           if (of && p.shows && zoneById(bodies.get(of)!, p.shows)) photo.shows = p.shows
+          if (typeof p.hash === 'string' && /^[0-9a-f]{16}$/.test(p.hash)) photo.hash = p.hash
+          const minutes = roundTo(p.minutesFromIncident, 0)
+          const metres = roundTo(p.metresFromScene, 0)
+          if (minutes !== null && Math.abs(minutes) <= MAX_PHOTO_MINUTES) photo.minutesFromIncident = minutes
+          if (metres !== null && metres >= 0 && metres <= MAX_PHOTO_METRES) photo.metresFromScene = metres
           return photo
         }),
     },
@@ -440,8 +641,6 @@ export function makeReference(random: () => number = Math.random): string {
   for (let i = 0; i < 6; i++) s += ALPHABET[Math.floor(random() * ALPHABET.length)]
   return s
 }
-
-const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {})
 
 /**
  * Validate a stored or received document. Structural problems throw — "you handed me the
@@ -529,7 +728,15 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
   for (const entry of Array.isArray(att.photos) ? att.photos : []) {
     const p = obj(entry)
     if (!isPhotoData(p.data)) continue
-    photos.push({ data: p.data, of: typeof p.of === 'string' ? p.of : null, caption: str(p.caption), shows: typeof p.shows === 'string' ? p.shows : null })
+    photos.push({
+      data: p.data,
+      of: typeof p.of === 'string' ? p.of : null,
+      caption: str(p.caption),
+      shows: typeof p.shows === 'string' ? p.shows : null,
+      ...(typeof p.hash === 'string' ? { hash: p.hash } : {}),
+      ...(typeof p.minutesFromIncident === 'number' ? { minutesFromIncident: p.minutesFromIncident } : {}),
+      ...(typeof p.metresFromScene === 'number' ? { metresFromScene: p.metresFromScene } : {}),
+    })
   }
 
   const rep = obj(raw.reporter)
@@ -541,11 +748,14 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
     schema: CLAIM_SCHEMA,
     reference: typeof raw.reference === 'string' ? raw.reference : null,
     submittedAt: typeof raw.submittedAt === 'string' ? raw.submittedAt : null,
-    reporter: { name: str(rep.name), phone: str(rep.phone), email: str(rep.email), policy: str(rep.policy), policyholder: bool3(rep.policyholder) },
+    reporter: { name: str(rep.name), phone: str(rep.phone), email: str(rep.email), policy: str(rep.policy), policyholder: bool3(rep.policyholder), party: isParty(rep.party) ? rep.party : 'policyholder' },
     incident: {
       kind: isKind(inc.kind) ? inc.kind : base.incident.kind,
       at: typeof inc.at === 'string' ? inc.at : nowLocal(),
+      shared: typeof inc.shared === 'string' ? inc.shared : null,
+      utcOffset: typeof inc.utcOffset === 'number' ? inc.utcOffset : null,
       location,
+      context: sceneContext(inc.context),
       surface: isSurface(inc.surface) ? inc.surface : 'satellite',
       conditions: { weather: oneOf(WEATHER, cond.weather), road: oneOf(ROAD, cond.road), light: oneOf(LIGHT, cond.light) },
       description: str(inc.description),
@@ -557,7 +767,7 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
     police: { called: bool3(pol.called), department: str(pol.department), report: str(pol.report), citations: str(pol.citations) },
     property: { description: str(prop.description), owner: str(prop.owner) },
     attestation: { agreed: bool(attn.agreed), name: str(attn.name), at: typeof attn.at === 'string' ? attn.at : null },
-    attachments: { scene: isPng(att.scene) ? att.scene : null, damage, photos },
+    attachments: { scene: isPng(att.scene) ? att.scene : null, replay: isReplay(att.replay) ? att.replay : null, damage, photos },
   })
 
   return { value, rejected }

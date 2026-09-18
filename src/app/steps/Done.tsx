@@ -1,6 +1,8 @@
-import { useClaim } from '../../claim/store'
+import { useClaim, othersOf } from '../../claim/store'
 import { toDocument } from '../../claim/schema'
+import { config } from '../../config'
 import { useT } from '../../i18n/useT'
+import { Invite } from '../Invite'
 import { Icon } from '../icons'
 
 export function Done() {
@@ -9,6 +11,12 @@ export function Done() {
   const reset = useClaim((s) => s.reset)
   const t = useT()
   const queued = delivery === 'queued'
+  const invite = useClaim((s) => s.invite)
+  const party = claim.reporter.party === 'other_party'
+  // the last chance to ask, and often the first time the customer has a free hand. Shown again
+  // once made — `Invite` keeps the code on screen — but not for a report still in the outbox:
+  // its reference is the page's own, which the server has never heard of, so nothing could link
+  const canInvite = !party && !queued && !!config.submitUrl && othersOf(claim).length > 0 && (!claim.incident.shared || invite?.incident === claim.incident.shared)
 
   const download = () => {
     const doc = toDocument(claim)
@@ -25,8 +33,10 @@ export function Done() {
           {queued ? <path d="M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" /> : <path d="M20 6 9 17l-5-5" />}
         </svg>
       </span>
-      <h1 className="mt-5 text-3xl font-semibold tracking-tight">{t(queued ? 'shell.done.queued.title' : 'shell.done.sent.title')}</h1>
-      <p className="mt-2 text-slate-500">{t(queued ? 'shell.done.queued.lead' : 'shell.done.sent.lead')}</p>
+      <h1 className="mt-5 text-3xl font-semibold tracking-tight">
+        {t(queued ? 'shell.done.queued.title' : party ? 'shell.done.party.title' : 'shell.done.sent.title')}
+      </h1>
+      <p className="mt-2 text-slate-500">{t(queued ? 'shell.done.queued.lead' : party ? 'shell.done.party.lead' : 'shell.done.sent.lead')}</p>
       <div className="card mx-auto mt-6 inline-block px-8 py-4">
         <div className="eyebrow">{t(queued ? 'shell.done.queued.ref' : 'shell.done.ref')}</div>
         <div className="mt-1 font-mono text-3xl font-semibold tracking-wider">{claim.reference}</div>
@@ -40,6 +50,12 @@ export function Done() {
           </li>
         ))}
       </ol>
+
+      {canInvite && (
+        <div className="mx-auto mt-8 max-w-md text-left">
+          <Invite />
+        </div>
+      )}
 
       <div className="mt-8 flex flex-wrap justify-center gap-2">
         <button className="btn btn-secondary" onClick={download}>

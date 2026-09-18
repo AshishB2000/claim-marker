@@ -8,6 +8,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { parseDamages, type Damage } from '../schema'
 import type { Vehicle } from '../zones'
+import type { FeatureCollection, LineString } from 'geojson'
 import { bearing, destination, distance, type LngLat } from '../geo'
 import {
   KIND_INFO,
@@ -20,23 +21,30 @@ import {
   type Claim,
   type ClaimVehicle,
   type Condition,
+  type Conditions,
   type Incident,
   type Kind,
   type Location,
   type Person,
   type PersonRole,
+  type Photo,
   type Police,
   type Property,
   type Reporter,
+  type SceneContext,
   type Step,
 } from './schema'
-import { shrink } from './photos'
+import { photoDistances, shrink } from './photos'
 import { applyPrefill, vehicleFromPolicy, type Prefill, type PrefillVehicle } from './prefill'
+import { type IncidentInvite, type IncidentSeed } from './seed'
+import { partyFromUrl } from '../config'
+import { readExif, type PhotoExif } from './exif'
 import { fromFrame } from '../assist/frame'
-import type { Scene } from '../assist/schema'
+import type { IntakeDraft, Scene } from '../assist/schema'
 import { SIZE } from '../vehicles/bodies'
 import { suggestDamage } from './suggest'
 import type { Lang } from '../i18n'
+import { PAINTS } from '../vehicles/paint'
 
 // the flow's own steps live in the schema, where the assistant can name one without
 // dragging the store in; everything here still imports them from the store as it did
@@ -66,6 +74,9 @@ const TRAIL_STEP = 2.5
 const TRAIL_MAX = 40
 /** the drag has to cover this much before it says anything about which way the car faces */
 const TURN_MIN = 1.5
+/** a photograph that said nothing about itself */
+const NO_EXIF: PhotoExif = { takenAt: null, utcOffset: null, at: null }
+
 /** bumpers this close, or overlapping, is a collision */
 const TOUCHING = 1.2
 
@@ -75,6 +86,22 @@ const nextId = (vehicles: ClaimVehicle[]) => {
     if (!vehicles.some((v) => v.id === id)) return id
   }
   return `v${vehicles.length}`
+}
+
+/**
+ * Which of an intake draft's proposals the customer left ticked, row for row with the "here is
+ * what we understood" card in `Intake.tsx`. `vehicles` has one entry per `draft.vehicles`, in
+ * the same order, because a draft can propose several; every other proposal is one row.
+ */
+export type IntakeTake = {
+  kind: boolean
+  when: boolean
+  place: boolean
+  conditions: boolean
+  vehicles: boolean[]
+  people: boolean
+  police: boolean
+  property: boolean
 }
 
 export type ClaimState = {
@@ -93,11 +120,52 @@ export type ClaimState = {
   /** the customer chose which of the policy's vehicles it was */
   pickPolicyVehicle: (index: number) => void
 
+  /**
+   * The other driver's page, starting from the invite. Their own vehicle is the one to fill in
+   * — role `insured`, which in their document means "the reporter's vehicle" — and the
+   * inviting customer's own car arrives as the *other* one, as shape, colour, make and model
+   * only. They never see the first report; the seed simply does not contain it.
+   */
+  seedFromIncident: (incident: string, seed: IncidentSeed) => void
+  /**
+   * The link the customer showed the other driver, kept beside `incident.shared` in the draft so
+   * a reload, or coming back to the step, shows *that* code again instead of minting a second
+   * incident the other driver never saw. The customer's own link; never part of `claim/1`.
+   */
+  invite: IncidentInvite | null
+  /** the customer invited the other driver: both accounts will name this incident */
+  shareIncident: (invite: IncidentInvite) => void
+
   goto: (step: Step) => void
   next: () => void
   back: () => void
 
   setIncident: (patch: Partial<Omit<Incident, 'location' | 'kind'>>) => void
+  /**
+   * one of the three condition selects, answered by the customer. Separate from `setIncident`
+   * because touching a select is what takes it away from the lookup for good.
+   */
+  setConditions: (patch: Partial<Conditions>) => void
+  /**
+   * Who answered each of the three condition selects: `auto` means the lookup filled it and it
+   * still follows the place and the time; `user` means the customer has set it and it is theirs.
+   * Exactly `autoDamage`'s bargain, for the conditions.
+   */
+  autoConditions: Partial<Record<keyof Conditions, 'auto' | 'user'>>
+  /**
+   * the place and hour `incident.context` was looked up for. It not matching `sceneKey` of the
+   * incident is what "still looking it up" means — a derived flag, not a second piece of state
+   * to keep in step.
+   */
+  contextKey: string | null
+  /**
+   * The ways around the incident as GeoJSON, for the diagram to draw the road the cars are
+   * standing on. Not part of `claim/1` and not persisted: it is 60 m of public map, cheap to
+   * ask for again, and the document records the road in words instead.
+   */
+  roadWays: FeatureCollection<LineString> | null
+  /** what the public record answered for `key`, the conditions to fill from it, and the ways to draw */
+  sceneLookedUp: (key: string, context: SceneContext | null, utcOffset: number | null, fill: Partial<Conditions>, ways?: FeatureCollection<LineString> | null) => void
   /**
    * the kind decides who else is expected: a kind with no other party drops the other vehicles
    * and everyone in them; a collision with none listed gets one to fill in
@@ -121,6 +189,13 @@ export type ClaimState = {
 
   /** downscale and keep photographs; resolves to how many were kept */
   addPhotos: (files: Iterable<File>, of: string | null) => Promise<number>
+  /**
+   * What each kept photograph said about itself, index for index with `attachments.photos`.
+   * In memory only: it holds the raw position the document deliberately never sees, and a
+   * reload is not a reason to write coordinates to disk. A reopened draft keeps the distances
+   * already worked out; they simply stop following the place and the time.
+   */
+  photoExif: (PhotoExif | null)[]
   captionPhoto: (index: number, caption: string) => void
   removePhoto: (index: number) => void
   /** the panel a photo shows, set when a mark read off it is added; the caption stays the customer's */
@@ -145,6 +220,16 @@ export type ClaimState = {
   addWaypointAt: (id: string, position: LngLat) => void
   /** the assistant read the customer's words: place and turn the vehicles it recognised */
   applyScene: (scene: Scene) => void
+  /**
+   * "Just tell us what happened": one account, applied piece by piece. Fills only what is
+   * empty, the same bargain as `prefill` — except `kind`, an explicit choice, and the
+   * description, which is the customer's own words and always theirs to keep.
+   */
+  applyIntake: (draft: IntakeDraft, take: IntakeTake, transcript: string) => void
+  /** the intake draft's place, in words, for the Where step's search box to start from; never coordinates */
+  placeQuery: string | null
+  /** true once, after `applyIntake`, when the draft had enough in it to draw the diagram itself */
+  drawFromWords: boolean
   clearPath: (id: string) => void
   /** `manual` means the customer placed it, so it stops following the vehicles */
   setImpact: (impact: LngLat | null, manual?: boolean) => void
@@ -163,6 +248,16 @@ export type ClaimState = {
   delivered: (local: string, reference: string) => void
   reset: () => void
 }
+
+/**
+ * Where the draft is kept. The other driver's page keeps theirs apart, one per incident: a link
+ * opened on a phone that holds an unsent report of its own — theirs about another accident, or
+ * the inviting customer's own, tapping their link to check it — must not overwrite that report
+ * or send it as the other driver's. Read from the URL here, at import, because the draft is
+ * opened before any configuration loads; `partyFromUrl` is the same reader `config.party` uses.
+ */
+export const draftName = (incident: string | null) => (incident ? `claim-marker/draft/${incident}` : 'claim-marker/draft')
+const DRAFT = draftName(typeof location === 'undefined' ? null : (partyFromUrl(location.search)?.incident ?? null))
 
 export const useClaim = create<ClaimState>()(
   persist(
@@ -212,6 +307,52 @@ export const useClaim = create<ClaimState>()(
         if (changed) set({ autoDamage: next, claim: { ...claim, vehicles } })
       }
 
+      /**
+       * The place or the time changed, so every photograph is now a different distance from the
+       * incident. Only the ones whose metadata is still in memory move; the rest keep the
+       * numbers they were given, which is what a draft reopened tomorrow has.
+       */
+      const rePlacePhotos = () => {
+        const { claim, photoExif } = get()
+        if (photoExif.every((e) => !e)) return
+        const { incident } = claim
+        let changed = false
+        const photos = claim.attachments.photos.map((p, i) => {
+          const exif = photoExif[i]
+          if (!exif) return p
+          const next: Photo = {
+            data: p.data,
+            of: p.of,
+            caption: p.caption,
+            ...('shows' in p ? { shows: p.shows } : {}),
+            ...('hash' in p ? { hash: p.hash } : {}),
+            ...photoDistances(exif, incident),
+          }
+          if (JSON.stringify(next) !== JSON.stringify(p)) changed = true
+          return next
+        })
+        if (changed) patchClaim((c) => ({ attachments: { ...c.attachments, photos } }))
+      }
+
+      /**
+       * The place or the hour changed, so what the record said about the old one is no answer
+       * about the new one: conditions the lookup filled go, and the customer's own stay. Done
+       * here, where the change happens — never in `sceneLookedUp`, which cannot tell "the record
+       * has no answer" from "the fetch failed".
+       */
+      const forgetLookedUp = () => {
+        const { autoConditions, claim } = get()
+        const conditions = { ...claim.incident.conditions }
+        const next = { ...autoConditions }
+        for (const k of ['weather', 'road', 'light'] as const) {
+          if (next[k] !== 'auto') continue
+          delete next[k]
+          conditions[k] = ''
+        }
+        set({ autoConditions: next })
+        patchClaim((c) => ({ incident: { ...c.incident, conditions } }))
+      }
+
       /** the geometry moved: find the impact again, then the damage that follows from it */
       const settle = () => {
         autoImpact()
@@ -223,9 +364,16 @@ export const useClaim = create<ClaimState>()(
         step: 'kind',
         impactManual: false,
         autoDamage: {},
+        autoConditions: {},
+        contextKey: null,
+        roadWays: null,
+        photoExif: [],
         policy: [],
         delivery: null,
         lang: null,
+        placeQuery: null,
+        drawFromWords: false,
+        invite: null,
         // the document says which language its free text is in, so the desk knows what it is reading
         setLang: (lang) => set((s) => ({ lang, claim: { ...s.claim, incident: { ...s.claim.incident, language: lang } } })),
 
@@ -233,6 +381,32 @@ export const useClaim = create<ClaimState>()(
         pickPolicyVehicle: (index) => {
           const p = get().policy[index]
           if (p) mapVehicle(insuredOf(get().claim).id, (v) => vehicleFromPolicy(v, p, true))
+        },
+
+        seedFromIncident: (incident, seed) => {
+          const mine = newVehicle('a', 'insured', 'sedan', '#b9bec6')
+          const theirs = seed.vehicles.map((v, i) => ({
+            ...newVehicle(String.fromCharCode(98 + i), 'other', v.body, v.color),
+            make: v.make,
+            model: v.model,
+          }))
+          set((s) => ({
+            contextKey: null,
+            roadWays: null,
+            photoExif: [],
+            invite: null,
+            claim: {
+              ...s.claim,
+              reporter: { ...s.claim.reporter, party: 'other_party' },
+              incident: { ...s.claim.incident, shared: incident, location: seed.location, at: seed.at, utcOffset: seed.utcOffset, surface: seed.surface, context: null },
+              vehicles: [mine, ...theirs],
+              people: [],
+            },
+          }))
+        },
+        shareIncident: (invite) => {
+          set({ invite })
+          patchClaim((c) => ({ incident: { ...c.incident, shared: invite.incident } }))
         },
 
         goto: (step) => set({ step }),
@@ -247,7 +421,43 @@ export const useClaim = create<ClaimState>()(
             return { step: steps[Math.max(steps.indexOf(s.step) - 1, 0)] }
           }),
 
-        setIncident: (patch) => patchClaim((c) => ({ incident: { ...c.incident, ...patch } })),
+        setIncident: (patch) => {
+          // a new time is a new hour to ask about, and the old answer was about the old one
+          if (patch.at !== undefined && patch.at !== get().claim.incident.at) {
+            set({ contextKey: null, roadWays: null })
+            forgetLookedUp()
+          }
+          patchClaim((c) => ({ incident: { ...c.incident, ...patch, ...(patch.at !== undefined && patch.at !== c.incident.at ? { context: null, utcOffset: null } : {}) } }))
+          if (patch.at !== undefined) rePlacePhotos()
+        },
+        setConditions: (patch) => {
+          set((s) => ({ autoConditions: { ...s.autoConditions, ...Object.fromEntries(Object.keys(patch).map((k) => [k, 'user' as const])) } }))
+          patchClaim((c) => ({ incident: { ...c.incident, conditions: { ...c.incident.conditions, ...patch } } }))
+        },
+        sceneLookedUp: (key, context, utcOffset, fill, ways = null) => {
+          const next = { ...get().autoConditions }
+          const conditions = { ...get().claim.incident.conditions }
+          // one key at a time so the union of the three value types never has to be widened
+          const take = <K extends keyof Conditions>(k: K) => {
+            const v = fill[k]
+            // no answer is not "the record says nothing": a failed fetch — an offline reload at
+            // the roadside, a mirror that timed out — must never blank what the customer accepted.
+            // Answers about an *old* place or hour are dropped where the place or hour changes.
+            if (v === undefined) return
+            // never over an answer the customer gave, and never over one that was already there
+            // before anything looked anything up: a filled select is theirs unless we filled it
+            if (next[k] === 'user' || (!next[k] && conditions[k])) return
+            next[k] = 'auto'
+            conditions[k] = v
+          }
+          take('weather')
+          take('road')
+          take('light')
+          set({ contextKey: key, autoConditions: next, roadWays: ways })
+          patchClaim((c) => ({ incident: { ...c.incident, context, utcOffset, conditions } }))
+          // the zone the lookup resolved can move every photograph's clock relative to the crash
+          rePlacePhotos()
+        },
         setKind: (kind) => {
           const { others } = KIND_INFO[kind]
           patchClaim((c) => {
@@ -266,11 +476,15 @@ export const useClaim = create<ClaimState>()(
           suggestDamages()
         },
         setLocation: (location) => {
+          // the looked-up scene belonged to the old spot, exactly as the vehicles' positions did
+          set({ contextKey: null, roadWays: null })
+          forgetLookedUp()
           patchClaim((c) => ({
-            incident: { ...c.incident, location },
+            incident: { ...c.incident, location, context: null, utcOffset: null },
             vehicles: c.vehicles.map((v) => ({ ...v, position: null, path: [] })),
             impact: null,
           }))
+          rePlacePhotos()
           suggestDamages()
         },
 
@@ -308,19 +522,41 @@ export const useClaim = create<ClaimState>()(
         addPhotos: async (files, of) => {
           const room = MAX_PHOTOS - get().claim.attachments.photos.length
           const picked = Array.from(files).slice(0, Math.max(0, room))
-          // a file the browser cannot decode is skipped, not fatal: the rest still land
-          const shrunk = (await Promise.all(picked.map((f) => shrink(f).catch(() => null)))).filter((d): d is string => !!d)
+          // the EXIF comes off the original bytes first: `shrink` re-encodes through a canvas
+          // and everything the photograph knew about itself goes with it
+          const read = await Promise.all(
+            picked.map(async (f) => {
+              const exif = await f
+                .arrayBuffer()
+                .then(readExif)
+                .catch(() => NO_EXIF)
+              // a file the browser cannot decode is skipped, not fatal: the rest still land
+              const small = await shrink(f).catch(() => null)
+              return small ? { ...small, exif } : null
+            }),
+          )
+          const kept = read.filter((x): x is { data: string; hash: string | null; exif: PhotoExif } => !!x)
+          const { incident } = get().claim
+          set((s) => {
+            // a draft reopened from storage has photos and no EXIF beside them; pad rather
+            // than let every later photograph read the wrong one's metadata
+            const pad: (PhotoExif | null)[] = Array(Math.max(0, s.claim.attachments.photos.length - s.photoExif.length)).fill(null)
+            return { photoExif: [...s.photoExif, ...pad, ...kept.map((k) => k.exif)].slice(0, MAX_PHOTOS) }
+          })
           patchClaim((c) => ({
             attachments: {
               ...c.attachments,
-              photos: [...c.attachments.photos, ...shrunk.map((data) => ({ data, of, caption: '' }))].slice(0, MAX_PHOTOS),
+              photos: [...c.attachments.photos, ...kept.map((k) => ({ data: k.data, of, caption: '', ...(k.hash ? { hash: k.hash } : {}), ...photoDistances(k.exif, incident) }))].slice(0, MAX_PHOTOS),
             },
           }))
-          return shrunk.length
+          return kept.length
         },
         captionPhoto: (index, caption) =>
           patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.map((p, i) => (i === index ? { ...p, caption } : p)) } })),
-        removePhoto: (index) => patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.filter((_, i) => i !== index) } })),
+        removePhoto: (index) => {
+          set((s) => ({ photoExif: s.photoExif.filter((_, i) => i !== index) }))
+          patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.filter((_, i) => i !== index) } }))
+        },
         tagPhoto: (index, zone) =>
           patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.map((p, i) => (i === index ? { ...p, shows: zone } : p)) } })),
 
@@ -400,6 +636,94 @@ export const useClaim = create<ClaimState>()(
             settle()
           }
         },
+        applyIntake: (draft, take, transcript) => {
+          if (take.kind && draft.kind) get().setKind(draft.kind)
+          if (take.when && draft.when) get().setIncident({ at: draft.when })
+
+          if (take.place && draft.place) set({ placeQuery: draft.place })
+
+          if (take.conditions && draft.conditions) {
+            const cur = get().claim.incident.conditions
+            const patch: Partial<Conditions> = {}
+            const fill = <K extends keyof Conditions>(k: K) => {
+              const v = draft.conditions?.[k]
+              if (v && !cur[k]) patch[k] = v
+            }
+            fill('weather')
+            fill('road')
+            fill('light')
+            if (Object.keys(patch).length) get().setConditions(patch)
+          }
+
+          // body and colour have no "empty" value of their own to test against — unlike make,
+          // model and year, every vehicle is created with some shape and some paint. This only
+          // ever runs from the Kind step, before the customer can have chosen either for real,
+          // so overwriting them here is safe; `vehicleFromPolicy` in prefill.ts makes the same
+          // call for the same reason.
+          const fillVehicle = (id: string, dv: NonNullable<IntakeDraft['vehicles']>[number]) => {
+            const v = get().claim.vehicles.find((x) => x.id === id)
+            if (!v) return
+            const hex = dv.color ? PAINTS.find((p) => p.id === dv.color)?.hex : undefined
+            get().updateVehicle(id, {
+              make: v.make || dv.make || v.make,
+              model: v.model || dv.model || v.model,
+              year: v.year ?? dv.year ?? v.year,
+              ...(hex ? { color: hex } : {}),
+            })
+            if (dv.body) get().setBody(id, dv.body)
+          }
+
+          if (draft.vehicles) {
+            // mirrors the cap `Vehicles.tsx` enforces on "Add a vehicle"
+            const MAX_VEHICLES = 6
+            let otherIndex = 0
+            draft.vehicles.forEach((dv, i) => {
+              if (!take.vehicles[i]) return
+              if (dv.role === 'insured') {
+                fillVehicle(insuredOf(get().claim).id, dv)
+                return
+              }
+              const existing = othersOf(get().claim)[otherIndex]
+              otherIndex++
+              if (existing) {
+                fillVehicle(existing.id, dv)
+              } else if (get().claim.vehicles.length < MAX_VEHICLES) {
+                get().addVehicle()
+                const added = othersOf(get().claim).at(-1)
+                if (added) fillVehicle(added.id, dv)
+              }
+            })
+          }
+
+          // people are the one list with no field to be "empty": fill it only when there is no one
+          // on it yet, so a second run adds no one twice and never lands beside the customer's own
+          if (take.people && draft.people?.length && get().claim.people.length === 0) {
+            for (const dp of draft.people) {
+              // the draft only knows "insured" or "other", never which of several other
+              // vehicles: the first one is the best guess with nothing more to go on
+              const vehicle = dp.vehicle === 'insured' ? insuredOf(get().claim).id : dp.vehicle === 'other' ? (othersOf(get().claim)[0]?.id ?? null) : null
+              get().addPerson(dp.role, vehicle)
+              get().updatePerson(get().claim.people.length - 1, { injured: dp.injured, injury: dp.injury ?? '' })
+            }
+          }
+
+          if (take.police && draft.police) {
+            const cur = get().claim.police
+            const patch: Partial<Police> = {}
+            if (cur.called === null) patch.called = draft.police.called
+            if (!cur.report && draft.police.report) patch.report = draft.police.report
+            if (Object.keys(patch).length) get().setPolice(patch)
+          }
+
+          if (take.property && draft.property && !get().claim.property.description) get().setProperty({ description: draft.property })
+
+          // their own words, verbatim — never the model's summary — because this is their
+          // statement and what they sign; there is no row to untick it by, the same as there
+          // is none for the transcript itself
+          if (transcript.trim()) get().setIncident({ description: transcript.trim() })
+
+          set({ drawFromWords: !!(draft.vehicles?.length && draft.description) })
+        },
         clearPath: (id) => mapVehicle(id, (v) => ({ ...v, path: [] })),
         setImpact: (impact, manual = true) => {
           set({ impactManual: manual })
@@ -423,24 +747,42 @@ export const useClaim = create<ClaimState>()(
           set((s) => {
             const claim = emptyClaim()
             claim.incident.language = s.lang ?? 'en'
-            return { claim, step: 'kind', impactManual: false, autoDamage: {}, delivery: null }
+            return {
+              claim,
+              step: 'kind',
+              impactManual: false,
+              autoDamage: {},
+              autoConditions: {},
+              contextKey: null,
+              roadWays: null,
+              photoExif: [],
+              delivery: null,
+              placeQuery: null,
+              drawFromWords: false,
+              invite: null,
+            }
           }),
       }
     },
     {
-      name: 'claim-marker/draft',
-      version: 6,
+      name: DRAFT,
+      version: 8,
       // every section added since a draft was saved takes its default: v3 added the ground,
       // v4 the kind, the people, the police, the photos and the rest of the report, v5 the
-      // policy's vehicles and how the report left, v6 the language (null: not chosen yet)
+      // policy's vehicles and how the report left, v6 the language (null: not chosen yet),
+      // v7 the looked-up scene, v8 `reporter.party` for a draft saved before there were two
+      // sides (and the invite beside it). `contextKey` and `roadWays` are deliberately not persisted:
+      // a reopened draft asks the two keyless endpoints again, which redraws the roads and
+      // costs nothing, rather than carrying a cache that can only go stale
       migrate: (persisted) => {
-        const s = persisted as { claim?: Partial<Claim> & { incident?: Partial<Incident>; vehicles?: Partial<ClaimVehicle>[] } }
+        const s = persisted as { claim?: Partial<Claim> & { incident?: Partial<Incident>; reporter?: Partial<Reporter>; vehicles?: Partial<ClaimVehicle>[] } }
         if (!s.claim) return persisted
         const base = emptyClaim()
         s.claim = {
           ...base,
           ...s.claim,
           incident: { ...base.incident, ...s.claim.incident },
+          reporter: { ...base.reporter, ...s.claim.reporter },
           vehicles: (s.claim.vehicles ?? []).map((v) => ({ ...newVehicle(v.id ?? 'a', v.role ?? 'other', v.body ?? 'sedan', v.color ?? '#b9bec6'), ...v })),
           attachments: { ...base.attachments, ...s.claim.attachments },
         } as Claim
@@ -448,13 +790,16 @@ export const useClaim = create<ClaimState>()(
       },
       // the rendered PNGs are regenerated at submit time; the customer's photographs cannot be
       partialize: (s) => ({
-        claim: { ...s.claim, attachments: { scene: null, damage: {}, photos: s.claim.attachments.photos } },
+        // the replay is re-recorded at send time like the PNGs; a few MB of video is no draft
+        claim: { ...s.claim, attachments: { scene: null, replay: null, damage: {}, photos: s.claim.attachments.photos } },
         step: s.step,
         impactManual: s.impactManual,
         autoDamage: s.autoDamage,
+        autoConditions: s.autoConditions,
         policy: s.policy,
         delivery: s.delivery,
         lang: s.lang,
+        invite: s.invite,
       }),
     },
   ),
@@ -486,3 +831,12 @@ function collision(vehicles: ClaimVehicle[]): LngLat | null {
 export const insuredOf = (claim: Claim) => claim.vehicles.find((v) => v.role === 'insured') ?? claim.vehicles[0]
 export const othersOf = (claim: Claim) => claim.vehicles.filter((v) => v.role !== 'insured')
 export const vehicleLabel = (v: ClaimVehicle) => v.id.toUpperCase()
+
+/**
+ * What the looked-up scene is keyed on: the place to four decimals — about eleven metres, far
+ * finer than the weather changes and finer than a junction is wide — and the hour, because
+ * that is the resolution the archive answers in. Nudging the pin a metre does not ask again.
+ * Null when there is nothing yet to ask about.
+ */
+export const sceneKey = (incident: Pick<Incident, 'location' | 'at'>): string | null =>
+  incident.location && incident.at ? `${incident.location.lng.toFixed(4)},${incident.location.lat.toFixed(4)},${incident.at.slice(0, 13)}` : null

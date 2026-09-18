@@ -23,6 +23,39 @@ export const en = {
   'start.where.pickRoad': 'Road…',
   'start.where.pickLight': 'Light…',
 
+  // ── what the page looked up for itself: the weather at that hour, the sun, the road
+  'start.where.looked.title': 'We looked this up',
+  'start.where.looked.lead': 'From where and when it happened — public records, not your answers. We filled the boxes below with it.',
+  'start.where.looked.busy': 'Looking up the weather and the road…',
+  'start.where.looked.right': "That's right",
+  'start.where.looked.wrong': 'Not quite',
+  /** "dusk, the sun low in the west" */
+  'start.where.looked.sun': '{light}, the sun low in the {dir}',
+  'start.where.looked.windy': 'wind {kph} km/h',
+  /** dark by the sun, when the record cannot say whether the street was lit */
+  'start.where.looked.dark': 'After dark',
+  /** the record's hour had no precipitation; it cannot say whether the road was still wet from before */
+  'start.where.looked.noPrecip': 'No rain or snow that hour',
+  'start.where.looked.lane': '1 lane',
+  'start.where.looked.lanes': '{n} lanes',
+  'start.where.looked.oneway': 'one-way',
+  'start.where.looked.unnamedRoad': 'An unnamed road',
+  /** on the desk's copy of the report, beside a vehicle the low sun was ahead of */
+  'start.where.looked.glare': 'The sun was low and ahead of this vehicle',
+  'start.where.looked.source': 'from public records',
+
+  // ── the third way in: a photograph that knows where and when it was taken
+  'start.where.photo.start': 'Start from a photo you took',
+  'start.where.photo.reading': 'Reading the photo…',
+  'start.where.photo.hint': 'Many phones strip the place out of a photo before an app sees it. If yours did, search above instead — nothing is lost either way, the photo is kept with your report.',
+  'start.where.photo.both': 'That photo was taken near {place}, {when}.',
+  'start.where.photo.place': 'That photo was taken near {place}.',
+  'start.where.photo.time': 'That photo was taken {when}. It does not say where.',
+  'start.where.photo.none': "That photo does not say where or when it was taken — your phone removed it. We've kept it with your report.",
+  'start.where.photo.use': 'Use that',
+  'start.where.photo.ignore': 'No, I’ll enter it',
+  'start.where.photo.kept': 'Kept with your report as a photo of the scene.',
+
   // ── the vehicles
   'start.vehicles.onPolicy': 'The one on your policy',
   'start.vehicles.asYouCanTell': 'As best you can tell',
@@ -123,6 +156,30 @@ export const en = {
   // ── the photograph on a vehicle card
   'start.photo.credit': 'Photo: Wikimedia Commons',
   'start.photo.creditTitle': '{title} — Wikimedia Commons',
+
+  // ── "Just tell us what happened": one account, proposed back piece by piece
+  'start.intake.title': 'Just tell us what happened',
+  'start.intake.lead': "Speak or type one account of the whole thing. We'll show you everything we understood, and you check it piece by piece before any of it is used.",
+  'start.intake.placeholder': 'What happened, where, when, who was involved…',
+  'start.intake.send': 'Tell us',
+  'start.intake.sending': 'Working it out…',
+  'start.intake.failed': "We couldn't make sense of that. Pick what happened below instead.",
+  'start.intake.review.title': 'Here is what we understood',
+  'start.intake.review.lead': "Untick anything that isn't right. Nothing here is added until you say so.",
+  'start.intake.use': 'Use these',
+  'start.intake.again': 'Start again',
+  'start.intake.place': 'We’ll search for “{place}”',
+  'start.intake.police.yes': 'The police were called',
+  'start.intake.police.no': 'The police were not called',
+  'start.intake.police.report': 'Report number {report}',
+  'start.intake.hurt.none': 'No injuries mentioned',
+  'start.intake.hurt.one': '{n} person hurt',
+  'start.intake.hurt.other': '{n} people hurt',
+  /** a label, not the model's words: what it read goes into the field, where the customer can see and change it */
+  'start.intake.property': 'Something other than a vehicle was damaged',
+  'start.intake.vehicle.insured': 'Your vehicle',
+  'start.intake.vehicle.other': 'Another vehicle',
+  'start.intake.ai': 'Read from what you said. Nothing is added until you tick it and press "Use these".',
 } as const
 
 export const es: Record<keyof typeof en, string> = {
@@ -146,6 +203,33 @@ export const es: Record<keyof typeof en, string> = {
   'start.where.pickWeather': 'Clima…',
   'start.where.pickRoad': 'Camino…',
   'start.where.pickLight': 'Luz…',
+
+  'start.where.looked.title': 'Esto lo buscamos nosotros',
+  'start.where.looked.lead': 'Sale de dónde y cuándo pasó — de registros públicos, no de tus respuestas. Con eso llenamos las casillas de abajo.',
+  'start.where.looked.busy': 'Buscando el clima y la calle…',
+  'start.where.looked.right': 'Así fue',
+  'start.where.looked.wrong': 'No exactamente',
+  'start.where.looked.sun': '{light}, con el sol bajo hacia el {dir}',
+  'start.where.looked.windy': 'viento {kph} km/h',
+  'start.where.looked.dark': 'De noche',
+  'start.where.looked.noPrecip': 'Sin lluvia ni nieve a esa hora',
+  'start.where.looked.lane': '1 carril',
+  'start.where.looked.lanes': '{n} carriles',
+  'start.where.looked.oneway': 'sentido único',
+  'start.where.looked.unnamedRoad': 'Una vía sin nombre',
+  'start.where.looked.glare': 'El sol estaba bajo y de frente a este vehículo',
+  'start.where.looked.source': 'de registros públicos',
+
+  'start.where.photo.start': 'Empieza con una foto que tomaste',
+  'start.where.photo.reading': 'Leyendo la foto…',
+  'start.where.photo.hint': 'Muchos teléfonos le quitan el lugar a la foto antes de que una app la vea. Si el tuyo lo hizo, mejor busca arriba: no se pierde nada, la foto queda igual con tu reporte.',
+  'start.where.photo.both': 'Esa foto se tomó cerca de {place}, {when}.',
+  'start.where.photo.place': 'Esa foto se tomó cerca de {place}.',
+  'start.where.photo.time': 'Esa foto se tomó {when}. No dice dónde.',
+  'start.where.photo.none': 'Esa foto no dice dónde ni cuándo se tomó — tu teléfono lo quitó. La guardamos con tu reporte.',
+  'start.where.photo.use': 'Usar eso',
+  'start.where.photo.ignore': 'No, yo lo escribo',
+  'start.where.photo.kept': 'Guardada con tu reporte como foto del lugar.',
 
   'start.vehicles.onPolicy': 'El que está en tu póliza',
   'start.vehicles.asYouCanTell': 'Lo que puedas saber de él',
@@ -243,4 +327,26 @@ export const es: Record<keyof typeof en, string> = {
 
   'start.photo.credit': 'Foto: Wikimedia Commons',
   'start.photo.creditTitle': '{title} — Wikimedia Commons',
+
+  'start.intake.title': 'Cuéntanos qué pasó',
+  'start.intake.lead': 'Cuéntalo hablando o escribiendo, todo de una vez. Te mostramos todo lo que entendimos, y tú lo revisas parte por parte antes de usar nada.',
+  'start.intake.placeholder': 'Qué pasó, dónde, cuándo, quién estuvo involucrado…',
+  'start.intake.send': 'Contarlo',
+  'start.intake.sending': 'Entendiendo lo que dijiste…',
+  'start.intake.failed': 'No pudimos entender eso. Mejor elige abajo qué pasó.',
+  'start.intake.review.title': 'Esto es lo que entendimos',
+  'start.intake.review.lead': 'Quita la marca de lo que no sea correcto. Nada de esto se agrega hasta que lo confirmes.',
+  'start.intake.use': 'Usar esto',
+  'start.intake.again': 'Empezar de nuevo',
+  'start.intake.place': 'Vamos a buscar “{place}”',
+  'start.intake.police.yes': 'Llamaron a la policía',
+  'start.intake.police.no': 'No llamaron a la policía',
+  'start.intake.police.report': 'Número de informe {report}',
+  'start.intake.hurt.none': 'No se mencionan heridos',
+  'start.intake.hurt.one': '{n} persona herida',
+  'start.intake.hurt.other': '{n} personas heridas',
+  'start.intake.property': 'Se dañó algo que no es un vehículo',
+  'start.intake.vehicle.insured': 'Tu vehículo',
+  'start.intake.vehicle.other': 'Otro vehículo',
+  'start.intake.ai': 'Se armó con lo que dijiste. No se agrega nada hasta que lo marques y presiones "Usar esto".',
 }

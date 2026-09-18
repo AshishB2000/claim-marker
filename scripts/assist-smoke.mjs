@@ -73,7 +73,10 @@ function shutdown(code) {
   process.exit(code)
 }
 
-browser = await chromium.launch()
+// A camera the guided tiles can actually open. Chromium's fake device plays a moving test
+// pattern into getUserMedia, which is enough to prove the sheet opens, samples frames, hints,
+// shoots and — the part that matters — lets the camera go again afterwards.
+browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
 const errors = []
 // step 5 asks the stub for a 502 on purpose; the browser logs every failed fetch
@@ -354,8 +357,19 @@ ok('assist: "Go to that step" opens the step that answers the question')
 
 // ── 8 · the phone: the camera first, and the photos read by themselves ─
 
-const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
+const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, permissions: ['camera'] })
 const phone = await phoneCtx.newPage()
+// every track the page is ever handed, so the walk can prove the camera is released and not
+// merely hidden — a page that leaves the camera light on after the sheet closes ends a pilot
+await phone.addInitScript(() => {
+  window.__tracks = []
+  const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+  navigator.mediaDevices.getUserMedia = async (c) => {
+    const stream = await real(c)
+    window.__tracks.push(...stream.getTracks())
+    return stream
+  }
+})
 phone.on('console', (m) => m.type() === 'error' && !expected.test(m.text()) && errors.push(m.text()))
 phone.on('pageerror', (e) => errors.push(String(e)))
 const state = () => phone.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state)
@@ -395,9 +409,42 @@ answer = () => [
     ],
   },
 ]
+
+/** one guided shot through the live camera: open the sheet, press the shutter, wait for the photo */
+const shootTile = async (tile) => {
+  const before = (await state()).claim.attachments.photos.length
+  await phone.getByRole('button', { name: tile }).click()
+  await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ timeout: 20000 })
+  await phone.getByRole('button', { name: 'Take photo' }).click()
+  await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ state: 'detached', timeout: 10000 })
+  await phone
+    .waitForFunction((n) => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.attachments.photos.length > n, before, { timeout: 15000 })
+    .catch(() => fail(`the "${tile}" shutter did not land a photo`))
+}
+
 const before8 = seen.length
-const [chooser] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The damage, close up' }).click()])
-await chooser.setFiles({ name: 'damage.png', mimeType: 'image/png', buffer: PNG })
+// the tile opens the live camera, not a file picker: this is a phone with a camera in it
+await phone.getByRole('button', { name: 'The damage, close up' }).click()
+await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ timeout: 20000 })
+// the sheet renders first and the stream arrives a moment later, as it does on a phone
+await phone.waitForFunction(() => window.__tracks.length === 1, null, { timeout: 15000 }).catch(() => fail('the guide did not open the camera'))
+// the hints are hints: whatever the fake device's test pattern reads as, the shutter works
+await phone.waitForTimeout(900)
+const shutter = phone.getByRole('button', { name: 'Take photo' })
+if (await shutter.isDisabled()) fail('the shutter was disabled — the checks are hints, never gates')
+await shutter.click()
+await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ state: 'detached', timeout: 10000 })
+const releasedShot = await phone.evaluate(() => window.__tracks.every((t) => t.readyState === 'ended'))
+if (!releasedShot) fail('the camera was still running after the shutter closed the sheet')
+// the frame goes through the same `addPhotos` a picked file does, so it is downscaled and
+// re-encoded before it is kept — which takes a moment
+await phone
+  .waitForFunction(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.attachments.photos.length === 1, null, { timeout: 15000 })
+  .catch(() => fail('the shutter did not land a photo'))
+const shot = (await state()).claim.attachments.photos.at(-1)
+if (!shot?.data.startsWith('data:image/jpeg;base64,') || shot.of !== 'a') fail(`the shutter did not land a photo of A: ${JSON.stringify(shot?.of)}`)
+ok('assist: the guided tile opens the real camera, the shutter lands a photo, and closing releases the camera')
+
 await phone
   .getByRole('button', { name: 'Add Hood' })
   .waitFor({ timeout: 20000 })
@@ -431,8 +478,7 @@ answer = () => [
     ],
   },
 ]
-const [chooser2] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The same, from a step back' }).click()])
-await chooser2.setFiles({ name: 'step-back.png', mimeType: 'image/png', buffer: PNG })
+await shootTile('The same, from a step back')
 await phone
   .getByRole('button', { name: 'Add Front bumper' })
   .waitFor({ timeout: 20000 })
@@ -446,8 +492,7 @@ ok('assist: another photo reads again, a panel already marked is not offered twi
 
 // the endpoint failing is a quiet line, and the car underneath still takes a tap
 answer = () => [502, { error: 'the assistant could not answer' }]
-const [chooser3] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The whole side of the car' }).click()])
-await chooser3.setFiles({ name: 'side.png', mimeType: 'image/png', buffer: PNG })
+await shootTile('The whole side of the car')
 await phone.waitForFunction(() => document.body.innerText.includes('We could not read the photos this time'), null, { timeout: 20000 }).catch(() => fail('a failed read did not say so'))
 if (await phone.getByRole('button', { name: /^Add / }).count()) fail('a failed read left a suggestion up')
 
@@ -463,6 +508,115 @@ if (!(await phone.locator('.cm-pop').count())) fail('the car under the failed re
 await phone.getByRole('button', { name: 'dent', exact: true }).click({ force: true })
 await phone.waitForFunction(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.vehicles[0].damages.length === 2, null, { timeout: 5000 }).catch(() => fail('the tap did not mark the car'))
 ok('assist: a failed read is one quiet line and the car below still takes a mark by hand')
+
+// ── 9 · "just tell us what happened" ──────────────────────────────────
+// One account, a whole proposed report back, confirmed piece by piece. The stub answers with
+// things the page must never take from a model — a name, a plate, a VIN, a phone number — and
+// a place as words; the proposals must show none of the first and the page must turn the second
+// into a search the customer finishes, never a coordinate.
+const intakeCtx = await browser.newContext({ viewport: { width: 1280, height: 1000 } })
+const tell = await intakeCtx.newPage()
+tell.on('pageerror', (e) => errors.push(String(e)))
+const intakeState = () => tell.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state)
+await tell.goto(`${origin}/`, { waitUntil: 'networkidle' })
+// the customer had already typed their car's make before they tried talking instead
+await tell.evaluate(() => {
+  const raw = JSON.parse(localStorage.getItem('claim-marker/draft'))
+  raw.state.claim.vehicles[0].make = 'Subaru'
+  localStorage.setItem('claim-marker/draft', JSON.stringify(raw))
+})
+await tell.reload({ waitUntil: 'networkidle' })
+await tell.locator('text=Just tell us what happened').waitFor({ timeout: 15000 }).catch(() => fail('the intake card is not on the first screen'))
+
+/** the day before a local `YYYY-MM-DDTHH:mm`, as `YYYY-MM-DD` */
+const yesterday = (now) => {
+  const d = new Date(`${now.slice(0, 10)}T12:00`)
+  d.setDate(d.getDate() - 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const account = 'This morning at about 8.40 I was driving my red Honda Civic on 5th Avenue in the rain, a black SUV pulled out and hit my front. My passenger hurt her neck. The police came, report 2026-0042.'
+answer = (req) => [
+  200,
+  {
+    schema: 'claim-assist/1',
+    task: 'intake',
+    draft: {
+      kind: 'collision',
+      // yesterday's morning: today's 08:40 is still in the future for a run before 08:40, and
+      // `parseIntake` rightly drops a time that has not happened yet
+      when: `${yesterday(req.now)}T08:40`,
+      place: '5th Avenue and 42nd Street, New York',
+      conditions: { weather: 'rain', road: 'wet', light: 'daylight' },
+      vehicles: [
+        { role: 'insured', make: 'Honda', model: 'Civic', color: 'red', body: 'sedan', plate: 'ABC 123', vin: '1HGCM82633A004352' },
+        { role: 'other', color: 'black', body: 'suv', plate: 'XYZ 789' },
+      ],
+      people: [{ role: 'passenger', vehicle: 'insured', injured: true, injury: 'neck pain', name: 'Maria Lopez', phone: '555 0100' }],
+      police: { called: true, report: '2026-0042' },
+      description: 'A black SUV pulled out and hit my front.',
+      name: 'Ashish B',
+      email: 'me@example.com',
+    },
+  },
+]
+const beforeIntake = seen.length
+await tell.getByPlaceholder('What happened, where, when, who was involved…').fill(account)
+await tell.getByRole('button', { name: 'Tell us' }).click()
+await tell.locator('text=Here is what we understood').waitFor({ timeout: 15000 }).catch(() => fail('the proposal did not appear'))
+const sentIntake = seen.at(-1)
+if (seen.length !== beforeIntake + 1 || sentIntake.task !== 'intake' || sentIntake.transcript !== account) fail(`wrong intake request: ${JSON.stringify(sentIntake).slice(0, 200)}`)
+if (!sentIntake.kinds?.includes('collision') || !sentIntake.bodies?.includes('suv') || !sentIntake.colours?.includes('red')) fail('the intake request does not carry the enums')
+const proposal = await tell.locator('body').innerText()
+for (const secret of ['Maria Lopez', '555 0100', 'ABC 123', 'XYZ 789', '1HGCM82633A004352', 'Ashish B', 'me@example.com']) {
+  if (proposal.includes(secret)) fail(`the proposal shows "${secret}", which came from the model`)
+}
+if (!proposal.includes('We’ll search for “5th Avenue and 42nd Street, New York”')) fail('the place is not offered as a search')
+if (!proposal.includes('1 person hurt')) fail('the injury is not a count')
+// words of the model's that would land in the claim as written are shown before they can: nothing lands unseen
+if (!proposal.includes('“neck pain”')) fail('the injury the model wrote would land without being shown')
+if (!proposal.includes('Report number 2026-0042')) fail('the police report number the model wrote would land without being shown')
+ok('intake: one account comes back as proposals — no names, plates, VINs or phone numbers, the injury as a count with its own words shown, the place as a search')
+
+// untick the police: that answer must stay the customer's to give
+await tell.getByLabel('The police were called').uncheck()
+await tell.getByRole('button', { name: 'Use these' }).click()
+await tell.getByRole('combobox', { name: 'Where did it happen?' }).waitFor({ timeout: 15000 }).catch(() => fail('"Use these" did not walk on to the Where step'))
+const searchBox = await tell.getByRole('combobox', { name: 'Where did it happen?' }).inputValue()
+if (searchBox !== '5th Avenue and 42nd Street, New York') fail(`the place search was not started from the account: "${searchBox}"`)
+const filled = (await intakeState()).claim
+if (filled.incident.kind !== 'collision') fail(`kind ${filled.incident.kind}`)
+if (!filled.incident.at.endsWith('T08:40')) fail(`the time was not filled: ${filled.incident.at}`)
+if (filled.incident.location) fail('the model supplied a location; only the customer picks one')
+if (JSON.stringify(filled.incident.conditions) !== JSON.stringify({ weather: 'rain', road: 'wet', light: 'daylight' })) fail(`conditions ${JSON.stringify(filled.incident.conditions)}`)
+if (filled.vehicles[0].make !== 'Subaru') fail(`a make the customer had typed was overwritten: ${filled.vehicles[0].make}`)
+if (filled.vehicles[0].model !== 'Civic' || filled.vehicles[0].color !== '#b91c1c') fail(`the customer's car was not filled: ${JSON.stringify(filled.vehicles[0]).slice(0, 160)}`)
+if (!filled.vehicles.some((v) => v.role === 'other' && v.body === 'suv' && v.color === '#1c1f26')) fail('the other vehicle was not proposed into the report')
+if (filled.vehicles.some((v) => v.plate || v.vin)) fail('a plate or VIN from the model reached the report')
+if (filled.people.some((p) => p.name || p.phone)) fail('a name or phone from the model reached the report')
+if (!filled.people.some((p) => p.role === 'passenger' && p.injured && p.vehicle === filled.vehicles[0].id)) fail('the hurt passenger was not placed in the customer\'s car')
+if (filled.police.called !== null || filled.police.report) fail(`an unticked proposal was used anyway: police ${JSON.stringify(filled.police)}`)
+if (filled.incident.description !== account) fail('the statement is not the customer\'s own words, verbatim')
+ok('intake: "Use these" fills what was empty, leaves what was typed and what was unticked, keeps the account verbatim, and opens the place search')
+
+// a failing endpoint is one quiet line, and the ordinary first step still works
+await tell.evaluate(() => localStorage.clear())
+await tell.reload({ waitUntil: 'networkidle' })
+answer = () => [502, { error: 'no' }]
+await tell.getByPlaceholder('What happened, where, when, who was involved…').fill('it went wrong')
+await tell.getByRole('button', { name: 'Tell us' }).click()
+await tell.locator("text=We couldn't make sense of that").waitFor({ timeout: 15000 }).catch(() => fail('a failed intake did not say so'))
+await tell.getByRole('radio', { name: /Hit while parked/ }).click()
+if ((await intakeState()).claim.incident.kind !== 'parked') fail('the kind cards stopped working after a failed intake')
+ok('intake: a failing endpoint is one quiet line and the kind cards still work')
+
+// the same card in Spanish, with nothing English left on it
+const esPage = await intakeCtx.newPage()
+await esPage.addInitScript(() => void (window.CLAIM_MARKER = { lang: 'es' }))
+await esPage.goto(`${origin}/`, { waitUntil: 'networkidle' })
+await esPage.locator('text=Cuéntanos qué pasó').waitFor({ timeout: 15000 }).catch(() => fail('the intake card is not in Spanish'))
+if (await esPage.locator('text=Just tell us what happened').count()) fail('English left on the Spanish intake card')
+ok('intake: the card reads in Spanish')
+await intakeCtx.close()
 
 if (errors.length) fail(`console errors:\n${errors.join('\n')}`)
 console.log('\nall assist checks passed')

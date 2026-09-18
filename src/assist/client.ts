@@ -3,25 +3,31 @@
  * `claim-assist/1` and reads the answer back. See `schema.ts` for the contract and
  * `scripts/assist-server.mjs` for an endpoint that satisfies it.
  */
-import type { Claim, ClaimVehicle } from '../claim/schema'
+import { KINDS, nowLocal, type Claim, type ClaimVehicle } from '../claim/schema'
 import { config } from '../config'
-import { translate } from '../i18n'
+import { translate, type Lang } from '../i18n'
 import type { Damage } from '../schema'
-import { paintLabel } from '../vehicles/paint'
+import { BODY_ORDER } from '../vehicles/bodies'
+import { PAINTS, paintLabel } from '../vehicles/paint'
 import { zoneById, zonesOf } from '../zones'
 import { toFrame } from './frame'
 import {
   ASSIST_SCHEMA,
   parseChecks,
+  parseIntake,
   parseScene,
   parseSuggestions,
   type AssistRequest,
   type AssistVehicle,
   type Check,
   type CheckVehicle,
+  type IntakeDraft,
   type Metres,
   type Scene,
 } from './schema'
+
+/** the fixed enums every intake request carries, so the endpoint never has to guess a spelling */
+const COLOUR_IDS = PAINTS.map((p) => p.id)
 
 /** the most photographs one damage run sends; twelve of the same bumper is not twelve views */
 const MAX_PHOTOS_SENT = 6
@@ -162,5 +168,19 @@ export async function damageFromPhotos(claim: Claim, vehicleId: string, signal?:
     },
     signal,
     (json) => parseSuggestions((json as { damages?: unknown }).damages, v.body),
+  )
+}
+
+/**
+ * One spoken or typed account of the whole accident, back as a draft of the first screens.
+ * `now` is read fresh at the moment of the call, not passed in, so "an hour ago" resolves
+ * against when the customer actually spoke rather than when the page loaded.
+ */
+export async function intake(transcript: string, lang: Lang, signal?: AbortSignal): Promise<IntakeDraft> {
+  const now = nowLocal()
+  return call(
+    { schema: ASSIST_SCHEMA, task: 'intake', lang, transcript, now, kinds: KINDS, bodies: BODY_ORDER, colours: COLOUR_IDS },
+    signal,
+    (json) => parseIntake((json as { draft?: unknown }).draft, now, COLOUR_IDS),
   )
 }

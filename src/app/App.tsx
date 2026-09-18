@@ -51,6 +51,8 @@ export function App() {
   const setLang = useClaim((s) => s.setLang)
   const lang = useLang()
   const t = useT()
+  // the other driver is answering about someone else's accident, and is told so once
+  const party = claim.reporter.party === 'other_party'
   // the damage step puts the camera first on a phone with the assistant on, and says so
   const narrow = useNarrow()
   const photoFirst = narrow && assistOn()
@@ -85,7 +87,7 @@ export function App() {
               <Icon.car />
             </span>
             <div className="leading-tight">
-              <div className="text-[15px] font-semibold">{t('shell.title')}</div>
+              <div className="text-[15px] font-semibold">{t(party ? 'shell.title.party' : 'shell.title')}</div>
               <div className="text-xs text-slate-500">{config.brand}</div>
             </div>
           </div>
@@ -202,5 +204,21 @@ export function App() {
         <p className="mx-auto mt-10 max-w-6xl px-5 text-center text-xs text-slate-400">{t('shell.saved')}</p>
       )}
     </div>
+  )
+}
+
+/**
+ * The other driver's link could not be opened: it has expired (they last three days), it was
+ * mistyped, or the server could not be reached. There is nothing to fill in — a report sent
+ * with that link would be turned away — so the page says what to do instead.
+ */
+export function LinkGone() {
+  const t = useT()
+  return (
+    <main className="mx-auto max-w-xl px-5 py-16 text-center" data-link-gone>
+      <h1 className="text-2xl font-semibold tracking-tight">{t('shell.party.gone.title')}</h1>
+      <p className="mt-2 text-slate-500">{t('shell.party.gone.lead')}</p>
+      <p className="mt-6 text-xs text-slate-400">{config.brand}</p>
+    </main>
   )
 }

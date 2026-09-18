@@ -5,6 +5,7 @@ import { vehicleName } from '../../../claim/describe'
 import type { Key } from '../../../i18n'
 import { useLang, useT } from '../../../i18n/useT'
 import { Icon } from '../../icons'
+import { CameraGuide } from './CameraGuide'
 
 /** the shots a claims handler wants, in the order they are easiest to take at the roadside */
 const SHOTS = [
@@ -39,6 +40,15 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
   // the other vehicle's shot is filed against the other vehicle, and only asked for from yours
   const other = v.role === 'insured' ? othersOf(claim)[0] : undefined
 
+  // feature-detected once: a phone has getUserMedia and the live guide is worth opening; a
+  // laptop webcam pointed at a bumper is not a thing that happens, so a desktop without it
+  // falls straight to the hidden file input as it always did
+  const [hasCamera] = useState(() => typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia)
+  // the shot the live guide is open for, or null when it is closed
+  const [guide, setGuide] = useState<Shot | null>(null)
+  // shown once per visit to this card, the first time the camera fails to open
+  const [camDenied, setCamDenied] = useState(false)
+
   const onFiles = async (list: FileList | null, of = v.id, shot: Shot | null = null) => {
     if (!list?.length) return
     setAdding(true)
@@ -55,9 +65,29 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
     }
   }
   const full = photos.length >= MAX_PHOTOS
+  // a guided tile opens the live camera sheet when one is possible; otherwise the hidden input,
+  // exactly as before
   const shoot = (shot: Shot) => {
     pending.current = shot
-    camera.current?.click()
+    if (hasCamera) setGuide(shot)
+    else camera.current?.click()
+  }
+  // the frame the sheet captured, routed through the same onFiles as the hidden input so the
+  // downscaling, the cap of twelve and the photo-first suggestions all behave exactly as they do
+  const onGuideShot = (file: File) => {
+    const dt = new DataTransfer()
+    dt.items.add(file)
+    onFiles(dt.files, pending.current === 'other' && other ? other.id : v.id, pending.current)
+    setGuide(null)
+  }
+  // getUserMedia failed (no permission, no camera, an insecure context): fall back to the
+  // hidden input for the same tap, and say so once
+  const onGuideClose = (failed?: boolean) => {
+    setGuide(null)
+    if (failed) {
+      camera.current?.click()
+      setCamDenied(true)
+    }
   }
 
   const inputs = (
@@ -139,7 +169,9 @@ export function Capture({ v, guided = false }: { v: ClaimVehicle; guided?: boole
         <p className="mt-3 text-xs text-slate-500">
           {adding ? t('damage.adding') : full ? t('damage.full', { n: MAX_PHOTOS }) : t('damage.count', { n: photos.length, max: MAX_PHOTOS })}
         </p>
+        {camDenied && <p className="mt-2 text-xs text-amber-700">{t('damage.camera.denied')}</p>}
         {gallery}
+        {guide && <CameraGuide shot={guide} body={v.body} onClose={onGuideClose} onShot={onGuideShot} />}
       </div>
     )
   }

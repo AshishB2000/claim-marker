@@ -57,6 +57,10 @@ export const en = {
   'scene.path.tap': 'Tap it on the map',
   'scene.path.clear': 'Clear path',
 
+  // ── offered after a drop, when the way it landed on runs close to the car's own heading
+  'scene.road.align': 'Line it up with the road',
+  'scene.road.dismiss': 'Dismiss',
+
   // ── the point of impact
   'scene.impact.title': 'Point of impact',
   'scene.impact.found': 'Found',
@@ -116,9 +120,13 @@ export const en = {
   'scene.send.signAria': 'Signature',
   'scene.send.signPlaceholder': 'Your full name',
   'scene.send.sending': 'Sending…',
+  'scene.send.recording': 'Recording the replay…',
   'scene.send.send': 'Send my report',
   'scene.send.locked': 'Tick the box and sign to send.',
   'scene.send.error': 'Something went wrong. Please try again.',
+
+  // ── the one-line caption burned into the recorded replay video
+  'scene.replay.caption': 'The order it happened in',
 
   // ── the document, read by the customer on the review step
   'scene.doc.title': 'Accident report',
@@ -169,6 +177,11 @@ export const en = {
   'scene.doc.reportedInSpanish': 'Reported in Spanish',
   'scene.doc.whereHit': 'where they hit',
   'scene.doc.routes': 'The lines are the routes each vehicle took.',
+  // ── the recorded replay video, desk only: the diagram as it was sent, not the live playback above it
+  'scene.doc.replay.heading': 'Recorded replay',
+  'scene.doc.replay.stepBack': 'Back a frame',
+  'scene.doc.replay.stepForward': 'Forward a frame',
+  'scene.doc.replay.time': '{time}s into the clip',
   'scene.doc.noDamage': 'No damage marked on any vehicle.',
   'scene.doc.photos': 'Photos',
   'scene.doc.photoAlt': 'Photo {n}',
@@ -195,6 +208,23 @@ export const en = {
   'scene.marker.hint': 'Tap the car where the damage is',
   'scene.marker.note': 'Note (optional)',
   'scene.marker.remove': 'Remove this damage',
+  /** the other driver is not on this policy: it is their own insurer they are naming */
+  'scene.contact.policy.party': 'Your own insurer and policy number',
+  'scene.contact.policyAria.party': 'Your own insurer and policy number',
+
+  // ── the other driver, invited at the scene with a QR code
+  'scene.invite.title': 'The other driver',
+  'scene.invite.lead': 'They can add their own side of it now, on their own phone. No app, no account.',
+  'scene.invite.ask': 'Ask the other driver to add their side',
+  'scene.invite.making': 'Making a link…',
+  'scene.invite.failed': 'We could not make a link just now. You can carry on without it.',
+  'scene.invite.show': 'Show them this',
+  'scene.invite.showLead': 'They point their camera at it. It works for three days.',
+  'scene.invite.share': 'Share the link',
+  'scene.invite.shareTitle': 'Add your side of the accident',
+  'scene.invite.copy': 'Copy the link',
+  'scene.invite.copied': 'Copied',
+  'scene.invite.note': 'They will see where and when it happened and what the cars look like. They will not see your name, your details or anything else you have written.',
 } as const
 
 export const es: Record<keyof typeof en, string> = {
@@ -239,6 +269,9 @@ export const es: Record<keyof typeof en, string> = {
   'scene.path.bend': 'Agregar una curva',
   'scene.path.tap': 'Tócalo en el mapa',
   'scene.path.clear': 'Borrar recorrido',
+
+  'scene.road.align': 'Alinearlo con la vía',
+  'scene.road.dismiss': 'Descartar',
 
   'scene.impact.title': 'Punto de impacto',
   'scene.impact.found': 'Encontrado',
@@ -295,9 +328,12 @@ export const es: Record<keyof typeof en, string> = {
   'scene.send.signAria': 'Firma',
   'scene.send.signPlaceholder': 'Tu nombre completo',
   'scene.send.sending': 'Enviando…',
+  'scene.send.recording': 'Grabando la repetición…',
   'scene.send.send': 'Enviar mi reporte',
   'scene.send.locked': 'Marca la casilla y firma para enviar.',
   'scene.send.error': 'Algo salió mal. Inténtalo de nuevo.',
+
+  'scene.replay.caption': 'El orden en que pasó',
 
   'scene.doc.title': 'Reporte del accidente',
   'scene.doc.draft': 'Borrador — todavía no se envía',
@@ -343,6 +379,10 @@ export const es: Record<keyof typeof en, string> = {
   'scene.doc.reportedInSpanish': 'Reported in Spanish',
   'scene.doc.whereHit': 'dónde chocaron',
   'scene.doc.routes': 'Las líneas son el recorrido de cada vehículo.',
+  'scene.doc.replay.heading': 'Repetición grabada',
+  'scene.doc.replay.stepBack': 'Retroceder un cuadro',
+  'scene.doc.replay.stepForward': 'Avanzar un cuadro',
+  'scene.doc.replay.time': '{time}s del video',
   'scene.doc.noDamage': 'No se marcaron daños en ningún vehículo.',
   'scene.doc.photos': 'Fotos',
   'scene.doc.photoAlt': 'Foto {n}',
@@ -368,4 +408,19 @@ export const es: Record<keyof typeof en, string> = {
   'scene.marker.hint': 'Toca el auto donde están los daños',
   'scene.marker.note': 'Nota (opcional)',
   'scene.marker.remove': 'Quitar este daño',
+  'scene.contact.policy.party': 'Tu propia aseguradora y número de póliza',
+  'scene.contact.policyAria.party': 'Tu propia aseguradora y número de póliza',
+
+  'scene.invite.title': 'El otro conductor',
+  'scene.invite.lead': 'Puede agregar su versión ahora mismo, desde su propio teléfono. Sin app y sin cuenta.',
+  'scene.invite.ask': 'Pídele al otro conductor que agregue su versión',
+  'scene.invite.making': 'Creando el enlace…',
+  'scene.invite.failed': 'No pudimos crear el enlace en este momento. Puedes seguir sin él.',
+  'scene.invite.show': 'Muéstrale esto',
+  'scene.invite.showLead': 'Que apunte su cámara. Funciona por tres días.',
+  'scene.invite.share': 'Compartir el enlace',
+  'scene.invite.shareTitle': 'Agrega tu versión del accidente',
+  'scene.invite.copy': 'Copiar el enlace',
+  'scene.invite.copied': 'Copiado',
+  'scene.invite.note': 'Verá dónde y cuándo pasó y cómo son los vehículos. No verá tu nombre, tus datos ni nada más de lo que escribiste.',
 }

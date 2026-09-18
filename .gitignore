@@ -12,3 +12,4 @@ data/
 
 # local settings for the claim server; .env.example is the template
 .env
+.superpowers/

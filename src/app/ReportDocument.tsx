@@ -1,7 +1,22 @@
-import { Fragment, useRef, type ReactNode, type RefObject } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useClaim, type Step } from '../claim/store'
 import { KIND_INFO, ROLE_COLOR, newPerson, type Claim, type ClaimVehicle, type Person } from '../claim/schema'
-import { cap, conditionLabels, contactLine, driverName, driverShort, gaps, ownerLabel, personLine, vehicleName, vehicleOf, yesNo, type Voice } from '../claim/describe'
+import {
+  cap,
+  conditionLabels,
+  contactLine,
+  driverName,
+  driverShort,
+  gaps,
+  glareLine,
+  lookedUpLines,
+  ownerLabel,
+  personLine,
+  vehicleName,
+  vehicleOf,
+  yesNo,
+  type Voice,
+} from '../claim/describe'
 import type { LngLat } from '../geo'
 import { plural, translate, type Key, type Lang, type Vars } from '../i18n'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
@@ -105,6 +120,72 @@ function Hurt({ p, lang }: { p: Person; lang: Lang }) {
   )
 }
 
+/** one video frame, at the recorder's own rate */
+const FRAME_S = 1 / 30
+
+/**
+ * The video the customer's browser recorded at send time — what actually went out, not the
+ * live playback above it — with a scrubber an adjuster can step frame by frame, because
+ * "was the red car already moving" is a question `controls` alone answers badly.
+ */
+function ReplayVideo({ src, lang }: { src: string; lang: Lang }) {
+  const t = (key: Key, vars?: Vars) => translate(lang, key, vars)
+  const video = useRef<HTMLVideoElement>(null)
+  const [time, setTime] = useState(0)
+
+  useEffect(() => {
+    const v = video.current
+    if (!v) return
+    // A MediaRecorder webm reports `duration === Infinity` until the browser has demuxed all
+    // the way to the end — which normal playback of a short clip never does on its own.
+    // Seeking to a point far past the end forces it to do that work; seeking back to 0 then
+    // leaves the scrubber at the start with a real length to step through.
+    const onLoaded = () => {
+      if (v.duration !== Infinity) return
+      const onSeeked = () => {
+        v.currentTime = 0
+        v.removeEventListener('seeked', onSeeked)
+      }
+      v.addEventListener('seeked', onSeeked)
+      v.currentTime = 1e9
+    }
+    v.addEventListener('loadedmetadata', onLoaded)
+    return () => v.removeEventListener('loadedmetadata', onLoaded)
+  }, [])
+
+  const step = (frames: number) => {
+    const v = video.current
+    if (!v) return
+    v.pause()
+    const end = Number.isFinite(v.duration) ? v.duration : Infinity
+    v.currentTime = Math.min(Math.max(0, v.currentTime + frames * FRAME_S), end)
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="mb-1.5 text-xs font-semibold text-slate-500">{t('scene.doc.replay.heading')}</div>
+      <video
+        ref={video}
+        src={src}
+        controls
+        muted
+        playsInline
+        onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+        className="w-full rounded-xl bg-black ring-1 ring-slate-900/10"
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-2 print:hidden">
+        <button type="button" className="chip" onClick={() => step(-1)}>
+          <Icon.back /> {t('scene.doc.replay.stepBack')}
+        </button>
+        <button type="button" className="chip" onClick={() => step(1)}>
+          <Icon.next /> {t('scene.doc.replay.stepForward')}
+        </button>
+        <span className="font-mono text-xs text-slate-500 tabular-nums">{t('scene.doc.replay.time', { time: time.toFixed(1) })}</span>
+      </div>
+    </div>
+  )
+}
+
 // ── the document ─────────────────────────────────────────────────────
 
 export type ReportDocumentProps = {
@@ -116,7 +197,7 @@ export type ReportDocumentProps = {
   markers?: RefObject<Map<string, DamageMarkerHandle>>
   /** what an adjuster sees instead of the draft badge */
   badge?: ReactNode
-  /** who is reading: the customer ("your Camry") or the claims desk ("the policyholder's") */
+  /** who is reading: the customer ("your Camry") or the claims desk ("the policyholder's", or "the other driver's" in theirs) */
   voice?: Voice
   /** which language to read it in; the claims desk renders this too and always stays English */
   lang?: Lang
@@ -134,6 +215,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
   const play = usePlayback(claim.vehicles)
 
   const loc = claim.incident.location
+  const ctx = claim.incident.context
   const center: LngLat | null = loc ? [loc.lng, loc.lat] : null
   const info = KIND_INFO[claim.incident.kind]
   const mine = claim.vehicles.find((v) => v.role === 'insured') ?? claim.vehicles[0]
@@ -224,6 +306,30 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
             <Icon.check /> {t('scene.doc.complete')}
           </div>
         ))}
+
+      {/* ── what the record said about the place and the hour: provenance, not an answer ── */}
+      {ctx && (
+        <Part title={t('start.where.looked.title')}>
+          <p className="mb-2 text-xs text-slate-500">{t('start.where.looked.source')}</p>
+          <ul className="space-y-1.5 text-sm text-ink">
+            {lookedUpLines(ctx, lang).map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+            {voice !== 'customer' &&
+              claim.vehicles
+                .filter((v) => v.position)
+                .map((v) => {
+                  const glare = glareLine(ctx, v.heading, lang)
+                  return glare ? (
+                    <li key={v.id} className="flex items-center gap-2">
+                      <Tag v={v} />
+                      <span>{glare}</span>
+                    </li>
+                  ) : null
+                })}
+          </ul>
+        </Part>
+      )}
 
       {/* ── vehicles ────────────────────────────────────────────── */}
       <Part title={t('scene.doc.vehicles')} edit={change('vehicles')}>
@@ -426,6 +532,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
             </figcaption>
           </figure>
         )}
+        {voice !== 'customer' && claim.attachments.replay && <ReplayVideo src={claim.attachments.replay} lang={lang} />}
       </Part>
 
       {/* ── damage ──────────────────────────────────────────────── */}

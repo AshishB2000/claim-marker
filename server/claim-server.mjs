@@ -11,6 +11,9 @@
  *   GET   /claims/:ref          one report, the whole document included
  *   GET   /claims/:ref/files/x  the diagram, the marked-up car and the photographs as files
  *   PATCH /claims/:ref          { status } — new, reviewing, closed
+ *   POST  /incidents            the customer invites the other driver: mints a party token
+ *   GET   /incidents/:id/seed   what the other driver's page starts from (a party token)
+ *   GET   /incidents/:id        the desk reads both accounts of one incident
  *   GET   /health
  *   GET   /demo/*              with DEMO=1, an insurer's portal that embeds all of this
  *   GET   /*                    the built page, when dist/ is beside this file
@@ -35,7 +38,8 @@
  *   CLAIM_DIR        ./data/claims
  *   STATIC_DIR       ../dist — the built page; serving is skipped when it is not there
  *   CLAIM_TOKEN      if set, POST /claims accepts `Authorization: Bearer <this>`
- *   SESSION_SECRET   if set, POST /claims also accepts a token minted by POST /sessions
+ *   SESSION_SECRET   if set, POST /claims also accepts a token minted by POST /sessions;
+ *                    also what POST /incidents signs the other driver's party token with
  *   API_KEY          the key the insurer's backend sends to POST /sessions
  *   DESK_TOKEN       if set, GET and PATCH need it — what the claims desk sends
  *   RATE_LIMIT       POSTs per minute per IP, default 30
@@ -59,8 +63,9 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { verify as verifySession, sign as signSession } from './session.mjs'
+import { verify as verifySession, sign as signSession, PARTY_TTL } from './session.mjs'
 import { expired } from './retention.mjs'
+import { record as recordSignals, prune as pruneSignals, signalsFor } from './signals.mjs'
 import { CUSTOMERS } from './demo/customers.mjs'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
@@ -91,6 +96,8 @@ const ORIGIN = process.env.CLAIM_ORIGIN ?? (PRODUCTION ? '' : '*')
 /** a document with twelve photographs is a few MB; this is far above any real one */
 const MAX_BODY = 40 * 1024 * 1024
 const STATUSES = ['new', 'reviewing', 'closed']
+/** what `claim/1`'s `incident.surface` may be; an incident seed's own surface is one of these too */
+const SURFACES_SET = new Set(['satellite', 'streets', 'lot', 'paper'])
 /** null keeps every report for ever */
 const RETAIN_DAYS = Number(process.env.RETAIN_DAYS) > 0 ? Number(process.env.RETAIN_DAYS) : null
 const DEMO = process.env.DEMO === '1'
@@ -139,15 +146,24 @@ const bearer = (req) => {
 const sameSecret = (given, token) => !!given && given.length === token.length && timingSafeEqual(Buffer.from(given), Buffer.from(token))
 const authorised = (req, token) => (!token ? true : sameSecret(bearer(req), token))
 
+/** the incident id inside a party token's `sub` (`party:<id>`), or null for any other sub */
+const partySub = (sub) => (sub.startsWith('party:') ? sub.slice('party:'.length) : null)
+
 /**
- * Who sent this report: a session minted for one customer, the shared customer token, or —
- * only when neither is configured, which is development — nobody in particular.
+ * Who sent this report: a session minted for one customer, a party token minted for the
+ * other driver by `POST /incidents`, the shared customer token, or — only when neither a
+ * secret nor a token is configured, which is development — nobody in particular. A party
+ * token is never a customer: `customer` is null and the incident it belongs to is named
+ * instead, so a caller can never mistake one for the other.
  */
 function whoSent(req) {
   const given = bearer(req)
   if (SESSION_SECRET && given) {
     const session = verifySession(given, SESSION_SECRET)
-    if (session) return { customer: { id: session.sub, policy: session.policy } }
+    if (session) {
+      const incident = partySub(session.sub)
+      return incident ? { customer: null, party: { incident } } : { customer: { id: session.sub, policy: session.policy } }
+    }
   }
   if (CLAIM_TOKEN && sameSecret(given, CLAIM_TOKEN)) return { customer: null }
   if (!CLAIM_TOKEN && !SESSION_SECRET) return { customer: null }
@@ -187,13 +203,13 @@ const tooMany = (res) => {
   res.end(JSON.stringify({ error: 'too many requests; try again in a minute' }))
 }
 
-function readBody(req) {
+function readBody(req, max = MAX_BODY) {
   return new Promise((resolve, reject) => {
     const chunks = []
     let size = 0
     req.on('data', (c) => {
       size += c.length
-      if (size > MAX_BODY) {
+      if (size > max) {
         reject(Object.assign(new Error('body too large'), { status: 413 }))
         req.destroy()
         return
@@ -205,18 +221,30 @@ function readBody(req) {
   })
 }
 
-/** the insurer's own claim number: the year and six unambiguous characters */
-const newReference = () => {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  const bytes = randomBytes(6)
+/** no 0/O, 1/I/L: a human reading this off a screen at the roadside cannot mistake one letter for another */
+const ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+const randomCode = (n) => {
+  const bytes = randomBytes(n)
   let s = ''
-  for (const b of bytes) s += alphabet[b % alphabet.length]
-  return `INS-${new Date().getFullYear()}-${s}`
+  for (const b of bytes) s += ID_ALPHABET[b % ID_ALPHABET.length]
+  return s
 }
+/** the insurer's own claim number: the year and six unambiguous characters */
+const newReference = () => `INS-${new Date().getFullYear()}-${randomCode(6)}`
+/** the id two reports of one accident share, minted by POST /incidents */
+const newIncidentId = () => `INC-${randomCode(6)}`
 const safeRef = (s) => /^[A-Z0-9-]{4,40}$/i.test(s)
+const safeIncident = (s) => typeof s === 'string' && /^INC-[A-Z0-9]{6}$/i.test(s)
+/** the file extension for each attachment type the page sends */
+const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'video/webm': 'webm', 'video/mp4': 'mp4' }
+/**
+ * An attachment as a file. The replay's media type may carry parameters —
+ * `data:video/webm;codecs=vp9;base64,…` — which are the browser describing its own encoder,
+ * not something a file needs, so they are read past rather than refused.
+ */
 const dataUrl = (s) => {
-  const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/s.exec(s ?? '')
-  return m ? { type: m[1], ext: m[1] === 'image/png' ? 'png' : m[1] === 'image/webp' ? 'webp' : 'jpg', bytes: Buffer.from(m[2], 'base64') } : null
+  const m = /^data:(image\/(?:png|jpeg|webp)|video\/(?:webm|mp4))(?:;[^,;]+=[^,;]+)*;base64,(.+)$/s.exec(s ?? '')
+  return m ? { type: m[1], ext: EXT[m[1]], bytes: Buffer.from(m[2], 'base64') } : null
 }
 
 // ── the built page ───────────────────────────────────────────────────
@@ -232,6 +260,8 @@ const TYPES = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   webp: 'image/webp',
+  webm: 'video/webm',
+  mp4: 'video/mp4',
   ico: 'image/x-icon',
   glb: 'model/gltf-binary',
   hdr: 'image/vnd.radiance',
@@ -263,6 +293,10 @@ const CONNECT = [
   'https://photon.komoot.io',
   'https://vpic.nhtsa.dot.gov',
   'https://en.wikipedia.org',
+  // the scene the page looks up for itself: the weather at that hour, and the road it happened on
+  'https://api.open-meteo.com',
+  'https://archive-api.open-meteo.com',
+  'https://overpass.kumi.systems',
   ...(process.env.ASSIST_URL ? [new URL(process.env.ASSIST_URL).origin] : []),
   ...(process.env.CONNECT_SRC ?? '').split(',').map((s) => s.trim()).filter(Boolean),
 ]
@@ -356,6 +390,12 @@ const sendHtml = (req, res, html) => {
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
     'content-security-policy': CSP,
+    // Said out loud rather than left to the default, which is the same thing: the page takes
+    // photographs of the damage, reads the customer's position at the roadside and dictates a
+    // statement, and a deployment behind a proxy that sets a blanket `camera=()` would break
+    // all three silently. `self` is this page's own origin; an embedding host still has to
+    // delegate with the iframe's `allow` attribute, which `public/embed.js` does.
+    'permissions-policy': 'camera=(self), microphone=(self), geolocation=(self)',
   })
   res.end(req.method === 'HEAD' ? undefined : body)
 }
@@ -407,6 +447,8 @@ async function serveStatic(req, res, pathname) {
 // ── storage: one folder per report ───────────────────────────────────
 
 const folder = (ref) => join(DIR, ref)
+/** what else lives in CLAIM_DIR beside the report folders */
+const NOT_REPORTS = new Set(['by-client', 'index', 'incidents'])
 const receiptOf = async (ref) => JSON.parse(await readFile(join(folder(ref), 'receipt.json'), 'utf8'))
 const claimOf = async (ref) => JSON.parse(await readFile(join(folder(ref), 'claim.json'), 'utf8'))
 
@@ -420,7 +462,77 @@ const byClient = async (clientRef) => {
   }
 }
 
-async function store(doc, clientRef, customer) {
+// ── incidents: two accounts of one accident ────────────────────────────
+
+const incidentDir = (id) => join(DIR, 'incidents', id)
+const seedFile = (id) => join(incidentDir(id), 'seed.json')
+const incidentReportsFile = (id) => join(incidentDir(id), 'reports.jsonl')
+
+const seedOf = async (id) => {
+  try {
+    return JSON.parse(await readFile(seedFile(id), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/** every report already filed against an incident, oldest first — so GET /incidents/:id does not scan every report */
+const incidentReports = async (id) => {
+  try {
+    const raw = await readFile(incidentReportsFile(id), 'utf8')
+    return raw
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line)
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+const addIncidentReport = async (id, reference, party) => {
+  await mkdir(incidentDir(id), { recursive: true })
+  await writeFile(incidentReportsFile(id), JSON.stringify({ reference, party: !!party }) + '\n', { flag: 'a' })
+}
+
+/**
+ * When a report names an incident — the party's own report always does, and the
+ * policyholder's does once they have created the invite — link every report already filed
+ * against that incident that does not yet know about it. Two reports can arrive in either
+ * order (the policyholder may finish and send before the invite exists, and add the link
+ * only once they create it), so this runs from both sides rather than once.
+ */
+async function backfillIncident(id, reference) {
+  for (const { reference: ref } of await incidentReports(id)) {
+    if (ref === reference) continue
+    const prior = await receiptOf(ref).catch(() => null)
+    if (prior && !prior.incident) await writeFile(join(folder(ref), 'receipt.json'), JSON.stringify({ ...prior, incident: id }, null, 2))
+  }
+}
+
+async function store(doc, clientRef, customer, party) {
+  /*
+   * The incident and the side come from who sent this, never from the document: a document is
+   * whatever its sender typed, and the other driver can read their incident id out of their
+   * own token. A party token names its own incident; anyone else may name only an incident
+   * they created themselves. An id with no seed behind it is no incident at all. The
+   * document is corrected to match, so the stored `claim.json` and the receipt agree.
+   */
+  const named = party ? party.incident : String(doc.incident.shared ?? '').trim().toUpperCase()
+  const seed = safeIncident(named) ? await seedOf(named) : null
+  const inc = seed && (party || (customer && seed.invited?.by === customer.id)) ? named : null
+  doc.incident.shared = inc
+  doc.reporter.party = party ? 'other_party' : 'policyholder'
+  // a visitor to the demo portal, or the other driver a demo visitor invited — or one whose
+  // invite is already swept, on an instance that only ever demonstrates
+  const demo = DEMO && (party ? !seed || !!seed.invited?.demo : !!customer?.id?.startsWith('demo-'))
+
   const reference = newReference()
   const dir = folder(reference)
   await mkdir(dir, { recursive: true })
@@ -432,26 +544,43 @@ async function store(doc, clientRef, customer) {
     files[name] = `${name}.${d.ext}`
   }
   await put('scene', doc.attachments.scene)
-  for (const [id, png] of Object.entries(doc.attachments.damage)) await put(`damage-${id}`, png)
+  await put('replay', doc.attachments.replay)
+  for (const [vehicleId, png] of Object.entries(doc.attachments.damage)) await put(`damage-${vehicleId}`, png)
   for (let i = 0; i < doc.attachments.photos.length; i++) await put(`photo-${String(i + 1).padStart(2, '0')}`, doc.attachments.photos[i].data)
 
+  const receivedAt = new Date().toISOString()
+  // asked before this report is recorded, so it never matches itself; the other account of the
+  // same accident is not "seen before", it is the point. A demonstration is neither checked nor
+  // remembered: one visitor must never be handed another visitor's reference.
+  const linked = inc ? (await incidentReports(inc)).map((r) => r.reference) : []
+  const signals = demo ? [] : await signalsFor(DIR, doc, { reference, customer, receivedAt, incident: inc }, linked).catch(() => [])
   const receipt = {
     reference,
     clientReference: clientRef,
     // who the session said this was, when it came with one: the report is on their policy
     customer,
-    // filed by a visitor to the demo portal, and swept a day later whatever RETAIN_DAYS says
-    ...(DEMO && customer?.id?.startsWith('demo-') ? { demo: true } : {}),
-    receivedAt: new Date().toISOString(),
+    // swept a day later whatever RETAIN_DAYS says
+    ...(demo ? { demo: true } : {}),
+    // two reports of one accident: which incident, and which side of it this one is
+    ...(inc ? { incident: inc, party: doc.reporter.party } : {}),
+    receivedAt,
     status: 'new',
     files,
+    // what an adjuster should know before reading it; the insurer's own record, never `claim/1`
+    signals,
     summary: summarise(doc),
   }
+  if (!demo) await recordSignals(DIR, doc, receipt).catch((e) => console.warn(`signals: ${e.message}`))
   await writeFile(join(dir, 'claim.json'), JSON.stringify(doc))
   await writeFile(join(dir, 'receipt.json'), JSON.stringify(receipt, null, 2))
   if (clientRef && safeRef(clientRef)) {
     await mkdir(join(DIR, 'by-client'), { recursive: true })
     await writeFile(join(DIR, 'by-client', clientRef), reference)
+  }
+  if (inc) {
+    // both receipts should end up naming the same incident, whichever arrived first
+    await backfillIncident(inc, reference)
+    await addIncidentReport(inc, reference, !!party)
   }
   return receipt
 }
@@ -473,7 +602,8 @@ const summarise = (doc) => ({
 async function list() {
   let names = []
   try {
-    names = (await readdir(DIR)).filter((n) => n !== 'by-client')
+    // by-client is the idempotency map, index/ the reuse indexes, incidents/ the invites: none is a report
+    names = (await readdir(DIR)).filter((n) => !NOT_REPORTS.has(n))
   } catch {
     return []
   }
@@ -500,6 +630,36 @@ async function sweep() {
     await rm(folder(r.reference), { recursive: true, force: true })
     if (r.clientReference && safeRef(r.clientReference)) await rm(join(DIR, 'by-client', r.clientReference), { force: true })
     console.log(`swept ${r.reference}, received ${r.receivedAt}`)
+  }
+  // forgetting a report forgets what it told the indexes: a photograph's fingerprint outliving
+  // the photograph is a record of someone we promised to forget
+  await pruneSignals(DIR, new Set((await list()).map((r) => r.reference))).catch((e) => console.warn(`signals: ${e.message}`))
+  await sweepIncidents()
+}
+
+/**
+ * An incident is forgotten once none of its reports are left on disk (swept above, or never
+ * arrived) and its own age passes the same test any other report does — `expired()`, not a
+ * second notion of "old". Age is the moment it was created (`invited.at`), never the
+ * incident's own `at`, which is the accident's local time, not this record's.
+ */
+async function sweepIncidents() {
+  let ids = []
+  try {
+    ids = await readdir(join(DIR, 'incidents'))
+  } catch {
+    return
+  }
+  for (const id of ids) {
+    if (!safeIncident(id)) continue
+    const seed = await seedOf(id)
+    if (!seed) continue
+    const reports = await incidentReports(id)
+    const remaining = reports.some(({ reference }) => safeRef(reference) && existsSync(folder(reference)))
+    // a demo visitor's invite goes when their reports do, whatever RETAIN_DAYS says
+    if (remaining || !expired(seed.invited?.at, seed.invited?.demo ? DEMO_DAYS : RETAIN_DAYS)) continue
+    await rm(incidentDir(id), { recursive: true, force: true })
+    console.log(`swept incident ${id}, invited ${seed.invited?.at}`)
   }
 }
 
@@ -558,15 +718,19 @@ async function mintSession(req, res) {
   const customer = typeof body?.customer === 'object' && body.customer !== null ? body.customer : {}
   const id = typeof customer.id === 'string' ? customer.id.trim() : ''
   if (!id || id.length > MAX_ID) return json(res, 400, { error: 'customer.id is required and must be at most 80 characters' })
-  json(res, 200, createSession({ ...customer, id }, body.vehicles, body.ttlSeconds ?? 3600))
+  const session = createSession({ ...customer, id }, body.vehicles, body.ttlSeconds ?? 3600)
+  if (!session) return json(res, 400, { error: 'customer.id must not start with "party:"' })
+  json(res, 200, session)
 }
 
 /**
  * A token for one customer and the prefill to hand the page along with it. Whoever calls this
  * has already established who the customer is — with an API key from their backend, or, in the
- * demo portal, by being a demonstration.
+ * demo portal, by being a demonstration. Null for an id that would read as a party token.
  */
 function createSession(customer, vehicles, ttlSeconds) {
+  // `party:<incident>` is the other driver's token; a customer by that name would be read as one
+  if (partySub(customer.id) !== null) return null
   const policy = typeof customer.policy === 'string' ? customer.policy.trim().slice(0, MAX_ID) : ''
   const token = signSession({ sub: customer.id, policy }, SESSION_SECRET, ttlSeconds)
   const session = verifySession(token, SESSION_SECRET)
@@ -601,7 +765,132 @@ async function demoLogin(req, res) {
   const who = Object.hasOwn(CUSTOMERS, key) ? CUSTOMERS[key] : null
   if (!who) return json(res, 404, { error: `no such demo customer; they are ${Object.keys(CUSTOMERS).join(', ')}` })
   const id = `demo-${key}-${randomBytes(6).toString('hex')}`
-  json(res, 200, createSession({ ...who.customer, id }, who.vehicles, DEMO_TTL))
+  const session = createSession({ ...who.customer, id }, who.vehicles, DEMO_TTL)
+  if (!session) return json(res, 400, { error: 'customer.id must not start with "party:"' })
+  json(res, 200, session)
+}
+
+// ── incidents: inviting the other driver ────────────────────────────
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i
+const LOCAL_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/
+const MAX_PARTY_VEHICLES = 6
+const MAX_VEHICLE_FIELD = 60
+const MAX_ADDRESS = 200
+/** a seed is a few hundred bytes; this is far above any real one, and far below MAX_BODY */
+const MAX_SEED_BODY = 16 * 1024
+/** the body shapes the page draws — `BODY_ORDER` in src/vehicles/bodies.ts, copied because this server has no build step */
+const BODIES = new Set(['sedan', 'hatchback', 'coupe', 'suv', 'truck', 'van', 'box_truck'])
+
+/**
+ * The seed the other driver's page starts from: only these keys, from only these shapes —
+ * anything else the page sent, and every other field of `claim/1`, is dropped here rather
+ * than filtered on the way out, because the other driver must never be handed the first
+ * report to begin with. Null when the body is not a seed at all.
+ */
+function validSeed(body) {
+  if (typeof body !== 'object' || body === null) return null
+  const loc = body.location
+  if (typeof loc !== 'object' || loc === null) return null
+  const { lng, lat, address } = loc
+  if (typeof lng !== 'number' || !Number.isFinite(lng) || Math.abs(lng) > 180) return null
+  if (typeof lat !== 'number' || !Number.isFinite(lat) || Math.abs(lat) > 90) return null
+  if (typeof body.at !== 'string' || !LOCAL_AT.test(body.at)) return null
+  if (!SURFACES_SET.has(body.surface)) return null
+  const utcOffset =
+    typeof body.utcOffset === 'number' && Number.isInteger(body.utcOffset) && Math.abs(body.utcOffset) <= 960 ? body.utcOffset : null
+  const vehicles = []
+  for (const v of Array.isArray(body.vehicles) ? body.vehicles.slice(0, MAX_PARTY_VEHICLES) : []) {
+    if (typeof v !== 'object' || v === null) continue
+    const { body: vbody, color, make, model } = v
+    if (!BODIES.has(vbody)) continue
+    if (typeof color !== 'string' || !HEX_COLOR.test(color)) continue
+    if (typeof make !== 'string' || make.length > MAX_VEHICLE_FIELD) continue
+    if (typeof model !== 'string' || model.length > MAX_VEHICLE_FIELD) continue
+    vehicles.push({ body: vbody, color, make, model })
+  }
+  return { location: { lng, lat, address: typeof address === 'string' ? address.slice(0, MAX_ADDRESS) : '' }, at: body.at, utcOffset, surface: body.surface, vehicles }
+}
+
+/**
+ * The customer, having just placed the vehicles and the impact, invites the other driver to
+ * add their own side from a QR code at the scene. Bearer: what POST /claims accepts, except a
+ * party token — the other driver was invited, and does not invite anyone.
+ */
+async function createIncident(req, res) {
+  // without a secret to sign the party token with, this endpoint has nothing to offer,
+  // whoever is asking — the same reason mintSession checks its own configuration first
+  if (!SESSION_SECRET) return json(res, 503, { error: 'incidents are not configured: set SESSION_SECRET' })
+  const sender = whoSent(req)
+  if (!sender) return json(res, 401, { error: 'a bearer token is required' })
+  if (sender.party) return json(res, 403, { error: 'a party token cannot create an invite' })
+  let body
+  try {
+    body = JSON.parse(await readBody(req, MAX_SEED_BODY))
+  } catch (e) {
+    return json(res, e.status ?? 400, { error: e.status ? e.message : 'the body is not JSON' })
+  }
+  const seed = validSeed(body)
+  if (!seed) return json(res, 400, { error: 'a valid seed is required: location, at, surface and up to six vehicles' })
+  const id = newIncidentId()
+  await mkdir(incidentDir(id), { recursive: true })
+  /*
+   * The customer may invite the other driver *after* sending their own report — the page
+   * offers it again on the done page, which is often the first moment they have a free hand.
+   * That report was filed with no `incident.shared` in it, so nothing else will ever connect
+   * the two; naming it here is the only chance. Only their own report, which only a session
+   * can prove: the shared CLAIM_TOKEN names nobody, so it can invite but never attach.
+   */
+  const mine = typeof body?.reference === 'string' ? body.reference.trim().toUpperCase() : ''
+  if (sender.customer && safeRef(mine) && existsSync(folder(mine))) {
+    const receipt = await receiptOf(mine).catch(() => null)
+    if (receipt && receipt.customer?.id === sender.customer.id && !receipt.incident) {
+      await writeFile(join(folder(mine), 'receipt.json'), JSON.stringify({ ...receipt, incident: id, party: 'policyholder' }, null, 2))
+      await addIncidentReport(id, mine, false)
+    }
+  }
+  // who invited travels beside the seed, never inside it — the other driver is handed the
+  // seed alone by GET /incidents/:id/seed, and must never learn the customer's id this way
+  // a demo visitor's invite, like their report, is swept after DEMO_DAYS — and so is what it brings in
+  const by = sender.customer?.id ?? null
+  const demo = DEMO && !!by?.startsWith('demo-')
+  await writeFile(seedFile(id), JSON.stringify({ ...seed, invited: { by, at: new Date().toISOString(), ...(demo ? { demo: true } : {}) } }, null, 2))
+  const token = signSession({ sub: `party:${id}`, policy: '' }, SESSION_SECRET, PARTY_TTL, Date.now(), PARTY_TTL)
+  const session = verifySession(token, SESSION_SECRET)
+  const base = `${req.headers['x-forwarded-proto'] ?? 'http'}://${req.headers.host}`
+  json(res, 201, { incident: id, url: `${base}/?party=${token}`, expiresAt: new Date(session.exp * 1000).toISOString() })
+}
+
+/**
+ * What the other driver's page starts from. The seed and nothing else: no names, phones,
+ * plates, VINs, people, damage, description or photographs, and no reference — not because
+ * anything is filtered out here, but because `createIncident` above never wrote any of that
+ * to `seed.json` in the first place.
+ */
+async function getIncidentSeed(req, res, id) {
+  if (!safeIncident(id)) return json(res, 404, { error: 'no such incident' })
+  const session = SESSION_SECRET ? verifySession(bearer(req), SESSION_SECRET) : null
+  if (!session || partySub(session.sub) !== id) return json(res, 401, { error: 'a party token for this incident is required' })
+  const seed = await seedOf(id)
+  if (!seed) return json(res, 404, { error: 'no such incident' })
+  const { location, at, utcOffset, surface, vehicles } = seed
+  json(res, 200, { location, at, utcOffset, surface, vehicles })
+}
+
+/** the desk, laying both accounts of one incident side by side */
+async function getIncidentReport(req, res, id) {
+  const scope = deskScope(req)
+  if (!scope) return json(res, 401, { error: 'a bearer token is required' })
+  if (!safeIncident(id) || !(await seedOf(id))) return json(res, 404, { error: 'no such incident' })
+  const reports = []
+  for (const { reference } of await incidentReports(id)) {
+    if (!safeRef(reference) || !existsSync(folder(reference))) continue
+    const receipt = await receiptOf(reference)
+    if (!inScope(receipt, scope)) continue
+    reports.push({ ...receipt, claim: await claimOf(reference) })
+  }
+  reports.sort((a, b) => (a.receivedAt < b.receivedAt ? -1 : 1))
+  json(res, 200, { incident: id, reports })
 }
 
 async function receive(req, res) {
@@ -627,9 +916,18 @@ async function receive(req, res) {
     const receipt = await receiptOf(seen)
     return json(res, 200, { reference: receipt.reference, status: receipt.status, duplicate: true })
   }
-  const receipt = await store(doc, clientRef, sender.customer)
+  // a party token names one incident and may file one report against it; a second attempt —
+  // a different document, not just a resend of the same one — is answered like a resend too
+  if (sender.party) {
+    const already = (await incidentReports(sender.party.incident)).find((r) => r.party)
+    if (already) {
+      const receipt = await receiptOf(already.reference).catch(() => null)
+      if (receipt) return json(res, 200, { reference: receipt.reference, status: receipt.status, duplicate: true })
+    }
+  }
+  const receipt = await store(doc, clientRef, sender.customer, sender.party)
   console.log(
-    `received ${receipt.reference} (${clientRef ?? 'no client ref'}${sender.customer ? `, customer ${sender.customer.id}` : ''}): ${receipt.summary.kind} at ${receipt.summary.address || 'no address'}, ${parsed.rejected} vehicle(s) rejected`,
+    `received ${receipt.reference} (${clientRef ?? 'no client ref'}${sender.customer ? `, customer ${sender.customer.id}` : sender.party ? `, party of ${sender.party.incident}` : ''}): ${receipt.summary.kind} at ${receipt.summary.address || 'no address'}, ${parsed.rejected} vehicle(s) rejected`,
   )
   json(res, 201, { reference: receipt.reference, status: receipt.status, rejectedVehicles: parsed.rejected })
   const base = `${req.headers['x-forwarded-proto'] ?? 'http'}://${req.headers.host}`
@@ -674,6 +972,16 @@ async function route(req, res) {
     // /demo without the slash would resolve the portal's own links against the root
     if (parts.length === 1 && !url.pathname.endsWith('/')) return res.writeHead(302, { location: '/demo/' }).end()
     return serveDemo(req, res, parts)
+  }
+
+  if (parts[0] === 'incidents') {
+    if (parts.length === 1 && req.method === 'POST') {
+      if (rateLimited(ipOf(req))) return tooMany(res)
+      return createIncident(req, res)
+    }
+    if (parts.length === 3 && parts[2] === 'seed' && req.method === 'GET') return getIncidentSeed(req, res, parts[1])
+    if (parts.length === 2 && req.method === 'GET') return getIncidentReport(req, res, parts[1])
+    return json(res, 405, { error: 'method not allowed' })
   }
 
   if (parts[0] === 'claims') {

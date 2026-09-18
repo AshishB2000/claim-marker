@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 278 tests across 19 files
+npm test               # vitest, 556 tests across 34 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -32,8 +32,11 @@ machine**: the image cannot be built or verified here, only the server itself.
 `node scripts/integration-smoke.mjs` needs `npm run dev` running and one build done: it
 starts its own claim server, webhook receiver and host page and proves sessions, the embed,
 prefill, the offline outbox, the server, the rate limit, the served page's CSP, the webhook
-signature, the desk, retention and the demo portal (a second, shorter walk against the **built**
-page the claim server serves). Run it for anything touching `src/config.ts`,
+signature, the desk, retention, the reuse signals (the same photograph and VIN under two
+customers), **both drivers** (the scene step's QR invite, a second browser as the other driver
+seeing nothing of the first report, their account filed once, both side by side on the desk),
+the replay unpacked as a video file, and the demo portal (a second, shorter walk against the
+**built** page the claim server serves). Run it for anything touching `src/config.ts`,
 `src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`, `server/` or `src/adjuster/`.
 
 Two end-to-end scripts need `npm run dev` running in another shell and reach the internet
@@ -46,8 +49,11 @@ node scripts/shoot.mjs     # regenerates docs/*.png and asserts the attachments 
 
 `node scripts/assist-smoke.mjs` starts its own stub endpoint and its own dev server on **ports
 it finds free** (several of these scripts run side by side on this machine), so it needs no API
-key: it covers this page's half of the assistant contract, all four tasks, and walks the damage
-step twice — at 1280, where the layout must be the one it always was, and at 390, photo-first.
+key: it covers this page's half of the assistant contract, all five tasks, walks the damage
+step twice — at 1280, where the layout must be the one it always was, and at 390, photo-first,
+through the **live camera** (Chromium's fake device; it wraps `getUserMedia` and fails if a track
+is still running after the sheet closes) — and walks "just tell us what happened" against a
+stub that sends names, plates and VINs it must drop.
 
 `node scripts/record-demo.mjs` is a one-off: it starts its own `DEMO=1` server, walks the demo
 portal and writes `docs/demo.gif` (needs ffmpeg; without it, a `.webm`). Run it when that
@@ -68,6 +74,12 @@ worker's own fetches reach localhost, so a page quietly served by a live server 
 test that proves nothing. Run it for anything touching `public/sw.js`, the offline plugin in
 `vite.config.ts`, `src/app/offline.ts` or what the build emits. The model's own
 judgement is not covered by anything — that needs a key and `scripts/assist-server.mjs`.
+
+`scripts/smoke.mjs` answers Overpass from `scripts/fixtures/overpass-times-square.json` (a real
+recorded answer — every public Overpass mirror throttles by IP and hangs rather than erroring,
+and a build gate must not depend on somebody else's spare capacity) and stamps
+`scripts/fixtures/scene.jpg` with fresh EXIF at run time through `scripts/exif-write.mjs`, so a
+photograph can fill the place and the time with an exact zero to assert. The weather stays live.
 
 Helpers: `scripts/probe-zones.ts <body>` proves every zone claims bodywork; `scripts/profile-body.mjs <glb>`
 prints the measurements zone anchors are placed against; `scripts/embed-texture.mjs` inlines a Kenney
@@ -184,6 +196,73 @@ untouched by `DEMO`. Never put `DEMO=1` on an instance taking real claims — an
 session there. Config from the page's *own* origin is always trusted (`originAllowed`), which is
 how the portal's same-origin iframe is configured at all.
 
+**The scene fills itself in from the place and the time** (`src/scene/`). `weather.ts`
+(Open-Meteo: the archive past five days, the forecast endpoint with `past_days` otherwise,
+`timezone=auto` so the hourly stamps are local and the hour matches `at` by string),
+`sun.ts` (the NOAA approximation, no dependency) and `road.ts` (Overpass inside 60 m, the Kumi Systems mirror because `overpass-api.de` answers
+406 to whole networks; also
+returns the ways as GeoJSON for the diagram to draw). All three are pure apart from one
+`fetch` each, all three resolve `null` on any failure, and nothing on the page depends on
+any of them. `incident.utcOffset` is what makes `at` an instant — `instantOf(at, utcOffset)`
+— and is filled by the weather lookup, which resolves the zone anyway. `incident.context`
+is what the record said; `incident.conditions` stays the customer's answer, and
+`autoConditions` is `autoDamage`'s bargain for the three selects (`auto` follows the place
+and the time, `user` is final). "Still looking it up" is **derived** from `contextKey`
+against `sceneKey(incident)` — never a `setState` in the effect. `contextKey` and
+`roadWays` are not persisted on purpose. The roads layer draws on `satellite` and `streets`
+only; `alignToRoad` turns a dropped car to the road's line and **never moves it**.
+
+**A photograph's EXIF is read before `shrink` destroys it, and only distances are kept.**
+`src/claim/exif.ts` (pure, no dependency, both TIFF byte orders, never throws) runs on the
+original bytes in `addPhotos`; `photoDistances` in `photos.ts` turns what it found into
+`Photo.minutesFromIncident` / `metresFromScene`. **The raw position never reaches the
+document** — a gallery photo can carry the customer's home — and lives only in the store's
+in-memory `photoExif`, which also lets the distances follow a moved pin. The Where step
+offers "start from a photo you took" as a third way in; iOS strips location from picked
+photos, so it is offered and never relied on. `CameraGuide.tsx` opens the live camera from
+the guided tiles when `getUserMedia` exists, samples 160-px greyscale frames through
+`photoQuality.ts` every 300 ms, and its hints are **hints, never gates** — the shutter is
+always enabled, and every exit path stops the tracks.
+
+**Plausibility and reuse signals are the desk's, and only the desk's.**
+`src/claim/plausibility.ts` is pure geometry over a finished document (panel vs impact, a
+route arriving backwards, marks out of reach of the impact, overlapping bodies, a rear-end
+whose panels disagree, the story against `incident.context`, a photograph's own time and
+distance). `server/signals.mjs` is the server's side: three append-only JSONL indexes under
+`CLAIM_DIR/index/` for photo hashes, VINs and plates, compared **before** the new report is
+recorded, pruned by the retention sweep. Neither ever reaches the customer —
+`test/desk-only.test.ts` fails if anything but `src/adjuster/Desk.tsx` imports
+`plausibility.ts` — nothing in either blocks a report, and the words fraud, fault, liability,
+blame and suspicious appear in neither, which is also a test. `Photo.hash` is a dHash
+computed in the page (`ponytail:` — the server has no image decoder; a forged hash is the
+stated ceiling).
+
+**Two accounts of one accident are linked by `incident.shared` and `reporter.party`.**
+The customer invites the other driver with a QR code (`src/app/Invite.tsx`, the one runtime
+dependency `qrcode-generator`); `POST /incidents` mints a 72-hour party token
+(`PARTY_TTL` — `MAX_TTL` stays a day, `sign` takes an explicit cap). The other driver's page
+is **this page**, opened with `?party=<token>` **read from the URL only**, and it starts from
+`src/claim/seed.ts` — where, when, the ground, the shapes and colours of the cars, and
+nothing else; `test/seed.test.ts` fails on any trace of the first report. In their document
+their own car keeps role `insured` (schema-wise "the reporter's vehicle"), so every step and
+every sentence works unchanged; the copy differences are keyed off `reporter.party`.
+`src/claim/compare.ts` pairs the two accounts' vehicles by **mirrored role**, confirmed by
+body and colour, and never says who is right. Four rules that are easy to undo: the party page
+keeps its draft in its own slot, `claim-marker/draft/<INC-…>` (`draftName`, from the URL at
+import), so a link never overwrites or re-sides the report already on that phone; a party link
+whose seed will not load shows `LinkGone`, not a form, and a refused party token is `Rejected`
+at send, never queued; the invite `{incident, url, expiresAt}` is kept in the draft beside
+`shared` and shown again, never re-minted; and the desk orders and voices the two accounts by
+the **receipt's** `party` (set by the server from the token), never the document's.
+
+**The replay is recorded at send time and never holds a report up** (`src/map/record.ts`,
+`MapSceneHandle.record()`). It shares the PNG export's hand-painting of the DOM-only pills and
+impact cross, drives the cars through the same `poses` as the on-screen playback, picks VP9 →
+VP8 → WebM → MP4 by `isTypeSupported`, and races an 8-second ceiling in `Review.tsx`; any
+failure sends without it. `attachments.replay` is capped by `isReplay` (4 MB of data URL) and
+not persisted in the draft. The smoke decodes it and counts colours on the **middle frame**,
+because a valid video of a black rectangle is the failure that matters.
+
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
 and friends directly; those are only the defaults `config` starts from. `main.tsx` awaits
@@ -220,8 +299,12 @@ the page uses, via `dist/lib/claim.js`; do not hand-write validation in `server/
 
 **The AI never runs in the page.** `VITE_ASSIST_URL` points at an endpoint the insurer runs and
 that holds the key (`scripts/assist-server.mjs` is a reference one); unset, no AI exists in the
-page. Four tasks: `diagram`, `describe`, `check` (the report back as questions, on the review
-step) and `damage` (photographs back as marked panels, on the damage step). Positions on that
+page. Five tasks: `diagram`, `describe`, `check` (the report back as questions, on the review
+step) `damage` (photographs back as marked panels, on the damage step) and `intake` (one spoken or
+typed account back as a *proposed* draft of the first steps, on the kind step — ticked row by
+row, filled under the prefill rule, the statement kept as the customer's own words verbatim,
+the place handed to the Where step's search as words, never a coordinate; `parseIntake` is an
+allow-list and carries no names, phones, licences, plates or VINs whatever the endpoint sends). Positions on that
 wire are metres east/north of the incident, not `[lng, lat]`, because a model cannot do
 spherical arithmetic. Treat every answer as untrusted input: `parseScene` drops anything
 malformed or naming a vehicle the customer did not enter, and `applyScene` is a no-op when
@@ -281,11 +364,16 @@ The attestation's `at` is stamped only at send. Send is disabled until agreed an
 Every sentence that names a person, a vehicle or a condition comes from `src/claim/describe.ts`
 (`personLine`, `vehicleName`, `conditionLabels`, `gaps`); do not compose those inline in a step.
 
-**Those sentences have two voices.** `describe.ts` takes a `Voice`, defaulting to `'customer'`
-everywhere, so the steps and the review are second person as they were; `ReportDocument
-voice="desk"` — which only `src/adjuster/Desk.tsx` passes — turns "your Camry" into "the
-policyholder's Camry" and "You, driving" into "The policyholder, driving". `gaps()` has no
+**Those sentences have two voices** — three on the desk. `describe.ts` takes a `Voice`,
+defaulting to `'customer'` everywhere, so the steps and the review are second person as they
+were; `ReportDocument voice="desk"` — which only `src/adjuster/` passes — turns "your Camry" into
+"the policyholder's Camry" and "You, driving" into "The policyholder, driving", and
+`voice="desk-other"` reads the other driver's own account from their side: "the other driver's
+Ford", "The other driver, driving". Pick it with `deskVoice(receipt.party)`. `gaps()` has no
 voice on purpose: it only runs on the customer's own review page.
+
+**"From public records" is the record alone.** `lookedUpLines(ctx)` takes no conditions: the
+customer's selects sit beside it in the document and must never be shown under that heading.
 
 **Schemas are versioned and frozen.** `claim/1` embeds the `claim-marker/1` damage shape. Both
 guarantee `export → load → export` is byte-identical, which is why coordinates round on the way
@@ -327,15 +415,16 @@ era that still suits it. The app itself is Tailwind (`src/app.css`).
 src/app/          the seven steps, the shell, the shared ReportDocument, submit
 src/app/steps/damage/   the damage step's three parts: the camera, the suggestions, the marker
 src/adjuster/     the claims desk (adjuster.html), the insurer's side
-src/claim/        the claim/1 document, the persisted store, prefill, the outbox
+src/claim/        the claim/1 document, the persisted store, prefill, the outbox, a photo's own EXIF
 src/config.ts     runtime configuration and the host-page channel
 public/sw.js      the offline shell; its precache list is patched in by vite.config.ts
 src/map/          MapLibre scene, the three.js car layer, the transform maths, styles
+src/scene/        what the place and the time say for themselves: the weather, the sun, the road
 src/vehicles/     model loading + paint re-authoring, body previews, the paint palette
 src/marker/       the 3D damage marker
 src/assist/       the optional assistant: the wire contract and its parsers, the metric frame, the client
 src/zones.ts models.ts schema.ts geo.ts geocode.ts   shared
-server/           the reference claim server, its session tokens and retention (no dependencies)
+server/           the reference claim server, its session tokens, retention and reuse signals (no dependencies)
 server/demo/      the demo insurer portal at /demo/ with DEMO=1: plain HTML, no build step
 fly.toml render.yaml .env.example   the public deployment, unverified — no account, no Docker here
 Dockerfile docker-compose.yml   the same thing as one image, page included

@@ -11,13 +11,14 @@
  */
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import './worker'
-import { GeoJSONSource, Map as MapLibreMap, Marker, NavigationControl, ScaleControl, type LngLatLike } from 'maplibre-gl'
-import type { Feature } from 'geojson'
+import { GeoJSONSource, Map as MapLibreMap, Marker, NavigationControl, ScaleControl, type ExpressionSpecification, type LngLatLike } from 'maplibre-gl'
+import type { Feature, FeatureCollection } from 'geojson'
 import { bearing, destination, type LngLat } from '../geo'
-import { plural, translate, type Lang } from '../i18n'
+import { translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
 import { SIZE } from '../vehicles/bodies'
 import { CarLayer, type CarPose } from './carLayer'
+import { damageCount, paintOverlay, recordPlayback, type OverlayLabel } from './record'
 import { styleFor, type MapStyle } from './styles'
 
 export type MapSceneHandle = {
@@ -25,6 +26,12 @@ export type MapSceneHandle = {
   export: () => string
   /** back to the incident at the default zoom */
   recentre: () => void
+  /**
+   * The diagram's playback, recorded as a video: the vehicles' routes into the impact, held
+   * there, then handed back exactly as it was. Null when the browser cannot record it or there
+   * is nothing to play — never throws.
+   */
+  record: () => Promise<Blob | null>
 }
 
 /** what a tap on the map means right now */
@@ -35,6 +42,8 @@ export type MapSceneProps = {
   style: MapStyle
   /** only vehicles with a position are drawn */
   vehicles: ClaimVehicle[]
+  /** the ways around the incident, drawn as a road under the cars; on the two real-map grounds only */
+  roads?: FeatureCollection | null
   impact: LngLat | null
   selected: string | null
   /** false on the review page: no handles, no dragging, no map controls */
@@ -42,6 +51,13 @@ export type MapSceneProps = {
   tapMode?: TapMode
   /** a playback frame; while it is set the cars follow it and the markers hide */
   poses?: CarPose[] | null
+  /**
+   * A second account's vehicles, drawn faintly over the first for the desk's `Compare` view —
+   * somebody else's story of the same cars, not something to edit: no markers, no drag or turn
+   * handles, no labels, just the body at reduced opacity and its travel path dashed. Absent or
+   * empty leaves the map exactly as it is without this prop; the customer's page never passes it.
+   */
+  ghosts?: ClaimVehicle[] | null
   onSelect?: (id: string | null) => void
   /** a car was picked up, is being dragged, was let go */
   onGrab?: (id: string) => void
@@ -69,6 +85,36 @@ const fromLL = (p: { lng: number; lat: number }): LngLat => [p.lng, p.lat]
 
 /** ground metres per screen pixel at this latitude and zoom, for 512 px tiles */
 const metresPerPixel = (lat: number, zoom: number) => (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** zoom)
+
+/** the map's own minZoom/maxZoom, below — the range the road layers' width has to stay correct across */
+const ROAD_ZOOM_MIN = 16
+const ROAD_ZOOM_MAX = 21
+
+/** a lane's width in metres; OSM's `lanes` tag when the way has one, two lanes otherwise */
+const roadMetres: ExpressionSpecification = ['*', ['coalesce', ['get', 'lanes'], 2], 3.5]
+
+/**
+ * A road drawn in real metres, not screen pixels. A constant pixel width would read as a
+ * hairline at street zoom and swallow the cars zoomed in on them, because the ground one
+ * pixel covers halves with every zoom level the map goes up. `interpolate`/`exponential` base
+ * 2 on `['zoom']` doubles the same way, so two stops — in pixels-per-metre at the incident's
+ * own latitude — reproduce that exact curve at every zoom in between.
+ *
+ * The `interpolate` has to be the **outermost** expression. MapLibre allows `['zoom']` only as
+ * the direct input of a top-level `interpolate` or `step`; wrapping one in an `['*', …]` —
+ * which reads more naturally, "the lane width times the scale" — validates as "zoom
+ * expressions not supported", and a layer whose paint fails validation is **dropped with an
+ * error on the map's event bus and nothing else**. The map then looks exactly as it did, with
+ * the source sitting there and no layer drawing it, which is a long afternoon. So the lane
+ * count multiplies each stop instead.
+ */
+function roadLineWidth(lat: number, metres: ExpressionSpecification): ExpressionSpecification {
+  const px = (zoom: number) => ['*', metres, 1 / metresPerPixel(lat, zoom)] as ExpressionSpecification
+  return ['interpolate', ['exponential', 2], ['zoom'], ROAD_ZOOM_MIN, px(ROAD_ZOOM_MIN), ROAD_ZOOM_MAX, px(ROAD_ZOOM_MAX)]
+}
+
+/** the road is a real thing, so it belongs only on the two real-map grounds, never a drawn one */
+const roadsVisible = (style: MapStyle): 'visible' | 'none' => (style === 'satellite' || style === 'streets' ? 'visible' : 'none')
 
 const el = (className: string, color?: string) => {
   const d = document.createElement('div')
@@ -182,6 +228,43 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
 
     map.on('style.load', () => {
       map.addImage('cm-arrow', arrowImage(), { sdf: true })
+
+      // the road under the cars: a dark casing and a white core, added — hence drawn — before
+      // (below) the travel paths, so a path always reads as drawn over the road, never under
+      // it. style.load fires again on every ground switch, a full style replacement rather
+      // than a diff, so this handler has to pick the right initial visibility and geometry
+      // itself each time rather than relying on whatever an effect set on the previous style.
+      map.addSource('roads', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      const roadVisibility = roadsVisible(state.style)
+      const roadLat = init.center[1]
+      map.addLayer({
+        id: 'roads-casing',
+        type: 'line',
+        source: 'roads',
+        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: roadVisibility },
+        paint: { 'line-color': '#3a4150', 'line-width': roadLineWidth(roadLat, roadMetres), 'line-opacity': 0.9 },
+      })
+      map.addLayer({
+        id: 'roads-core',
+        type: 'line',
+        source: 'roads',
+        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: roadVisibility },
+        paint: { 'line-color': '#ffffff', 'line-width': roadLineWidth(roadLat, ['*', roadMetres, 0.6]), 'line-opacity': 0.85 },
+      })
+      pushRoads(map, latest.current.roads)
+
+      // the other account's travel paths: dashed, same colour family, under the first
+      // account's own paths and heads so a ghost never reads as the primary story
+      map.addSource('ghost-paths', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addLayer({
+        id: 'ghost-paths',
+        type: 'line',
+        source: 'ghost-paths',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': 6, 'line-opacity': 0.5, 'line-dasharray': [2, 2] },
+      })
+      pushGhostGeometry(map, latest.current.ghosts ?? [])
+
       map.addSource('paths', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       map.addSource('heads', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       map.addLayer({
@@ -216,6 +299,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       state.styleReady = true
       pushGeometry(map, latest.current.vehicles)
       state.cars.setPoses(latest.current.poses ?? posesOf(latest.current.vehicles))
+      state.cars.setGhosts(posesOf(latest.current.ghosts ?? []))
     })
 
     // the footprints are in metres, so they grow and shrink with the zoom
@@ -272,6 +356,18 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     // already has everything the handler adds
     s.map.setStyle(styleFor(props.style, [lng, lat]), { diff: false })
   }, [props.style, lng, lat])
+
+  // ── the road is only real on the two real-map grounds ────────────────
+  // The style.load handler above already sets the right visibility whenever the style itself
+  // reloads (which every ground switch does); this effect is what applies it the rest of the
+  // time, so it degrades gracefully if the layers do not exist yet.
+  useEffect(() => {
+    const s = live.current
+    if (!s) return
+    const visibility = roadsVisible(props.style)
+    if (s.map.getLayer('roads-casing')) s.map.setLayoutProperty('roads-casing', 'visibility', visibility)
+    if (s.map.getLayer('roads-core')) s.map.setLayoutProperty('roads-core', 'visibility', visibility)
+  }, [props.style])
 
   // ── the location moved: recentre and move the floating origin ───────
   useEffect(() => {
@@ -392,6 +488,24 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     s.cars.setPoses(latest.current.poses ?? posesOf(vehicles))
   }, [vehicles, selected, interactive, lang])
 
+  // ── the road under the cars, from OpenStreetMap ──────────────────────
+  // The style.load handler pushes the current roads once when the layers are (re)created;
+  // this is what pushes a later change, the same way the vehicles effect above pushes paths.
+  const { roads } = props
+  useEffect(() => {
+    const s = live.current
+    if (s?.styleReady) pushRoads(s.map, roads)
+  }, [roads])
+
+  // ── ghosts: the other account's cars and paths, decoration only ──────
+  const { ghosts } = props
+  useEffect(() => {
+    const s = live.current
+    if (!s) return
+    if (s.styleReady) pushGhostGeometry(s.map, ghosts ?? [])
+    s.cars.setGhosts(posesOf(ghosts ?? []))
+  }, [ghosts])
+
   // ── playback: the cars follow the frame, the handles step aside ─────
   const { poses } = props
   useEffect(() => {
@@ -433,6 +547,17 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
         return compose(s.map, latest.current.vehicles, latest.current.impact, latest.current.lang ?? 'en')
       },
       recentre: () => live.current?.map.easeTo({ center: ll(latest.current.center), zoom: ZOOM, duration: 700 }),
+      record: () => {
+        const s = live.current
+        if (!s) return Promise.resolve(null)
+        return recordPlayback({
+          map: s.map,
+          cars: s.cars,
+          vehicles: latest.current.vehicles,
+          impact: latest.current.impact,
+          lang: latest.current.lang ?? 'en',
+        })
+      },
     }),
     [],
   )
@@ -444,9 +569,6 @@ function removeHandles(h: Handles) {
   h.car.remove()
   for (const w of h.ways) w.remove()
 }
-
-/** "1 damage" / "3 damages", the only sentence the map itself writes */
-const damageCount = (n: number, lang: Lang) => translate(lang, plural(n, 'scene.map.damage.one', 'scene.map.damage.other'), { n })
 
 const posesOf = (vehicles: ClaimVehicle[]): CarPose[] =>
   vehicles
@@ -473,10 +595,29 @@ function pushGeometry(map: MapLibreMap, vehicles: ClaimVehicle[]) {
   if (headSource instanceof GeoJSONSource) headSource.setData({ type: 'FeatureCollection', features: heads })
 }
 
+/** the road under the cars, exactly as the ways lookup returned it; decoration, never picked */
+function pushRoads(map: MapLibreMap, roads: FeatureCollection | null | undefined) {
+  const source = map.getSource('roads')
+  if (source instanceof GeoJSONSource) source.setData(roads ?? { type: 'FeatureCollection', features: [] })
+}
+
+/** the other account's travel paths — no arrowhead, no flow animation: decoration, never picked */
+function pushGhostGeometry(map: MapLibreMap, ghosts: ClaimVehicle[]) {
+  const paths: Feature[] = []
+  for (const v of ghosts) {
+    if (!v.position || v.path.length === 0) continue
+    paths.push({ type: 'Feature', properties: { color: ROLE_COLOR[v.role] }, geometry: { type: 'LineString', coordinates: [...v.path, v.position] } })
+  }
+  const source = map.getSource('ghost-paths')
+  if (source instanceof GeoJSONSource) source.setData({ type: 'FeatureCollection', features: paths })
+}
+
 /**
  * The exported picture: the map canvas holds the ground, the paths and the 3D cars; the
  * labels and the impact cross are DOM, so they are drawn on top by hand at their projected
- * positions. What comes out is what the customer saw.
+ * positions — `paintOverlay`, shared with the recorder in `./record` so the still and the
+ * video never disagree about what a label or the cross looks like. What comes out is what the
+ * customer saw.
  */
 function compose(map: MapLibreMap, vehicles: ClaimVehicle[], impact: LngLat | null, lang: Lang): string {
   const src = map.getCanvas()
@@ -487,45 +628,9 @@ function compose(map: MapLibreMap, vehicles: ClaimVehicle[], impact: LngLat | nu
   const ctx = out.getContext('2d')!
   ctx.drawImage(src, 0, 0)
   ctx.scale(dpr, dpr)
-  const font = getComputedStyle(document.body).fontFamily
-  ctx.font = `600 12px ${font}`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-
-  const pill = (x: number, y: number, text: string, fill: string) => {
-    const w = ctx.measureText(text).width + 18
-    ctx.fillStyle = 'rgba(255,255,255,0.95)'
-    ctx.beginPath()
-    ctx.roundRect(x - w / 2 - 2, y - 13, w + 4, 26, 13)
-    ctx.fill()
-    ctx.fillStyle = fill
-    ctx.beginPath()
-    ctx.roundRect(x - w / 2, y - 11, w, 22, 11)
-    ctx.fill()
-    ctx.fillStyle = '#fff'
-    ctx.fillText(text, x, y + 0.5)
-  }
-
-  for (const v of vehicles) {
-    if (!v.position) continue
-    const p = map.project(ll(v.position))
-    const { w, l } = footprint(v, map)
-    const damaged = v.damages.length
-    pill(p.x, p.y - (Math.max(w, l) / 2 + LABEL_GAP), damaged ? `${v.id.toUpperCase()} · ${damageCount(damaged, lang)}` : v.id.toUpperCase(), ROLE_COLOR[v.role])
-  }
-  if (impact) {
-    const p = map.project(ll(impact))
-    ctx.fillStyle = 'rgba(255,255,255,0.95)'
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, 17, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#dc2626'
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, 14, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#fff'
-    ctx.font = `700 15px ${font}`
-    ctx.fillText('✕', p.x, p.y + 1)
-  }
+  const labels: OverlayLabel[] = vehicles
+    .filter((v): v is ClaimVehicle & { position: LngLat } => v.position !== null)
+    .map((v) => ({ id: v.id, role: v.role, body: v.body, damages: v.damages.length, position: v.position }))
+  paintOverlay(ctx, map, labels, impact, lang)
   return out.toDataURL('image/png')
 }

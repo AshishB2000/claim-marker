@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { fromFrame, toFrame } from '../src/assist/frame'
-import { MAX_CHECKS, MAX_PATH, MAX_SUGGESTIONS, RANGE, parseChecks, parseScene, parseSuggestions } from '../src/assist/schema'
+import { MAX_CHECKS, MAX_PATH, MAX_SUGGESTIONS, RANGE, parseChecks, parseIntake, parseScene, parseSuggestions } from '../src/assist/schema'
 import { zoneById, zonesOf } from '../src/zones'
 import { bearing, destination, distance, type LngLat } from '../src/geo'
 
@@ -133,5 +133,135 @@ describe('damage read off the photographs', () => {
 
   it('is empty for anything that is not a list of marks', () => {
     for (const bad of [null, undefined, 42, 'damages', {}]) expect(parseSuggestions(bad, 'sedan')).toEqual([])
+  })
+})
+
+describe('intake', () => {
+  const now = '2024-06-01T12:00'
+  const colours = ['red', 'blue']
+
+  const full = {
+    kind: 'collision',
+    when: '2024-06-01T11:30',
+    place: 'Main St and 3rd Ave',
+    conditions: { weather: 'rain', road: 'wet', light: 'dusk' },
+    vehicles: [
+      { role: 'insured', make: 'Toyota', model: 'Camry', year: 2022, color: 'red', body: 'sedan' },
+      { role: 'other', make: 'Ford', model: 'F-150', year: 2019, color: 'blue', body: 'truck' },
+    ],
+    people: [
+      { role: 'driver', vehicle: 'insured', injured: false },
+      { role: 'passenger', vehicle: 'other', injured: true, injury: 'bruised arm' },
+    ],
+    police: { called: true, report: 'RPT-4821' },
+    property: 'a mailbox on the corner',
+    description: 'Two cars collided at the intersection during rain.',
+  }
+
+  it('round-trips a full, well-formed draft', () => {
+    expect(parseIntake(full, now, colours)).toEqual(full)
+  })
+
+  it('drops an unknown kind, keeping the rest of the draft', () => {
+    const draft = parseIntake({ ...full, kind: 'meteor-strike' }, now, colours)
+    expect(draft.kind).toBeUndefined()
+    expect(draft.place).toBe('Main St and 3rd Ave')
+  })
+
+  it('drops an unknown weather, road or light, keeping the others', () => {
+    expect(parseIntake({ conditions: { weather: 'tornado', road: 'wet', light: 'dusk' } }, now).conditions).toEqual({ road: 'wet', light: 'dusk' })
+    expect(parseIntake({ conditions: { weather: 'rain', road: 'lava', light: 'dusk' } }, now).conditions).toEqual({ weather: 'rain', light: 'dusk' })
+    expect(parseIntake({ conditions: { weather: 'rain', road: 'wet', light: 'blackout' } }, now).conditions).toEqual({ weather: 'rain', road: 'wet' })
+    expect(parseIntake({ conditions: { weather: 'tornado' } }, now).conditions).toBeUndefined()
+  })
+
+  it('drops a vehicle with no valid role, and an unknown body from one that has a role', () => {
+    expect(parseIntake({ vehicles: [{ make: 'Toyota' }, { role: 'martian', make: 'Toyota' }] }, now).vehicles).toBeUndefined()
+    const draft = parseIntake({ vehicles: [{ role: 'insured', body: 'spaceship', make: 'Toyota' }] }, now)
+    expect(draft.vehicles).toEqual([{ role: 'insured', make: 'Toyota' }])
+  })
+
+  it('drops a person with no valid role, and an unknown vehicle role from one that has a role', () => {
+    expect(parseIntake({ people: [{ injured: false }, { role: 'ghost', injured: false }] }, now).people).toBeUndefined()
+    const draft = parseIntake({ people: [{ role: 'driver', vehicle: 'nonexistent', injured: false }] }, now)
+    expect(draft.people).toEqual([{ role: 'driver', injured: false }])
+  })
+
+  it('a vehicle with an unknown colour loses only its colour', () => {
+    const draft = parseIntake({ vehicles: [{ role: 'insured', make: 'Toyota', color: 'chartreuse' }] }, now, colours)
+    expect(draft.vehicles).toEqual([{ role: 'insured', make: 'Toyota' }])
+  })
+
+  it('drops a when in the future, keeps one equal to now', () => {
+    expect(parseIntake({ when: '2024-06-01T12:01' }, now).when).toBeUndefined()
+    expect(parseIntake({ when: '2024-06-01T12:00' }, now).when).toBe('2024-06-01T12:00')
+    expect(parseIntake({ when: '2024-05-31T23:59' }, now).when).toBe('2024-05-31T23:59')
+  })
+
+  it('drops a malformed when', () => {
+    for (const bad of ['2024-06-01', '06/01/2024 12:00', 'this morning', 12345, null, true])
+      expect(parseIntake({ when: bad }, now).when, JSON.stringify(bad)).toBeUndefined()
+  })
+
+  it('proposes nothing about the police unless the account said whether they were called', () => {
+    for (const bad of [{}, { report: '123' }, { called: 'yes' }, { called: null }])
+      expect(parseIntake({ police: bad }, now).police, JSON.stringify(bad)).toBeUndefined()
+    expect(parseIntake({ police: { called: false } }, now).police).toEqual({ called: false })
+    expect(parseIntake({ police: { called: true, report: 'RPT-9' } }, now).police).toEqual({ called: true, report: 'RPT-9' })
+  })
+
+  it('caps vehicles at six', () => {
+    const vehicles = Array.from({ length: 9 }, (_, i) => ({ role: i % 2 ? 'other' : 'insured', make: `Make${i}` }))
+    expect(parseIntake({ vehicles }, now).vehicles).toHaveLength(6)
+  })
+
+  it('caps people at twelve', () => {
+    const people = Array.from({ length: 20 }, () => ({ role: 'witness', injured: false }))
+    expect(parseIntake({ people }, now).people).toHaveLength(12)
+  })
+
+  it('caps an over-long description', () => {
+    expect(parseIntake({ description: 'x'.repeat(2000) }, now).description).toHaveLength(1000)
+  })
+
+  it('keeps identity fields out of the draft, at every level', () => {
+    const poison = {
+      name: 'Alex',
+      phone: '555-0100',
+      licence: 'X1',
+      plate: 'ABC123',
+      vin: '1HGCM82633A123456',
+      email: 'alex@example.com',
+      kind: 'collision',
+      conditions: { weather: 'rain', name: 'Alex' },
+      vehicles: [
+        { role: 'insured', make: 'Toyota', name: 'Alex', phone: '555-0100', licence: 'X1', plate: 'ABC123', vin: '1HGCM82633A123456', email: 'alex@example.com' },
+      ],
+      people: [{ role: 'driver', injured: false, name: 'Alex', phone: '555-0100', licence: 'X1', plate: 'ABC123', vin: '1HGCM82633A123456', email: 'alex@example.com' }],
+      police: { called: true, name: 'Officer Alex', phone: '555-0100' },
+    }
+    const draft = parseIntake(poison, now, colours)
+    const forbidden = ['name', 'phone', 'licence', 'plate', 'vin', 'email']
+    const keys: string[] = []
+    const walk = (v: unknown) => {
+      if (Array.isArray(v)) {
+        for (const e of v) walk(e)
+      } else if (v && typeof v === 'object') {
+        for (const [k, sub] of Object.entries(v)) {
+          keys.push(k)
+          walk(sub)
+        }
+      }
+    }
+    walk(draft)
+    for (const key of forbidden) expect(keys, JSON.stringify(draft)).not.toContain(key)
+  })
+
+  it('is an empty draft for anything that is not a draft-shaped object', () => {
+    for (const bad of [null, 'nonsense', [], { draft: 5 }]) expect(parseIntake(bad, now)).toEqual({})
+  })
+
+  it('drops empty strings rather than keeping them', () => {
+    expect(parseIntake({ place: '   ', description: '', property: '  ' }, now)).toEqual({})
   })
 })

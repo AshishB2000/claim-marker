@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_TTL, MIN_TTL, sign, verify } from '../server/session.mjs'
+import { MAX_TTL, MIN_TTL, PARTY_TTL, sign, verify } from '../server/session.mjs'
 
 const SECRET = 'a-secret-nobody-else-has'
 const NOW = 1_800_000_000_000
@@ -44,5 +44,32 @@ describe('session tokens', () => {
     // and the same trick on the expiry
     const forever = Buffer.from(JSON.stringify({ ...payload, exp: payload.exp + 10_000_000 })).toString('base64url')
     expect(verify(`${forever}.${sig}`, SECRET, NOW)).toBeNull()
+  })
+})
+
+describe('a raised ttl cap for one call site', () => {
+  it('does not raise MAX_TTL itself', () => {
+    expect(MAX_TTL).toBe(86_400)
+    expect(PARTY_TTL).toBe(72 * 3600)
+  })
+
+  it('the default cap still clamps at a day when no maximum is given', () => {
+    const long = verify(sign({ sub: 'party:INC-1' }, SECRET, 999_999, NOW), SECRET, NOW)
+    expect(long!.exp).toBe(NOW / 1000 + MAX_TTL)
+  })
+
+  it('a raised cap allows a lifetime beyond a day, up to PARTY_TTL', () => {
+    const token = verify(sign({ sub: 'party:INC-1' }, SECRET, PARTY_TTL, NOW, PARTY_TTL), SECRET, NOW)
+    expect(token!.exp).toBe(NOW / 1000 + PARTY_TTL)
+  })
+
+  it('a raised cap still clamps above its own maximum', () => {
+    const over = verify(sign({ sub: 'party:INC-1' }, SECRET, PARTY_TTL + 999_999, NOW, PARTY_TTL), SECRET, NOW)
+    expect(over!.exp).toBe(NOW / 1000 + PARTY_TTL)
+  })
+
+  it('MIN_TTL still applies under a raised cap', () => {
+    const short = verify(sign({ sub: 'party:INC-1' }, SECRET, 1, NOW, PARTY_TTL), SECRET, NOW)
+    expect(short!.exp).toBe(NOW / 1000 + MIN_TTL)
   })
 })

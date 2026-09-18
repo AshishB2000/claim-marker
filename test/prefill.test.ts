@@ -47,7 +47,7 @@ describe('prefill from the host page', () => {
   })
 
   it('a single policy vehicle fills the insured card; several are left for the pick', () => {
-    const claim = { ...emptyClaim(), reporter: { name: 'Typed Already', phone: '', email: '', policy: '', policyholder: null } }
+    const claim = { ...emptyClaim(), reporter: { name: 'Typed Already', phone: '', email: '', policy: '', policyholder: null, party: 'policyholder' as const } }
     const one = applyPrefill(claim, { reporter: { name: 'Sam', phone: '555' }, vehicles: [{ make: 'Kia', model: 'Soul' }] })
     expect(one.reporter).toMatchObject({ name: 'Typed Already', phone: '555' })
     expect(one.vehicles[0]).toMatchObject({ role: 'insured', make: 'Kia', model: 'Soul', body: 'suv' })

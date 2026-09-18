@@ -24,7 +24,18 @@ const RUNTIME = 'cm-runtime'
 /** map tiles are small and endless; this is a few hundred tiles, not a map of the country */
 const RUNTIME_MAX = 400
 /** the providers the page reads from: tiles, the geocoder, the vehicle database, the photos */
-const RUNTIME_HOSTS = ['server.arcgisonline.com', 'photon.komoot.io', 'vpic.nhtsa.dot.gov', 'en.wikipedia.org', 'upload.wikimedia.org']
+const RUNTIME_HOSTS = [
+  'server.arcgisonline.com',
+  'photon.komoot.io',
+  'vpic.nhtsa.dot.gov',
+  'en.wikipedia.org',
+  'upload.wikimedia.org',
+  // the weather at that hour and the road it happened on; a cached answer is the right one
+  // offline too, because both are asked about a place and a time that do not change
+  'api.open-meteo.com',
+  'archive-api.open-meteo.com',
+  'overpass.kumi.systems',
+]
 
 const paths = new Set(PRECACHE)
 
@@ -64,7 +75,9 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  if (RUNTIME_HOSTS.includes(url.host)) event.respondWith(fresh(req))
+  // except a reverse lookup: its query is a raw position — "use my location", or a photo's —
+  // and a position does not go into Cache Storage, where it would outlive the report
+  if (RUNTIME_HOSTS.includes(url.host) && !url.pathname.startsWith('/reverse')) event.respondWith(fresh(req))
   // everything else — /claims, /sessions, the assist endpoint — is none of our business
 })
 
