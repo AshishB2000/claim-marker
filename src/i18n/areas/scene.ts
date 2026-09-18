@@ -120,9 +120,13 @@ export const en = {
   'scene.send.signAria': 'Signature',
   'scene.send.signPlaceholder': 'Your full name',
   'scene.send.sending': 'Sending…',
+  'scene.send.recording': 'Recording the replay…',
   'scene.send.send': 'Send my report',
   'scene.send.locked': 'Tick the box and sign to send.',
   'scene.send.error': 'Something went wrong. Please try again.',
+
+  // ── the one-line caption burned into the recorded replay video
+  'scene.replay.caption': 'The order it happened in',
 
   // ── the document, read by the customer on the review step
   'scene.doc.title': 'Accident report',
@@ -319,9 +323,12 @@ export const es: Record<keyof typeof en, string> = {
   'scene.send.signAria': 'Firma',
   'scene.send.signPlaceholder': 'Tu nombre completo',
   'scene.send.sending': 'Enviando…',
+  'scene.send.recording': 'Grabando la repetición…',
   'scene.send.send': 'Enviar mi reporte',
   'scene.send.locked': 'Marca la casilla y firma para enviar.',
   'scene.send.error': 'Algo salió mal. Inténtalo de nuevo.',
+
+  'scene.replay.caption': 'El orden en que pasó',
 
   'scene.doc.title': 'Reporte del accidente',
   'scene.doc.draft': 'Borrador — todavía no se envía',

@@ -14,10 +14,11 @@ import './worker'
 import { GeoJSONSource, Map as MapLibreMap, Marker, NavigationControl, ScaleControl, type ExpressionSpecification, type LngLatLike } from 'maplibre-gl'
 import type { Feature, FeatureCollection } from 'geojson'
 import { bearing, destination, type LngLat } from '../geo'
-import { plural, translate, type Lang } from '../i18n'
+import { translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
 import { SIZE } from '../vehicles/bodies'
 import { CarLayer, type CarPose } from './carLayer'
+import { damageCount, paintOverlay, recordPlayback, type OverlayLabel } from './record'
 import { styleFor, type MapStyle } from './styles'
 
 export type MapSceneHandle = {
@@ -25,6 +26,12 @@ export type MapSceneHandle = {
   export: () => string
   /** back to the incident at the default zoom */
   recentre: () => void
+  /**
+   * The diagram's playback, recorded as a video: the vehicles' routes into the impact, held
+   * there, then handed back exactly as it was. Null when the browser cannot record it or there
+   * is nothing to play — never throws.
+   */
+  record: () => Promise<Blob | null>
 }
 
 /** what a tap on the map means right now */
@@ -540,6 +547,17 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
         return compose(s.map, latest.current.vehicles, latest.current.impact, latest.current.lang ?? 'en')
       },
       recentre: () => live.current?.map.easeTo({ center: ll(latest.current.center), zoom: ZOOM, duration: 700 }),
+      record: () => {
+        const s = live.current
+        if (!s) return Promise.resolve(null)
+        return recordPlayback({
+          map: s.map,
+          cars: s.cars,
+          vehicles: latest.current.vehicles,
+          impact: latest.current.impact,
+          lang: latest.current.lang ?? 'en',
+        })
+      },
     }),
     [],
   )
@@ -551,9 +569,6 @@ function removeHandles(h: Handles) {
   h.car.remove()
   for (const w of h.ways) w.remove()
 }
-
-/** "1 damage" / "3 damages", the only sentence the map itself writes */
-const damageCount = (n: number, lang: Lang) => translate(lang, plural(n, 'scene.map.damage.one', 'scene.map.damage.other'), { n })
 
 const posesOf = (vehicles: ClaimVehicle[]): CarPose[] =>
   vehicles
@@ -600,7 +615,9 @@ function pushGhostGeometry(map: MapLibreMap, ghosts: ClaimVehicle[]) {
 /**
  * The exported picture: the map canvas holds the ground, the paths and the 3D cars; the
  * labels and the impact cross are DOM, so they are drawn on top by hand at their projected
- * positions. What comes out is what the customer saw.
+ * positions — `paintOverlay`, shared with the recorder in `./record` so the still and the
+ * video never disagree about what a label or the cross looks like. What comes out is what the
+ * customer saw.
  */
 function compose(map: MapLibreMap, vehicles: ClaimVehicle[], impact: LngLat | null, lang: Lang): string {
   const src = map.getCanvas()
@@ -611,45 +628,9 @@ function compose(map: MapLibreMap, vehicles: ClaimVehicle[], impact: LngLat | nu
   const ctx = out.getContext('2d')!
   ctx.drawImage(src, 0, 0)
   ctx.scale(dpr, dpr)
-  const font = getComputedStyle(document.body).fontFamily
-  ctx.font = `600 12px ${font}`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-
-  const pill = (x: number, y: number, text: string, fill: string) => {
-    const w = ctx.measureText(text).width + 18
-    ctx.fillStyle = 'rgba(255,255,255,0.95)'
-    ctx.beginPath()
-    ctx.roundRect(x - w / 2 - 2, y - 13, w + 4, 26, 13)
-    ctx.fill()
-    ctx.fillStyle = fill
-    ctx.beginPath()
-    ctx.roundRect(x - w / 2, y - 11, w, 22, 11)
-    ctx.fill()
-    ctx.fillStyle = '#fff'
-    ctx.fillText(text, x, y + 0.5)
-  }
-
-  for (const v of vehicles) {
-    if (!v.position) continue
-    const p = map.project(ll(v.position))
-    const { w, l } = footprint(v, map)
-    const damaged = v.damages.length
-    pill(p.x, p.y - (Math.max(w, l) / 2 + LABEL_GAP), damaged ? `${v.id.toUpperCase()} · ${damageCount(damaged, lang)}` : v.id.toUpperCase(), ROLE_COLOR[v.role])
-  }
-  if (impact) {
-    const p = map.project(ll(impact))
-    ctx.fillStyle = 'rgba(255,255,255,0.95)'
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, 17, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#dc2626'
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, 14, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#fff'
-    ctx.font = `700 15px ${font}`
-    ctx.fillText('✕', p.x, p.y + 1)
-  }
+  const labels: OverlayLabel[] = vehicles
+    .filter((v): v is ClaimVehicle & { position: LngLat } => v.position !== null)
+    .map((v) => ({ id: v.id, role: v.role, body: v.body, damages: v.damages.length, position: v.position }))
+  paintOverlay(ctx, map, labels, impact, lang)
   return out.toDataURL('image/png')
 }

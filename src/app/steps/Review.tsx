@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useClaim, type Step } from '../../claim/store'
-import { makeReference, toDocument } from '../../claim/schema'
+import { isReplay, makeReference, toDocument } from '../../claim/schema'
 import type { MapSceneHandle } from '../../map/MapScene'
 import type { DamageMarkerHandle } from '../../marker/DamageMarker'
 import { Icon } from '../icons'
@@ -11,6 +11,37 @@ import { ReportDocument } from '../ReportDocument'
 import { assistOn, checkReport } from '../../assist/client'
 import type { Check } from '../../assist/schema'
 import { useLang, useT } from '../../i18n/useT'
+
+/** a person will wait this long for a video that is not the point of the report, and no longer */
+const RECORD_TIMEOUT_MS = 8000
+
+const blobToDataUrl = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })
+
+/**
+ * The playback, recorded and turned into the attachment `submitClaim` sends — but a report is
+ * never held up by it: raced against a hard ceiling, so a slow recording just gets left behind
+ * rather than making the customer wait. Any failure along the way — no recorder, a rejected
+ * promise, an oversized result `isReplay` refuses — resolves to `null` silently; the customer
+ * signed up to send a report, not to troubleshoot a video.
+ */
+async function recordReplay(map: MapSceneHandle | null): Promise<string | null> {
+  if (!map) return null
+  try {
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), RECORD_TIMEOUT_MS))
+    const blob = await Promise.race([map.record(), timeout])
+    if (!blob) return null
+    const dataUrl = await blobToDataUrl(blob)
+    return isReplay(dataUrl) ? dataUrl : null
+  } catch {
+    return null
+  }
+}
 
 /**
  * The optional second look: the report read back by the insurer's endpoint, as questions the
@@ -93,6 +124,7 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
   const map = useRef<MapSceneHandle>(null)
   const markers = useRef(new Map<string, DamageMarkerHandle>())
   const [busy, setBusy] = useState(false)
+  const [recording, setRecording] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // the other driver is naming their own insurer, not the policy this page was built for
@@ -109,6 +141,10 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
         const png = h.export().png
         if (png) damage[id] = png
       }
+      const scene = map.current?.export() ?? null
+      setRecording(true)
+      const replay = await recordReplay(map.current)
+      setRecording(false)
       const submittedAt = new Date().toISOString()
       // the attestation is stamped at the moment of sending, and only then
       const doc = toDocument({
@@ -116,7 +152,7 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
         reference: makeReference(),
         submittedAt,
         attestation: { ...claim.attestation, at: submittedAt },
-        attachments: { ...claim.attachments, scene: map.current?.export() ?? null, damage },
+        attachments: { ...claim.attachments, scene, replay, damage },
       })
       const { reference, delivery } = await submitClaim(doc)
       setAttestation({ at: submittedAt })
@@ -126,6 +162,7 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
       setError(e instanceof Error ? e.message : t('scene.send.error'))
     } finally {
       setBusy(false)
+      setRecording(false)
     }
   }
 
@@ -214,7 +251,7 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
           </Field>
           <button className="btn btn-primary" onClick={send} disabled={!canSend}>
             {busy ? <Icon.spinner /> : <Icon.check />}
-            {busy ? t('scene.send.sending') : t('scene.send.send')}
+            {busy ? (recording ? t('scene.send.recording') : t('scene.send.sending')) : t('scene.send.send')}
           </button>
         </div>
         {!canSend && !busy && <p className="mt-2 text-xs text-slate-500">{t('scene.send.locked')}</p>}
