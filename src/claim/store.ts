@@ -270,6 +270,7 @@ export const useClaim = create<ClaimState>()(
             of: p.of,
             caption: p.caption,
             ...('shows' in p ? { shows: p.shows } : {}),
+            ...('hash' in p ? { hash: p.hash } : {}),
             ...photoDistances(exif, incident),
           }
           if (JSON.stringify(next) !== JSON.stringify(p)) changed = true
@@ -420,11 +421,11 @@ export const useClaim = create<ClaimState>()(
                 .then(readExif)
                 .catch(() => NO_EXIF)
               // a file the browser cannot decode is skipped, not fatal: the rest still land
-              const data = await shrink(f).catch(() => null)
-              return data ? { data, exif } : null
+              const small = await shrink(f).catch(() => null)
+              return small ? { ...small, exif } : null
             }),
           )
-          const kept = read.filter((x): x is { data: string; exif: PhotoExif } => !!x)
+          const kept = read.filter((x): x is { data: string; hash: string | null; exif: PhotoExif } => !!x)
           const { incident } = get().claim
           set((s) => {
             // a draft reopened from storage has photos and no EXIF beside them; pad rather
@@ -435,7 +436,7 @@ export const useClaim = create<ClaimState>()(
           patchClaim((c) => ({
             attachments: {
               ...c.attachments,
-              photos: [...c.attachments.photos, ...kept.map((k) => ({ data: k.data, of, caption: '', ...photoDistances(k.exif, incident) }))].slice(0, MAX_PHOTOS),
+              photos: [...c.attachments.photos, ...kept.map((k) => ({ data: k.data, of, caption: '', ...(k.hash ? { hash: k.hash } : {}), ...photoDistances(k.exif, incident) }))].slice(0, MAX_PHOTOS),
             },
           }))
           return kept.length

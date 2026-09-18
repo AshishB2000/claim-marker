@@ -204,6 +204,14 @@ export type Photo = {
    */
   minutesFromIncident?: number
   metresFromScene?: number
+  /**
+   * A difference hash of the picture — sixteen hex characters — so the insurer's own server can
+   * see that the same photograph has arrived before, on this claim or another. Computed in the
+   * page at downscale time, because a claim server with no dependencies has no image decoder.
+   * Absent when the canvas could not be read. What it means is an adjuster's call; the hash
+   * itself says only "this is the same picture".
+   */
+  hash?: string
 }
 
 /** the state the vehicle is in now — what decides a tow, a rental and where to inspect */
@@ -571,6 +579,7 @@ export const toDocument = (claim: Claim): Claim => {
           const photo: Photo = { data: p.data, of, caption: str(p.caption) }
           // only when present, so every document written before `shows` existed stays byte-identical
           if (of && p.shows && zoneById(bodies.get(of)!, p.shows)) photo.shows = p.shows
+          if (typeof p.hash === 'string' && /^[0-9a-f]{16}$/.test(p.hash)) photo.hash = p.hash
           const minutes = roundTo(p.minutesFromIncident, 0)
           const metres = roundTo(p.metresFromScene, 0)
           if (minutes !== null && Math.abs(minutes) <= MAX_PHOTO_MINUTES) photo.minutesFromIncident = minutes
@@ -681,6 +690,7 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
       of: typeof p.of === 'string' ? p.of : null,
       caption: str(p.caption),
       shows: typeof p.shows === 'string' ? p.shows : null,
+      ...(typeof p.hash === 'string' ? { hash: p.hash } : {}),
       ...(typeof p.minutesFromIncident === 'number' ? { minutesFromIncident: p.minutesFromIncident } : {}),
       ...(typeof p.metresFromScene === 'number' ? { metresFromScene: p.metresFromScene } : {}),
     })

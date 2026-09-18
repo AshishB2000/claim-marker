@@ -185,14 +185,18 @@ describe('claim round-trip', () => {
   it('records how far a photograph was taken from the claim, and never where', () => {
     const c = sample()
     c.attachments.photos = [
-      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'at the scene', minutesFromIncident: 12.4, metresFromScene: 3.6 },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'at the scene', hash: 'F0E1D2C3B4A59687', minutesFromIncident: 12.4, metresFromScene: 3.6 },
       { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'taken before', minutesFromIncident: -90, metresFromScene: 0 },
       { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'a camera with a wrong clock', minutesFromIncident: 900_000, metresFromScene: 2_000_000 },
       { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'no metadata at all' },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'fingerprinted', hash: 'f0e1d2c3b4a59687' },
     ]
     const first = toDocument(c)
-    expect(first.attachments.photos.map((p) => p.minutesFromIncident)).toEqual([12, -90, undefined, undefined])
-    expect(first.attachments.photos.map((p) => p.metresFromScene)).toEqual([4, 0, undefined, undefined])
+    expect(first.attachments.photos.map((p) => p.minutesFromIncident)).toEqual([12, -90, undefined, undefined, undefined])
+    expect(first.attachments.photos.map((p) => p.metresFromScene)).toEqual([4, 0, undefined, undefined, undefined])
+    // a fingerprint is sixteen lower-case hex characters or it is not one: the first photo's
+    // is upper case, which is a different sixty-four bits as far as a string comparison goes
+    expect(first.attachments.photos.map((p) => p.hash)).toEqual([undefined, undefined, undefined, undefined, 'f0e1d2c3b4a59687'])
     // absent, not null, so a document from before these existed is byte-for-byte what it was
     expect(first.attachments.photos.filter((p) => 'metresFromScene' in p)).toHaveLength(2)
     // and nowhere in the document is there a coordinate that came off a photograph

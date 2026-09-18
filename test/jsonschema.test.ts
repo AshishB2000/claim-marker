@@ -53,7 +53,7 @@ const full = () =>
       scene: png,
       damage: { a: png },
       photos: [
-        { data: jpg, of: 'a', caption: 'Front bumper', shows: 'front_bumper', minutesFromIncident: 12, metresFromScene: 4 },
+        { data: jpg, of: 'a', caption: 'Front bumper', shows: 'front_bumper', hash: 'f0e1d2c3b4a59687', minutesFromIncident: 12, metresFromScene: 4 },
         { data: jpg, of: null, caption: 'The junction' },
       ],
     },
