@@ -1068,7 +1068,8 @@ keyframes on the playback clock: overhead for 0.8 s; the chase (pitch 55°, zoom
 the customer's car's initial heading, centre 4 m behind its pose each frame) blended in over
 0.9 s; the rate dropped to 0.25 from 0.6 s before the impact to 0.3 s after; the hold; then the
 overhead blended back over 0.9 s. The slow-motion's start is clamped to no earlier than the
-chase's, so an impact early in a short drive cannot reorder the list. `cameraAt` interpolates
+moment the chase has finished blending in, so an impact early in a short drive can neither
+reorder the list nor cut the ease to the chase out of it. `cameraAt` interpolates
 between the running shot and the one before it — both evaluated at the *current* poses, so a
 blend out of the chase starts from wherever the car is now, never from a stale frame.
 `shotAt().rate` is what the hook multiplies its rate by, and what `MapScene` reads to light the

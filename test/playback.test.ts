@@ -186,11 +186,19 @@ describe('the shot list', () => {
     expect(endOf(list)).toBe(tl.ms + HOLD_MS + BLEND_MS)
   })
 
-  it('an impact early in a short drive never puts the slow-motion before the chase', () => {
+  it('an impact early in a short drive never puts the slow-motion before the chase has eased in', () => {
     const early = shots(tBone, { ms: MIN_MS, impactT: 0.2, impactMs: 300 })
     inOrder(early)
-    expect(early[2].at).toBe(ESTABLISH_MS)
+    expect(early[2].at).toBe(ESTABLISH_MS + BLEND_MS)
+    expect(early[2].at).toBeGreaterThanOrEqual(early[1].at + early[1].blend)
     expect(early[3].at).toBeGreaterThanOrEqual(early[2].at)
+    // the ease survives: the camera is still home when the chase begins, and only mid-way half-way through
+    const home: Camera = { center: here, zoom: 19.9, pitch: 0, bearing: 0 }
+    const tl = { ms: MIN_MS, impactT: 0.2, impactMs: 300 }
+    const at = (ms: number) => cameraAt(early, ms, frameAt(tBone, tl, ms).poses, home)
+    expect(at(early[1].at)).toEqual(home)
+    expect(at(early[1].at + BLEND_MS / 2).pitch).toBeLessThan(CHASE_PITCH)
+    expect(shotAt(early, early[1].at).rate).toBe(1)
   })
 
   it('the shot running now is the last to have begun', () => {

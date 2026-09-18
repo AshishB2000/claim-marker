@@ -173,12 +173,14 @@ export const RING_M = 8
  * The cinematic replay as keyframes: overhead while the eye settles, then behind the
  * customer's own car looking the way it set off, slowed to a quarter into the impact and out
  * of it, held, then back to the diagram. In order by construction — an impact early in a short
- * drive cannot put the slow-motion before the chase.
+ * drive cannot put the slow-motion before the chase, or cut the ease into it.
  */
 export function shots(vehicles: ClaimVehicle[], timeline: Timeline): Shot[] {
   const mine = vehicles.find((v) => v.role === 'insured' && v.position) ?? vehicles.find((v) => v.position)
   const chase: Chase | null = mine ? { follow: mine.id, pitch: CHASE_PITCH, bearing: posesAt([mine], 0)[0].heading, zoom: CHASE_ZOOM } : null
-  const slowFrom = Math.max(ESTABLISH_MS, timeline.impactMs - SLOW_BEFORE_MS)
+  // no earlier than the chase has finished blending in: a shot that begins on the same tick
+  // wins the lookup, and with a blend of 0 it would cut the ease to the chase out altogether
+  const slowFrom = Math.max(ESTABLISH_MS + BLEND_MS, timeline.impactMs - SLOW_BEFORE_MS)
   const slowTo = Math.max(slowFrom, timeline.impactMs + SLOW_AFTER_MS)
   return [
     { at: 0, blend: 0, rate: 1, chase: null },
