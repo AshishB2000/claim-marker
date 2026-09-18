@@ -169,7 +169,9 @@
         "data": { "type": "string", "pattern": "^data:image/(jpeg|png|webp);base64," },
         "of": { "type": ["string", "null"], "description": "the vehicle it shows, or null for the scene" },
         "caption": { "type": "string" },
-        "shows": { "type": ["string", "null"], "description": "the zone id of the vehicle in `of` this photo shows, set when a mark was added from it; absent when it shows no one panel" }
+        "shows": { "type": ["string", "null"], "description": "the zone id of the vehicle in `of` this photo shows, set when a mark was added from it; absent when it shows no one panel" },
+        "minutesFromIncident": { "type": "integer", "minimum": -20160, "maximum": 20160, "description": "minutes between the photograph's own EXIF time and `incident.at`; negative is before. Absent when the photograph carried no time." },
+        "metresFromScene": { "type": "integer", "minimum": 0, "maximum": 1000000, "description": "metres between the photograph's own EXIF position and `incident.location`. A distance and never a coordinate: a photograph from the gallery can carry the customer's home, and the claim needs only how far it was. Absent when the photograph carried no position." }
       }
     },
     "damage": {

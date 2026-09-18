@@ -191,6 +191,19 @@ export type Photo = {
    * in documents written before it existed, and dropped when the zone is not on that body.
    */
   shows?: string | null
+  /**
+   * How far the photograph's own EXIF puts it from the incident the customer described: minutes
+   * from `incident.at` (negative is before) and metres from `incident.location`, both rounded.
+   *
+   * **Distances, never coordinates.** A photograph picked from the gallery can carry the
+   * customer's home, their child's school, everywhere they have been; the claim needs to know
+   * "this was taken two hours later and four hundred metres away", and nothing else. The raw
+   * position is read, used and thrown away in the page and never reaches the document. Both
+   * are absent — not null — when the photograph carried no metadata, so every document written
+   * before this existed stays byte-identical.
+   */
+  minutesFromIncident?: number
+  metresFromScene?: number
 }
 
 /** the state the vehicle is in now — what decides a tow, a rental and where to inspect */
@@ -315,6 +328,14 @@ const isPhotoData = (v: unknown): v is string => typeof v === 'string' && /^data
 
 /** the most photographs one claim carries; each is a few hundred kB after downscaling */
 export const MAX_PHOTOS = 12
+
+/**
+ * How far out a photograph's own metadata can put it and still be worth recording: a fortnight
+ * and a thousand kilometres. Past that the camera's clock or its fix is wrong, not the
+ * customer, and a number that large says nothing to an adjuster.
+ */
+export const MAX_PHOTO_MINUTES = 14 * 24 * 60
+export const MAX_PHOTO_METRES = 1_000_000
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
 const bool = (v: unknown) => v === true
@@ -550,6 +571,10 @@ export const toDocument = (claim: Claim): Claim => {
           const photo: Photo = { data: p.data, of, caption: str(p.caption) }
           // only when present, so every document written before `shows` existed stays byte-identical
           if (of && p.shows && zoneById(bodies.get(of)!, p.shows)) photo.shows = p.shows
+          const minutes = roundTo(p.minutesFromIncident, 0)
+          const metres = roundTo(p.metresFromScene, 0)
+          if (minutes !== null && Math.abs(minutes) <= MAX_PHOTO_MINUTES) photo.minutesFromIncident = minutes
+          if (metres !== null && metres >= 0 && metres <= MAX_PHOTO_METRES) photo.metresFromScene = metres
           return photo
         }),
     },
@@ -651,7 +676,14 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
   for (const entry of Array.isArray(att.photos) ? att.photos : []) {
     const p = obj(entry)
     if (!isPhotoData(p.data)) continue
-    photos.push({ data: p.data, of: typeof p.of === 'string' ? p.of : null, caption: str(p.caption), shows: typeof p.shows === 'string' ? p.shows : null })
+    photos.push({
+      data: p.data,
+      of: typeof p.of === 'string' ? p.of : null,
+      caption: str(p.caption),
+      shows: typeof p.shows === 'string' ? p.shows : null,
+      ...(typeof p.minutesFromIncident === 'number' ? { minutesFromIncident: p.minutesFromIncident } : {}),
+      ...(typeof p.metresFromScene === 'number' ? { metresFromScene: p.metresFromScene } : {}),
+    })
   }
 
   const rep = obj(raw.reporter)

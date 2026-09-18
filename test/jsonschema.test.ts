@@ -49,7 +49,14 @@ const full = () =>
     police: { called: true, department: 'NYPD', report: '2026-0042', citations: '' },
     property: { description: 'A pole', owner: 'The city' },
     attestation: { agreed: true, name: 'Ashish B', at: '2026-09-07T22:14:03.000Z' },
-    attachments: { scene: png, damage: { a: png }, photos: [{ data: jpg, of: 'a', caption: 'Front bumper', shows: 'front_bumper' }, { data: jpg, of: null, caption: 'The junction' }] },
+    attachments: {
+      scene: png,
+      damage: { a: png },
+      photos: [
+        { data: jpg, of: 'a', caption: 'Front bumper', shows: 'front_bumper', minutesFromIncident: 12, metresFromScene: 4 },
+        { data: jpg, of: null, caption: 'The junction' },
+      ],
+    },
   })
 
 describe('the published JSON Schema for claim/1', () => {

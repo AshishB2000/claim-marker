@@ -153,6 +153,54 @@ describe('claim round-trip', () => {
     expect(JSON.stringify(again)).toBe(JSON.stringify(first))
   })
 
+  it('makes `at` an instant with an offset, and round-trips what the record said', () => {
+    const c = sample()
+    c.incident.context = {
+      weather: { code: 61, label: 'Light rain', tempC: 11.44, precipMm: 0.317, windKph: 12.62 },
+      sun: { altitude: 8.4237, azimuth: 271.318 },
+      road: { name: ' 5th Avenue ', class: 'primary', lanes: 2, oneway: true, maxspeed: '25 mph', lit: true, junction: 'cross', controls: ['traffic_signals', 'crossing', 'crossing'] },
+      source: 'open-meteo+osm',
+      fetchedAt: '2026-09-07T22:10:00.000Z',
+    }
+    const first = toDocument(c)
+    expect(first.incident.utcOffset).toBe(-240)
+    // every number rounded on the way in, exactly like the coordinates, or the round trip drifts
+    expect(first.incident.context!.weather).toEqual({ code: 61, label: 'Light rain', tempC: 11.4, precipMm: 0.32, windKph: 12.6 })
+    expect(first.incident.context!.sun).toEqual({ altitude: 8.42, azimuth: 271.32 })
+    expect(first.incident.context!.road!.name).toBe('5th Avenue')
+    // de-duplicated and sorted, so two Overpass answers in a different order are one document
+    expect(first.incident.context!.road!.controls).toEqual(['crossing', 'traffic_signals'])
+    const again = toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value)
+    expect(JSON.stringify(again)).toBe(JSON.stringify(first))
+  })
+
+  it('drops a context with nothing usable in it, and an offset no zone has', () => {
+    const c = sample()
+    c.incident.context = { weather: null, sun: null, road: null, source: 'open-meteo+osm', fetchedAt: 'x' }
+    expect(toDocument(c).incident.context).toBeNull()
+    c.incident.utcOffset = 20 * 60
+    expect(toDocument(c).incident.utcOffset).toBeNull()
+  })
+
+  it('records how far a photograph was taken from the claim, and never where', () => {
+    const c = sample()
+    c.attachments.photos = [
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'at the scene', minutesFromIncident: 12.4, metresFromScene: 3.6 },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'taken before', minutesFromIncident: -90, metresFromScene: 0 },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'a camera with a wrong clock', minutesFromIncident: 900_000, metresFromScene: 2_000_000 },
+      { data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'no metadata at all' },
+    ]
+    const first = toDocument(c)
+    expect(first.attachments.photos.map((p) => p.minutesFromIncident)).toEqual([12, -90, undefined, undefined])
+    expect(first.attachments.photos.map((p) => p.metresFromScene)).toEqual([4, 0, undefined, undefined])
+    // absent, not null, so a document from before these existed is byte-for-byte what it was
+    expect(first.attachments.photos.filter((p) => 'metresFromScene' in p)).toHaveLength(2)
+    // and nowhere in the document is there a coordinate that came off a photograph
+    expect(JSON.stringify(first.attachments.photos)).not.toMatch(/lng|lat|gps/i)
+    const again = toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value)
+    expect(JSON.stringify(again)).toBe(JSON.stringify(first))
+  })
+
   it('defaults the kind and the conditions, and rejects values off the lists', () => {
     const raw = JSON.parse(JSON.stringify(toDocument(sample())))
     raw.incident.kind = 'asteroid'
