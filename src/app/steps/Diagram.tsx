@@ -100,6 +100,14 @@ export function Diagram() {
   useEffect(() => placeVehicles(), [placeVehicles])
 
   /**
+   * DEV only, like `window.__map`: the replay's own clock, so `scripts/smoke.mjs` can hold the
+   * shockwave on a chosen frame instead of racing the 600 ms it lives for on a loaded machine.
+   */
+  useEffect(() => {
+    if (import.meta.env.DEV) Object.assign(window, { __play: play })
+  }, [play])
+
+  /**
    * "Just tell us what happened" may already have described a scene: draw it once,
    * automatically — the same button press the customer would otherwise make — as soon as
    * there is a place to draw it on. The flag is cleared and `draw()` called from inside a
