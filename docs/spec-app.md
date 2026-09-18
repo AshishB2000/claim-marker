@@ -1097,6 +1097,13 @@ the car cannot be driven, and wears a red ring when the server has seen a photog
 plate on it before. Nothing on it is an opinion: every one of those is a fact already on the
 receipt, and the pin is the same sentence as the row, drawn where it happened.
 
+**Which is why the map is fed the rows and not the receipts.** The two accounts of one accident
+stand in the same place — the other driver's page is seeded with the first one's — so handing
+`DeskMap` the receipts draws them as two points on top of each other, which clusters into a grey
+"2" at every zoom the clustering reaches and loses the status, the size and the ring for exactly
+the linked case. `inboxRows(...).map((row) => row.lead)` is the same grouping the list uses, so
+one accident is one row and one pin, in the colour of the account that leads it.
+
 **The heat layer is the other question.** Volume over a region rather than one report at a
 time, weighted by `point_count` so a cluster stands for the reports inside it instead of
 thinning out as the map zooms away from them.

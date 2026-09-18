@@ -244,7 +244,9 @@ the receipt (`summarise()` adds `lng`/`lat`; `GET /claims` stays receipts only),
 without one — every report filed before that line — is simply not on the map while staying in
 the list. `src/adjuster/DeskMap.tsx` is one MapLibre instance (`import '../map/worker'` first,
 the same `STREETS` basemap) with one clustered GeoJSON source; the filtering is pure in
-`src/adjuster/pins.ts`. Four things there are easy to undo: the clusters are **DOM markers**,
+`src/adjuster/pins.ts`. Five things there are easy to undo: the map is fed `inboxRows(...)`'
+leads, never the receipts, because the two accounts of one accident stand in the same place and
+are one row and one pin; the clusters are **DOM markers**,
 because a count is text and text needs a glyph server — one more host in the CSP for a number a
 div can hold; `DeskMap` compares the drawn collection before `setData`/`fitBounds`, or the fit
 answers its own `moveend` for ever through the desk's bounds state; the map and the list show

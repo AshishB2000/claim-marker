@@ -683,10 +683,12 @@ const fileAt = async (id, location) =>
     ).json()
   ).reference
 
+/** the colours the inbox rows wear, which the pins wear too */
+const STATUS_COLOUR = { new: '#1f56e6', reviewing: '#d97706', closed: '#64748b' }
 const PLACES = [
-  { id: 'map-one', status: 'new', colour: '#1f56e6', location: { lng: -73.9859, lat: 40.7573, address: 'Broadway at 7th, New York' } },
-  { id: 'map-two', status: 'reviewing', colour: '#d97706', location: { lng: -118.2437, lat: 34.0522, address: 'Wilshire Boulevard, Los Angeles' } },
-  { id: 'map-three', status: 'closed', colour: '#64748b', location: { lng: -0.1276, lat: 51.5072, address: 'Trafalgar Square, London' } },
+  { id: 'map-one', status: 'new', location: { lng: -73.9859, lat: 40.7573, address: 'Broadway at 7th, New York' } },
+  { id: 'map-two', status: 'reviewing', location: { lng: -118.2437, lat: 34.0522, address: 'Wilshire Boulevard, Los Angeles' } },
+  { id: 'map-three', status: 'closed', location: { lng: -0.1276, lat: 51.5072, address: 'Trafalgar Square, London' } },
 ]
 for (const place of PLACES) {
   place.reference = await fileAt(place.id, place.location)
@@ -742,7 +744,8 @@ const listed = () => deskPage.locator('aside ul li').count()
 for (const place of PLACES) {
   await deskFind.fill(place.reference)
   if (!(await settles(async () => (await listed()) === 1))) fail(`searching for ${place.reference} left ${await listed()} rows`)
-  if (!(await settles(async () => near(await centreColour(), place.colour)))) fail(`the pin for a "${place.status}" report is ${await centreColour()}, not ${place.colour}`)
+  const colour = STATUS_COLOUR[place.status]
+  if (!(await settles(async () => near(await centreColour(), colour)))) fail(`the pin for a "${place.status}" report is ${await centreColour()}, not ${colour}`)
 }
 ok('desk map: a pin per report — brand blue for new, amber for in review, slate for closed')
 
@@ -787,9 +790,40 @@ await deskPage
 await deskPage.locator('text=Reported by').waitFor({ timeout: 20000 }).catch(() => fail('tapping the pin opened no document'))
 ok(`desk map: tapping a pin opens its report (${tapped})`)
 
+// the two accounts of one accident stand in the same place: they are one row in the list, and
+// one pin — the row's lead — rather than two points on top of each other under a "2"
+const clusterCounts = async () => (await deskPage.locator('.desk-cluster').allInnerTexts()).map(Number)
+// the premise first, from the receipts themselves: two accounts, one place, and a word that
+// finds those two and nothing else filed by now
+const pair = (await (await fetch(`${API}/incidents/${incidentId}`, desk)).json()).reports
+if (pair.length !== 2) fail(`${incidentId} holds ${pair.length} accounts, not two`)
+const standing = pair.map((r) => `${r.reference} ${r.status} ${r.summary.lng},${r.summary.lat}`)
+if (new Set(pair.map((r) => `${r.summary.lng},${r.summary.lat}`)).size !== 1) fail(`the two accounts do not stand in the same place: ${standing.join(' | ')}`)
+const WORD = 'manhattan'
+const inbox = (await (await fetch(`${API}/claims`, desk)).json()).claims
+const matching = inbox.filter((c) => [c.reference, c.clientReference, c.summary.reporter, c.summary.address].some((s) => s?.toLowerCase().includes(WORD)))
+if (matching.length !== 2 || matching.some((c) => !pair.some((r) => r.reference === c.reference)))
+  fail(`"${WORD}" finds ${matching.map((c) => c.reference).join()}, not the two accounts of one accident`)
+const lead = pair.find((r) => r.party === 'policyholder') ?? pair[0]
+
+await openDeskMap()
+await deskFind.fill(WORD)
+if (!(await settles(async () => (await listed()) === 1))) fail(`the two accounts of ${incidentId} are ${await listed()} rows in the list`)
+if (!(await settles(async () => near(await centreColour(), STATUS_COLOUR[lead.status]))))
+  fail(`the two accounts of one accident draw ${await centreColour()}, not one "${lead.status}" pin (clusters: ${JSON.stringify(await clusterCounts())})`)
+// zoomed out, two points standing on the same spot have to cluster: one pin cannot, so a "2"
+// here is the map having been given the receipts instead of the rows
+for (let i = 0; i < 3; i++) {
+  await deskPage.getByRole('button', { name: 'Zoom out' }).click()
+  await deskPage.waitForTimeout(300)
+}
+await deskPage.waitForTimeout(1000)
+if (await deskPage.locator('.desk-cluster').count()) fail(`the two accounts of one accident are two points on one spot: zoomed out they cluster ${JSON.stringify(await clusterCounts())}`)
+if (!near(await centreColour(), STATUS_COLOUR[lead.status])) fail(`zoomed out, the one pin for ${incidentId} is ${await centreColour()}, not "${lead.status}"`)
+ok(`desk map: two accounts of one accident (${standing.join(', ')}) are one pin, in the "${lead.status}" colour of the account leading their row`)
+
 // zoomed out to the whole world, everything filed folds into one cluster, and tapping it opens it up
 await openDeskMap()
-const clusterCounts = async () => (await deskPage.locator('.desk-cluster').allInnerTexts()).map(Number)
 const biggest = async () => Math.max(0, ...(await clusterCounts()))
 for (let i = 0; i < 6; i++) {
   await deskPage.getByRole('button', { name: 'Zoom out' }).click()

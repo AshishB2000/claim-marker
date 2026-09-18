@@ -382,7 +382,14 @@ export function Desk() {
             </div>
             {mapOn && (
               <>
-                <DeskMap className="mb-2 h-72 overflow-hidden rounded-xl ring-1 ring-slate-200" receipts={pinned} heat={heat} onOpen={show} onBounds={setBounds} />
+                {/* the rows, not the receipts: two accounts of one accident stand in one place, and they are one row and one pin */}
+                <DeskMap
+                  className="mb-2 h-72 overflow-hidden rounded-xl ring-1 ring-slate-200"
+                  receipts={inboxRows(pinned).map((r) => r.lead)}
+                  heat={heat}
+                  onOpen={show}
+                  onBounds={setBounds}
+                />
                 <div className="mb-3 flex flex-wrap gap-1.5">
                   <button className="chip" aria-pressed={heat} onClick={() => setHeat((v) => !v)}>
                     Heat
