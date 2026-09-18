@@ -1124,7 +1124,11 @@ imports of three or maplibre, so `test/lighting.test.ts` runs in plain node. The
 (`CarLayer.setLighting`) and the damage studio (`Scene`'s `lighting` prop, through
 `DamageMarker`) both read it — the studio's `Environment` intensity and its two directionals
 take the same sun and weather, with the sun turned into the body's frame, so the marked-up car
-on the review page is lit like the map above it. `MapScene` and `ReportDocument` take the
+on the review page is lit like the map above it — with a floor. That render is the evidence:
+`attachments.damage` is exported from it at send time and the desk reads it, and a claim filed
+at night must not ship a black car. `studioLight(l)` keeps the studio's key at no less than
+0.45 of its own 1.1 and the environment at no less than 0.4 of its 0.9, whatever the record
+says; the map has no floor, because the map is the moment. `MapScene` and `ReportDocument` take the
 prop; the customer's page memoises it from the store, the desk from the receipt's document,
 and every caller that does not ask — the desk's `Compare`, the damage step's marker — is
 unchanged.
@@ -1169,14 +1173,21 @@ and the review page, `plainView` in the persisted store — how the customer is 
 the language, never in `claim/1` — and while it is on every scene on that page is lit as it
 always was.
 
-**What the smoke proves.** A draft seeded straight onto the diagram — the same tiles, the same
-two cars six metres either side of the impact, facing each other — under three lights. Rain
-after dark: the open road ten metres south must read darker than in plain view (the tiles never
+**What the smoke proves.** The main walk presses "Plain view" the moment it reaches the
+diagram: its pixel gates — the path's blue, the car's red, the shockwave's white — sample a
+map that would otherwise be lit by the live record, the sun at eight that morning under that
+day's weather, and a build gate must not depend on the season or on somebody else's answer.
+The light as it was is proved on its own seeded pages instead — the same tiles, the same two
+cars six metres either side of the impact, facing each other — under four lights. Rain after
+dark: the open road ten metres south must read darker than in plain view (the tiles never
 change, so the difference is the layer's), the ground ahead of A's nose brighter than behind
-its tail, and the canvas the export captures a picture. A clear sun on the horizon: the ground
-between the cars must read darker than plain — the shadow — while the open road reads the same,
-so it is the shadow and not a veil. Then "Plain view" must bring the road back, be in the draft,
-and still be pressed after a reload. The unit test pins the sun vector by quadrant and length,
+its tail, and the canvas the export captures a picture. The same night on a street the record
+says is lit: six metres from the incident, inside the pool and outside every headlight, must
+read brighter than the same spot unlit. A clear sun on the horizon: the ground between the
+cars must read darker than plain — the shadow — while the open road reads the same, so it is
+the shadow and not a veil; and with A's body hidden for a moment, the tiles under it read bare
+there and darker in plain view, where the faked shadow is back. Then "Plain view" must bring
+the road back, be in the draft, and still be pressed after a reload. The unit test pins the sun vector by quadrant and length,
 the intensities at 60°, 25°, 12.5°, 2°, 0° and below, the three sky buckets by channel order,
 which codes mean rain, snow and fog, and when the street counts as lit.
 

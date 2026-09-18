@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SceneContext, SceneRoad } from '../src/claim/schema'
-import { DEFAULT_LIGHTING, lightingFor, type Lighting } from '../src/scene/lighting'
+import { DEFAULT_LIGHTING, STUDIO_ENVIRONMENT_FLOOR, STUDIO_KEY_FLOOR, lightingFor, studioLight, type Lighting } from '../src/scene/lighting'
 
 const road = (lit: boolean | null): SceneRoad => ({ name: 'W 44th St', class: 'residential', lanes: 2, oneway: false, maxspeed: '', lit, junction: 'none', controls: [] })
 
@@ -121,5 +121,17 @@ describe('lightingFor', () => {
     expect(lightingFor(ctx({ sun: { altitude: 30, azimuth: 120 }, road: road(true) })).lit).toBe(false)
     // no sun in the record is not night: nothing says it was dark
     expect(lightingFor(ctx({ sun: null, road: road(true) }))).toMatchObject({ night: false, lit: false })
+  })
+
+  it('lights the studio from the same sun, but never lets the evidence go dark', () => {
+    const night = studioLight(lightingFor(ctx({ sun: { altitude: -20, azimuth: 300 }, weather: { code: 61, label: '', tempC: 10, precipMm: 1, windKph: 5 } })))
+    expect(night.key).toBe(STUDIO_KEY_FLOOR)
+    expect(night.environment).toBe(STUDIO_ENVIRONMENT_FLOOR)
+    expect(STUDIO_KEY_FLOOR).toBeGreaterThanOrEqual(0.45)
+    expect(STUDIO_ENVIRONMENT_FLOOR).toBeGreaterThanOrEqual(0.4)
+    // a low sun is floored too; a high one is the studio as it always was
+    expect(studioLight(lightingFor(ctx({ sun: { altitude: 5, azimuth: 270 } }))).key).toBe(STUDIO_KEY_FLOOR)
+    expect(studioLight(lightingFor(ctx({})))).toEqual({ key: 1, environment: 1 })
+    expect(studioLight(DEFAULT_LIGHTING)).toEqual({ key: 1, environment: 1 })
   })
 })

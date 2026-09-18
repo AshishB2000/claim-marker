@@ -119,3 +119,15 @@ export function lightingFor(context: SceneContext | null): Lighting {
     lit: night && context.road?.lit === true,
   }
 }
+
+/**
+ * The studio takes the same sun and weather, with a floor: the marked-up car is the evidence
+ * an adjuster reads, exported from this scene at send time, and a claim filed at night must
+ * not ship a black car. Fractions of the studio's own key (1.1) and environment (0.9).
+ */
+export const STUDIO_KEY_FLOOR = 0.45
+export const STUDIO_ENVIRONMENT_FLOOR = 0.4
+
+export function studioLight(l: Lighting): { key: number; environment: number } {
+  return { key: Math.max(STUDIO_KEY_FLOOR, l.sunIntensity / 1.5), environment: Math.max(STUDIO_ENVIRONMENT_FLOOR, l.environment) }
+}

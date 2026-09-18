@@ -406,6 +406,12 @@ await page.waitForSelector('.maplibregl-canvas', { timeout: 20000 })
 await page.waitForSelector('.mk-car', { timeout: 20000 })
 await page.waitForTimeout(6000)
 if ((await page.locator('.mk-car').count()) !== 3) fail(`expected 3 cars on the map, got ${await page.locator('.mk-car').count()}`)
+// the diagram is lit from the live record — the sun at 08:00 on that day, the weather that hour —
+// and a gate that samples pixels must not depend on the season or on somebody else's answer:
+// "Plain view" for the walk, and the light as it was is proved on its own seeded pages below
+await page.getByRole('button', { name: N.plain }).click()
+await page.waitForTimeout(600)
+if (!(await state()).plainView) fail('"Plain view" did not take on the diagram')
 const before = (await draft()).vehicles[0].position
 if (!before) fail('vehicle A was not placed on the map')
 
@@ -851,6 +857,8 @@ const LIT_LAT = 40.7573
 const litM = 1 / (111320 * Math.cos((LIT_LAT * Math.PI) / 180))
 const litRoad = (lit) => ({ name: 'W 44th St', class: 'residential', lanes: 2, oneway: true, maxspeed: '25 mph', lit, junction: 'none', controls: [] })
 const NIGHT_RAIN = { weather: { code: 61, label: 'Light rain', tempC: 14, precipMm: 1.2, windKph: 12 }, sun: { altitude: -20, azimuth: 300 }, road: litRoad(null) }
+/** the same night on a road the record says is lit: the warm pool under the incident */
+const NIGHT_LIT = { ...NIGHT_RAIN, road: litRoad(true) }
 const LOW_SUN = { weather: { code: 0, label: 'Clear sky', tempC: 22, precipMm: 0, windKph: 6 }, sun: { altitude: 6, azimuth: 270 }, road: litRoad(null) }
 const litSeed = (context, plainView) => ({
   // a version behind: the store's migrate fills in every section this seed leaves out
@@ -909,8 +917,33 @@ const litSample = (p) =>
     const all = ctx.getImageData(0, 0, src.width, src.height).data
     const seen = new Set()
     for (let i = 0; i < all.length; i += 4 * 499) seen.add((all[i] << 16) | (all[i + 1] << 8) | all[i + 2])
-    // open road ten metres south; ahead of A's nose and behind its tail; the ground between the two cars
-    return { road: lum(0, 10), ahead: lum(-1.5, 0), behind: lum(-10.5, 0), between: lum(1, 0), colours: seen.size }
+    // open road ten metres south; ahead of A's nose and behind its tail; the ground between the two
+    // cars; six metres south of the incident, inside the street light's pool and outside every headlight
+    return { road: lum(0, 10), ahead: lum(-1.5, 0), behind: lum(-10.5, 0), between: lum(1, 0), pool: lum(0, 6), colours: seen.size }
+  }, [LIT_LNG, LIT_LAT, litM])
+/** the ground under car A with its body hidden for a moment: the faked shadow, or bare tiles */
+const litUnder = (p) =>
+  p.evaluate(async ([lng, lat, m]) => {
+    const map = window.__map
+    const car = map.getLayer('cars').implementation.cars.get('a')
+    car.root.children[0].visible = false
+    map.triggerRepaint()
+    await new Promise((r) => setTimeout(r, 500))
+    const src = map.getCanvas()
+    const dpr = src.width / src.clientWidth
+    const off = document.createElement('canvas')
+    off.width = src.width
+    off.height = src.height
+    const ctx = off.getContext('2d')
+    ctx.drawImage(src, 0, 0)
+    const q = map.project([lng - 6 * m, lat])
+    const size = 12 * dpr
+    const px = ctx.getImageData(q.x * dpr - size / 2, q.y * dpr - size / 2, size, size).data
+    let sum = 0
+    for (let i = 0; i < px.length; i += 4) sum += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]
+    car.root.children[0].visible = true
+    map.triggerRepaint()
+    return sum / (px.length / 4)
   }, [LIT_LNG, LIT_LAT, litM])
 const litPage = async (context, plainView = false) => {
   const p = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
@@ -928,18 +961,27 @@ const litPage = async (context, plainView = false) => {
 }
 const nightPage = await litPage(NIGHT_RAIN)
 const night = await litSample(nightPage)
+const litPageAtNight = await litPage(NIGHT_LIT)
+const nightLit = await litSample(litPageAtNight)
+await litPageAtNight.close()
 const duskPage = await litPage(LOW_SUN)
 const dusk = await litSample(duskPage)
+// with the sun up the faked shadow is off and, with A's body hidden, nothing casts: bare tiles under A
+const bare = await litUnder(duskPage)
 await duskPage.close()
 const plainPage = await litPage(LOW_SUN, true)
 const plain = await litSample(plainPage)
+// no sun in plain view: the faked shadow under A — a ghost's is the same disc under the same matrix
+const under = await litUnder(plainPage)
 await plainPage.close()
 if (night.colours < 50) fail(`the map after dark is a blank canvas (${night.colours} colours) — the export would capture nothing`)
 if (night.road >= plain.road * 0.75) fail(`the wet road after dark is not darker than the plain one (${night.road.toFixed(0)} vs ${plain.road.toFixed(0)})`)
 if (night.ahead <= night.behind * 1.3) fail(`no headlights: the road ahead of A's nose is ${night.ahead.toFixed(0)}, behind its tail ${night.behind.toFixed(0)}`)
 if (dusk.between >= plain.between * 0.85) fail(`a sun on the horizon lays no shadow between the cars (${dusk.between.toFixed(0)} vs ${plain.between.toFixed(0)} plain)`)
 if (Math.abs(dusk.road - plain.road) > plain.road * 0.12) fail(`the low sun changed the open road, not just the shadow (${dusk.road.toFixed(0)} vs ${plain.road.toFixed(0)} plain)`)
-ok(`lit: after dark in the rain the road reads ${night.road.toFixed(0)} against ${plain.road.toFixed(0)} plain, ${night.ahead.toFixed(0)} ahead of A's headlights against ${night.behind.toFixed(0)} behind it; a sun on the horizon shadows the ground between the cars (${dusk.between.toFixed(0)} vs ${plain.between.toFixed(0)}) and leaves the open road alone (${dusk.road.toFixed(0)})`)
+if (nightLit.pool < night.pool + 20) fail(`no pool under the street light: the ground six metres from the incident reads ${nightLit.pool.toFixed(0)} lit against ${night.pool.toFixed(0)} unlit`)
+if (under >= bare * 0.8) fail(`the faked shadow is not drawn under a car in plain view (${under.toFixed(0)} under A against ${bare.toFixed(0)} bare tiles)`)
+ok(`lit: after dark in the rain the road reads ${night.road.toFixed(0)} against ${plain.road.toFixed(0)} plain, ${night.ahead.toFixed(0)} ahead of A's headlights against ${night.behind.toFixed(0)} behind it, ${nightLit.pool.toFixed(0)} under a street light against ${night.pool.toFixed(0)} without; a sun on the horizon shadows the ground between the cars (${dusk.between.toFixed(0)} vs ${plain.between.toFixed(0)}) and leaves the open road alone (${dusk.road.toFixed(0)}); the faked shadow reads ${under.toFixed(0)} under A against ${bare.toFixed(0)} bare`)
 
 // "Plain view" turns it all off, on this page and on a reload
 await nightPage.getByRole('button', { name: N.plain }).click()

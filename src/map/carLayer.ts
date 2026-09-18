@@ -48,7 +48,9 @@ function disc(width: number, length: number, rgba: [number, number, number, numb
   ctx.fillStyle = g
   ctx.fillRect(0, 0, 128, 128)
   const tex = new THREE.CanvasTexture(c)
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, length), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, blending, toneMapped: false }))
+  // wound like every ground plane: under a placement matrix of determinant −1 three flips the
+  // front face, and an unwound plane facing up is culled as a back face — drawn, and never seen
+  const mesh = new THREE.Mesh(reverseWinding(new THREE.PlaneGeometry(width, length)), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, blending, toneMapped: false }))
   mesh.rotation.x = -Math.PI / 2
   mesh.frustumCulled = false
   return mesh
