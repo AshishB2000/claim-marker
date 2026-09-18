@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 278 tests across 19 files
+npm test               # vitest, 518 tests across 32 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -32,8 +32,11 @@ machine**: the image cannot be built or verified here, only the server itself.
 `node scripts/integration-smoke.mjs` needs `npm run dev` running and one build done: it
 starts its own claim server, webhook receiver and host page and proves sessions, the embed,
 prefill, the offline outbox, the server, the rate limit, the served page's CSP, the webhook
-signature, the desk, retention and the demo portal (a second, shorter walk against the **built**
-page the claim server serves). Run it for anything touching `src/config.ts`,
+signature, the desk, retention, the reuse signals (the same photograph and VIN under two
+customers), **both drivers** (the scene step's QR invite, a second browser as the other driver
+seeing nothing of the first report, their account filed once, both side by side on the desk),
+the replay unpacked as a video file, and the demo portal (a second, shorter walk against the
+**built** page the claim server serves). Run it for anything touching `src/config.ts`,
 `src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`, `server/` or `src/adjuster/`.
 
 Two end-to-end scripts need `npm run dev` running in another shell and reach the internet
@@ -46,8 +49,11 @@ node scripts/shoot.mjs     # regenerates docs/*.png and asserts the attachments 
 
 `node scripts/assist-smoke.mjs` starts its own stub endpoint and its own dev server on **ports
 it finds free** (several of these scripts run side by side on this machine), so it needs no API
-key: it covers this page's half of the assistant contract, all four tasks, and walks the damage
-step twice — at 1280, where the layout must be the one it always was, and at 390, photo-first.
+key: it covers this page's half of the assistant contract, all five tasks, walks the damage
+step twice — at 1280, where the layout must be the one it always was, and at 390, photo-first,
+through the **live camera** (Chromium's fake device; it wraps `getUserMedia` and fails if a track
+is still running after the sheet closes) — and walks "just tell us what happened" against a
+stub that sends names, plates and VINs it must drop.
 
 `node scripts/record-demo.mjs` is a one-off: it starts its own `DEMO=1` server, walks the demo
 portal and writes `docs/demo.gif` (needs ffmpeg; without it, a `.webm`). Run it when that
@@ -68,6 +74,12 @@ worker's own fetches reach localhost, so a page quietly served by a live server 
 test that proves nothing. Run it for anything touching `public/sw.js`, the offline plugin in
 `vite.config.ts`, `src/app/offline.ts` or what the build emits. The model's own
 judgement is not covered by anything — that needs a key and `scripts/assist-server.mjs`.
+
+`scripts/smoke.mjs` answers Overpass from `scripts/fixtures/overpass-times-square.json` (a real
+recorded answer — every public Overpass mirror throttles by IP and hangs rather than erroring,
+and a build gate must not depend on somebody else's spare capacity) and stamps
+`scripts/fixtures/scene.jpg` with fresh EXIF at run time through `scripts/exif-write.mjs`, so a
+photograph can fill the place and the time with an exact zero to assert. The weather stays live.
 
 Helpers: `scripts/probe-zones.ts <body>` proves every zone claims bodywork; `scripts/profile-body.mjs <glb>`
 prints the measurements zone anchors are placed against; `scripts/embed-texture.mjs` inlines a Kenney
