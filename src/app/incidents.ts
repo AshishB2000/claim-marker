@@ -10,10 +10,7 @@
  * about a feature nobody asked for.
  */
 import { config, incidentUrl } from '../config'
-import { parseSeed, type IncidentSeed } from '../claim/seed'
-
-/** what the server answers when an invite is made */
-export type Invite = { incident: string; url: string; expiresAt: string }
+import { parseSeed, type IncidentInvite, type IncidentSeed } from '../claim/seed'
 
 const INC = /^INC-[A-Z0-9-]{4,32}$/
 
@@ -22,7 +19,7 @@ const INC = /^INC-[A-Z0-9-]{4,32}$/
  * sent — inviting from the done page is the common case, and that report went out with no
  * incident in it, so naming it here is the only thing that can ever link the two.
  */
-export async function createIncident(seed: IncidentSeed, reference?: string | null): Promise<Invite | null> {
+export async function createIncident(seed: IncidentSeed, reference?: string | null): Promise<IncidentInvite | null> {
   const url = incidentUrl('incidents')
   if (!url) return null
   try {
@@ -32,7 +29,7 @@ export async function createIncident(seed: IncidentSeed, reference?: string | nu
       body: JSON.stringify(reference ? { ...seed, reference } : seed),
     })
     if (!res.ok) return null
-    const body = (await res.json()) as Partial<Invite>
+    const body = (await res.json()) as Partial<IncidentInvite>
     // the link is shown to a stranger and opened on their phone: it is http(s) or it is nothing
     const link = typeof body.url === 'string' ? new URL(body.url, window.location.href) : null
     if (!body.incident || !INC.test(body.incident) || !link || !/^https?:$/.test(link.protocol)) return null

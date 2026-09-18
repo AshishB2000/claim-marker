@@ -67,6 +67,21 @@ describe('applyIntake: "Just tell us what happened", applied piece by piece', ()
     expect(people[0]).toMatchObject({ role: 'driver', vehicle: insured.id, name: '', injured: false })
   })
 
+  it('adds people only to a claim that has none yet, so a second run adds no one twice', () => {
+    const draft: IntakeDraft = { people: [{ role: 'driver', vehicle: 'insured', injured: true, injury: 'sore neck' }] }
+    useClaim.getState().applyIntake(draft, allTake(draft), 'I hurt my neck')
+    useClaim.getState().applyIntake(draft, allTake(draft), 'I hurt my neck')
+    expect(useClaim.getState().claim.people).toHaveLength(1)
+    expect(useClaim.getState().claim.people[0].injury).toBe('sore neck')
+  })
+
+  it('leaves the people the customer already entered alone', () => {
+    useClaim.getState().addPerson('witness')
+    const draft: IntakeDraft = { people: [{ role: 'driver', vehicle: 'insured', injured: false }] }
+    useClaim.getState().applyIntake(draft, allTake(draft), 'I was driving')
+    expect(useClaim.getState().claim.people.map((p) => p.role)).toEqual(['witness'])
+  })
+
   it('fills police and conditions only where the customer left them empty', () => {
     useClaim.getState().setPolice({ called: true })
     const draft: IntakeDraft = { police: { called: false, report: 'RPT-1' }, conditions: { weather: 'rain' } }

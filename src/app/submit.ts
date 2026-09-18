@@ -12,7 +12,7 @@
  * anything is wired up. Either way the host page hears `submitted` and the window gets a
  * `claim:submitted` event with the document, for a page that would rather listen.
  */
-import { config, tell } from '../config'
+import { config, partyIncident, tell } from '../config'
 import { Rejected, enqueue, flush, type Queued } from '../claim/outbox'
 import { translate, type Key, type Vars } from '../i18n'
 import type { Claim } from '../claim/schema'
@@ -67,7 +67,11 @@ export async function deliver(doc: Claim, opts: DeliverOptions): Promise<string>
       const json = (await res.json().catch(() => null)) as { reference?: unknown } | null
       return typeof json?.reference === 'string' && json.reference.trim() ? json.reference.trim() : (doc.reference ?? '')
     }
-    // 408 and 429 are the server asking for patience; 401 and 403 may clear when the host renews the token
+    // 408 and 429 are the server asking for patience; 401 and 403 may clear when the host renews
+    // the token — except the other driver's, which is minted once and which nobody can renew:
+    // retrying a dead party token for ever is not keeping the report, it is losing it quietly
+    const renewable = !opts.token || !partyIncident(opts.token)
+    if (!renewable && (res.status === 401 || res.status === 403)) throw new Rejected(`${say(doc, 'shell.party.gone.title')}. ${say(doc, 'shell.party.gone.lead')}`)
     if (res.status >= 400 && res.status < 500 && ![401, 403, 408, 429].includes(res.status)) {
       throw new Rejected(say(doc, 'shell.send.rejected', { status: res.status }))
     }
@@ -107,7 +111,9 @@ export function flushOutbox(onSent: (local: string, reference: string) => void):
   const url = config.submitUrl
   return flush(
     (entry: Queued) =>
-      deliver(entry.doc, { url, token: entry.token ?? config.token }).then((reference) => {
+      // a report queued without a token never borrows the other driver's: on their page
+      // `config.token` is their party token, and it would file someone else's report as theirs
+      deliver(entry.doc, { url, token: entry.token ?? (config.party ? null : config.token) }).then((reference) => {
         announce(entry.doc, reference)
         return reference
       }),

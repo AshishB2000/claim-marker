@@ -103,10 +103,10 @@ const allowedHosts = (): string[] => {
 /**
  * The incident id inside a party token, or null. The token is `base64url(payload).base64url(mac)`
  * and the payload's `sub` is `party:<INC-…>`; this reads it without checking the signature,
- * because the page has no secret and the server checks it on every call anyway. All it is used
- * for is knowing which incident to ask about.
+ * because the page has no secret and the server checks it on every call anyway. It is used for
+ * knowing which incident to ask about, and for knowing that a refusal of this token is final.
  */
-function partyIncident(token: string): string | null {
+export function partyIncident(token: string): string | null {
   const body = token.split('.')[0]
   if (!body) return null
   try {
@@ -116,6 +116,17 @@ function partyIncident(token: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * The other driver's token and incident from a page URL's query string, or null. The one place
+ * `party` is read from — `loadConfig` for `config.party`, and the store, which has to know before
+ * any config is loaded which draft to open (the other driver's is kept apart from the customer's).
+ */
+export function partyFromUrl(search: string): Config['party'] {
+  const token = new URLSearchParams(search).get('party')
+  const incident = token && partyIncident(token)
+  return token && incident ? { token, incident } : null
 }
 
 /** the incidents endpoints, wherever the reports are posted; null when nothing takes reports */
@@ -191,11 +202,10 @@ export function loadConfig(): Promise<Config> {
   if (token) config.token = token
   // the other driver arrives with one of these and nothing else; it is both who they are and
   // which accident they are answering about
-  const party = params.get('party')
-  const incident = party && partyIncident(party)
-  if (party && incident) {
-    config.party = { token: party, incident }
-    config.token = party
+  const party = partyFromUrl(window.location.search)
+  if (party) {
+    config.party = party
+    config.token = party.token
   }
   if (window.parent === window) return Promise.resolve(config)
 

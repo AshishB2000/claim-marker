@@ -11,9 +11,12 @@ export function Done() {
   const reset = useClaim((s) => s.reset)
   const t = useT()
   const queued = delivery === 'queued'
+  const invite = useClaim((s) => s.invite)
   const party = claim.reporter.party === 'other_party'
-  // the last chance to ask, and often the first time the customer has a free hand
-  const canInvite = !party && !!config.submitUrl && !claim.incident.shared && othersOf(claim).length > 0
+  // the last chance to ask, and often the first time the customer has a free hand. Shown again
+  // once made — `Invite` keeps the code on screen — but not for a report still in the outbox:
+  // its reference is the page's own, which the server has never heard of, so nothing could link
+  const canInvite = !party && !queued && !!config.submitUrl && othersOf(claim).length > 0 && (!claim.incident.shared || invite?.incident === claim.incident.shared)
 
   const download = () => {
     const doc = toDocument(claim)

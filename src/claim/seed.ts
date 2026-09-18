@@ -27,6 +27,17 @@ export type IncidentSeed = {
   vehicles: SeedVehicle[]
 }
 
+/** what the server answers when an invite is made: the incident, the link to show, and until when it opens */
+export type IncidentInvite = { incident: string; url: string; expiresAt: string }
+
+/**
+ * Whether a draft on the other driver's page is theirs for this incident and can be picked up
+ * again — a reload, the bus home — rather than seeded afresh. Anything else in that slot (a
+ * draft that was reset, or one about another incident) starts over from the seed.
+ */
+export const partyDraftFor = (claim: { reporter: { party: string }; incident: { shared: string | null } }, incident: string) =>
+  claim.reporter.party === 'other_party' && claim.incident.shared === incident
+
 /** the same cap the document uses for a party's own list */
 export const MAX_SEED_VEHICLES = 6
 const MAX_NAME = 60

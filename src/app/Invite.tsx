@@ -3,7 +3,7 @@ import qrcode from 'qrcode-generator'
 import { useClaim, insuredOf } from '../claim/store'
 import { seedOf } from '../claim/seed'
 import { useT } from '../i18n/useT'
-import { createIncident, type Invite as Made } from './incidents'
+import { createIncident } from './incidents'
 import { Icon } from './icons'
 
 /**
@@ -27,11 +27,18 @@ import { Icon } from './icons'
 /** error correction level M: readable with a thumb over a corner, which is how this gets scanned */
 const QR_LEVEL = 'M'
 
+/**
+ * Once the customer has invited the other driver, this shows *that* invite for as long as the
+ * draft lives — after a reload, back on this step, or on the done page — and never offers to
+ * mint another: the other driver may already have scanned the first, and a second incident
+ * would leave their account and this one naming two different accidents.
+ */
 export function Invite() {
   const claim = useClaim((s) => s.claim)
+  const invite = useClaim((s) => s.invite)
   const shareIncident = useClaim((s) => s.shareIncident)
   const t = useT()
-  const [made, setMade] = useState<Made | null>(null)
+  const made = invite && invite.incident === claim.incident.shared ? invite : null
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -44,17 +51,19 @@ export function Invite() {
     // wants to compare, not something to hand them pre-filled
     const own = insuredOf(claim)
     const seed = seedOf(claim.incident, own ? [{ body: own.body, color: own.color, make: own.make, model: own.model }] : [])
-    const invite = await createIncident(seed, claim.reference)
+    const fresh = await createIncident(seed, claim.reference)
     setBusy(false)
-    if (!invite) return setFailed(true)
-    shareIncident(invite.incident)
-    setMade(invite)
+    if (!fresh) return setFailed(true)
+    shareIncident(fresh)
   }
 
   // the QR is drawn once per link: it is a pure function of the URL and nothing about it animates
   const svg = made ? qrSvg(made.url) : null
 
   if (!made) {
+    // shared, but by a draft from before the link was kept: there is no code to show again,
+    // and a new one would be a second incident
+    if (claim.incident.shared) return null
     return (
       <div className="card p-5">
         <h3 className="font-semibold">{t('scene.invite.title')}</h3>

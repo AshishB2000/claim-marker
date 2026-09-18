@@ -36,7 +36,8 @@ import {
 } from './schema'
 import { photoDistances, shrink } from './photos'
 import { applyPrefill, vehicleFromPolicy, type Prefill, type PrefillVehicle } from './prefill'
-import { type IncidentSeed } from './seed'
+import { type IncidentInvite, type IncidentSeed } from './seed'
+import { partyFromUrl } from '../config'
 import { readExif, type PhotoExif } from './exif'
 import { fromFrame } from '../assist/frame'
 import type { IntakeDraft, Scene } from '../assist/schema'
@@ -126,8 +127,14 @@ export type ClaimState = {
    * only. They never see the first report; the seed simply does not contain it.
    */
   seedFromIncident: (incident: string, seed: IncidentSeed) => void
+  /**
+   * The link the customer showed the other driver, kept beside `incident.shared` in the draft so
+   * a reload, or coming back to the step, shows *that* code again instead of minting a second
+   * incident the other driver never saw. The customer's own link; never part of `claim/1`.
+   */
+  invite: IncidentInvite | null
   /** the customer invited the other driver: both accounts will name this incident */
-  shareIncident: (incident: string) => void
+  shareIncident: (invite: IncidentInvite) => void
 
   goto: (step: Step) => void
   next: () => void
@@ -242,6 +249,16 @@ export type ClaimState = {
   reset: () => void
 }
 
+/**
+ * Where the draft is kept. The other driver's page keeps theirs apart, one per incident: a link
+ * opened on a phone that holds an unsent report of its own — theirs about another accident, or
+ * the inviting customer's own, tapping their link to check it — must not overwrite that report
+ * or send it as the other driver's. Read from the URL here, at import, because the draft is
+ * opened before any configuration loads; `partyFromUrl` is the same reader `config.party` uses.
+ */
+export const draftName = (incident: string | null) => (incident ? `claim-marker/draft/${incident}` : 'claim-marker/draft')
+const DRAFT = draftName(typeof location === 'undefined' ? null : (partyFromUrl(location.search)?.incident ?? null))
+
 export const useClaim = create<ClaimState>()(
   persist(
     (set, get) => {
@@ -337,6 +354,7 @@ export const useClaim = create<ClaimState>()(
         lang: null,
         placeQuery: null,
         drawFromWords: false,
+        invite: null,
         // the document says which language its free text is in, so the desk knows what it is reading
         setLang: (lang) => set((s) => ({ lang, claim: { ...s.claim, incident: { ...s.claim.incident, language: lang } } })),
 
@@ -357,6 +375,7 @@ export const useClaim = create<ClaimState>()(
             contextKey: null,
             roadWays: null,
             photoExif: [],
+            invite: null,
             claim: {
               ...s.claim,
               reporter: { ...s.claim.reporter, party: 'other_party' },
@@ -366,7 +385,10 @@ export const useClaim = create<ClaimState>()(
             },
           }))
         },
-        shareIncident: (incident) => patchClaim((c) => ({ incident: { ...c.incident, shared: incident } })),
+        shareIncident: (invite) => {
+          set({ invite })
+          patchClaim((c) => ({ incident: { ...c.incident, shared: invite.incident } }))
+        },
 
         goto: (step) => set({ step }),
         next: () =>
@@ -396,7 +418,15 @@ export const useClaim = create<ClaimState>()(
           // one key at a time so the union of the three value types never has to be widened
           const take = <K extends keyof Conditions>(k: K) => {
             const v = fill[k]
-            if (v === undefined) return
+            if (v === undefined) {
+              // the record has no answer for this place and hour: one we filled for the old place
+              // is not an answer about this one, so it goes rather than staying marked as ours
+              if (next[k] === 'auto') {
+                delete next[k]
+                conditions[k] = ''
+              }
+              return
+            }
             // never over an answer the customer gave, and never over one that was already there
             // before anything looked anything up: a filled select is theirs unless we filled it
             if (next[k] === 'user' || (!next[k] && conditions[k])) return
@@ -647,7 +677,9 @@ export const useClaim = create<ClaimState>()(
             })
           }
 
-          if (take.people && draft.people?.length) {
+          // people are the one list with no field to be "empty": fill it only when there is no one
+          // on it yet, so a second run adds no one twice and never lands beside the customer's own
+          if (take.people && draft.people?.length && get().claim.people.length === 0) {
             for (const dp of draft.people) {
               // the draft only knows "insured" or "other", never which of several other
               // vehicles: the first one is the best guess with nothing more to go on
@@ -709,27 +741,30 @@ export const useClaim = create<ClaimState>()(
               delivery: null,
               placeQuery: null,
               drawFromWords: false,
+              invite: null,
             }
           }),
       }
     },
     {
-      name: 'claim-marker/draft',
-      version: 7,
+      name: DRAFT,
+      version: 8,
       // every section added since a draft was saved takes its default: v3 added the ground,
       // v4 the kind, the people, the police, the photos and the rest of the report, v5 the
       // policy's vehicles and how the report left, v6 the language (null: not chosen yet),
-      // v7 the looked-up scene. `contextKey` and `roadWays` are deliberately not persisted:
+      // v7 the looked-up scene, v8 `reporter.party` for a draft saved before there were two
+      // sides (and the invite beside it). `contextKey` and `roadWays` are deliberately not persisted:
       // a reopened draft asks the two keyless endpoints again, which redraws the roads and
       // costs nothing, rather than carrying a cache that can only go stale
       migrate: (persisted) => {
-        const s = persisted as { claim?: Partial<Claim> & { incident?: Partial<Incident>; vehicles?: Partial<ClaimVehicle>[] } }
+        const s = persisted as { claim?: Partial<Claim> & { incident?: Partial<Incident>; reporter?: Partial<Reporter>; vehicles?: Partial<ClaimVehicle>[] } }
         if (!s.claim) return persisted
         const base = emptyClaim()
         s.claim = {
           ...base,
           ...s.claim,
           incident: { ...base.incident, ...s.claim.incident },
+          reporter: { ...base.reporter, ...s.claim.reporter },
           vehicles: (s.claim.vehicles ?? []).map((v) => ({ ...newVehicle(v.id ?? 'a', v.role ?? 'other', v.body ?? 'sedan', v.color ?? '#b9bec6'), ...v })),
           attachments: { ...base.attachments, ...s.claim.attachments },
         } as Claim
@@ -746,6 +781,7 @@ export const useClaim = create<ClaimState>()(
         policy: s.policy,
         delivery: s.delivery,
         lang: s.lang,
+        invite: s.invite,
       }),
     },
   ),

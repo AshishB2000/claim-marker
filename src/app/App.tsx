@@ -206,3 +206,19 @@ export function App() {
     </div>
   )
 }
+
+/**
+ * The other driver's link could not be opened: it has expired (they last three days), it was
+ * mistyped, or the server could not be reached. There is nothing to fill in — a report sent
+ * with that link would be turned away — so the page says what to do instead.
+ */
+export function LinkGone() {
+  const t = useT()
+  return (
+    <main className="mx-auto max-w-xl px-5 py-16 text-center" data-link-gone>
+      <h1 className="text-2xl font-semibold tracking-tight">{t('shell.party.gone.title')}</h1>
+      <p className="mt-2 text-slate-500">{t('shell.party.gone.lead')}</p>
+      <p className="mt-6 text-xs text-slate-400">{config.brand}</p>
+    </main>
+  )
+}

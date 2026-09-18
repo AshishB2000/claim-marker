@@ -7,6 +7,9 @@ export const en = {
   'shell.party.lead': 'Someone has reported an accident you were in and asked for your account of it. Nothing you write here is shown to them.',
   'shell.done.party.title': 'Your side is in',
   'shell.done.party.lead': 'Thank you. Both accounts now sit side by side with the insurer handling the claim.',
+  /** the link has expired, was mistyped, or the server could not be reached */
+  'shell.party.gone.title': 'This link has expired or cannot be opened',
+  'shell.party.gone.lead': 'Ask the other driver for a new one. Links to add your side work for three days.',
   'shell.startOver': 'Start over',
   'shell.startOver.confirm': 'Start over? Everything you have entered will be cleared.',
   'shell.lang.label': 'Language',
@@ -85,6 +88,8 @@ export const es: Record<keyof typeof en, string> = {
   'shell.party.lead': 'Alguien reportó un accidente en el que estuviste y pidió tu versión. Nada de lo que escribas aquí se le muestra.',
   'shell.done.party.title': 'Tu versión llegó',
   'shell.done.party.lead': 'Gracias. Ahora las dos versiones están lado a lado con la aseguradora que atiende el reclamo.',
+  'shell.party.gone.title': 'Este enlace venció o no se puede abrir',
+  'shell.party.gone.lead': 'Pídele uno nuevo al otro conductor. Los enlaces para agregar tu versión funcionan por tres días.',
   'shell.startOver': 'Empezar de nuevo',
   'shell.startOver.confirm': '¿Empezar de nuevo? Se borrará todo lo que hayas escrito.',
   'shell.lang.label': 'Idioma',
