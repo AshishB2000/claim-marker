@@ -5,11 +5,12 @@
  * its own inbox would render `ReportDocument` from wherever it keeps the JSON.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { KIND_INFO, parseClaim, toDocument, type Claim } from '../claim/schema'
+import { KIND_INFO, parseClaim, toDocument, type Claim, type Party } from '../claim/schema'
 import { findings, type Finding } from '../claim/plausibility'
 import { config } from '../config'
 import { Icon } from '../app/icons'
 import { ReportDocument } from '../app/ReportDocument'
+import { Compare } from './Compare'
 
 /**
  * The claims server: `?api=` for a desk pointed at another one, then the build-time default,
@@ -39,13 +40,17 @@ const STATUS_STYLE: Record<Status, string> = {
  */
 type Signal = { code: string; with: string | null; detail: string }
 
-type Receipt = {
+export type Receipt = {
   reference: string
   clientReference: string | null
   receivedAt: string
   status: Status
   files: Record<string, string>
   signals?: Signal[]
+  /** the id two reports of one accident share, when the other driver was invited to add theirs */
+  incident?: string
+  /** which side of the accident this report is, when it carries an `incident` — the document's own `reporter.party`, mirrored onto the receipt */
+  party?: Party
   summary: {
     kind: Claim['incident']['kind']
     at: string
@@ -131,6 +136,36 @@ const StatusPill = ({ status }: { status: Status }) => (
   <span className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ${STATUS_STYLE[status]}`}>{STATUS_LABEL[status]}</span>
 )
 
+/**
+ * The open report: `Compare` when it is one of two accounts, `ReportDocument` otherwise, with a
+ * control to move between them when both are available. `compareOpen` lives here rather than in
+ * `Desk` and defaults to true, so switching to a different report — a new `key` from the caller
+ * — starts back on the comparison rather than needing an effect to reset it.
+ */
+function ReportView({ showing, linked, onOpen }: { showing: { receipt: Receipt; claim: Claim }; linked: { receipt: Receipt; claim: Claim }[] | null; onOpen: (reference: string) => void }) {
+  const [compareOpen, setCompareOpen] = useState(true)
+  const comparing = !!linked && compareOpen
+  return (
+    <>
+      {linked && (
+        <div className="mb-4 flex justify-end print:hidden">
+          <button className="btn btn-secondary btn-sm" onClick={() => setCompareOpen((v) => !v)}>
+            {compareOpen ? (
+              <>
+                <Icon.back /> Just this report
+              </>
+            ) : (
+              'Compare both accounts'
+            )}
+          </button>
+        </div>
+      )}
+      {!comparing && <WorthALook claim={showing.claim} signals={showing.receipt.signals ?? []} onOpen={onOpen} />}
+      {comparing && linked ? <Compare reports={linked} /> : <ReportDocument claim={showing.claim} voice="desk" badge={<StatusPill status={showing.receipt.status} />} />}
+    </>
+  )
+}
+
 class Unauthorised extends Error {}
 
 export function Desk() {
@@ -142,6 +177,10 @@ export function Desk() {
   const [query, setQuery] = useState('')
   const [ref, setRef] = useState<string | null>(() => window.location.hash.replace(/^#\/?/, '') || null)
   const [open, setOpen] = useState<{ receipt: Receipt; claim: Claim } | null>(null)
+  // the last incident fetched and what came back, kept together so a stale answer for a
+  // report we have since navigated away from is never mistaken for the current one — no
+  // effect resets this between reports, `linked` below just stops trusting it
+  const [incidentReports, setIncidentReports] = useState<{ incident: string; reports: { receipt: Receipt; claim: Claim }[] } | null>(null)
 
   const api = useCallback(
     async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
@@ -188,6 +227,23 @@ export function Desk() {
     }
   }, [ref, api])
 
+  // the incident this report belongs to, once it names one: the other driver's own account
+  useEffect(() => {
+    const incident = open?.receipt.incident
+    if (!incident) return
+    let live = true
+    api<{ incident: string; reports: (Receipt & { claim: unknown })[] }>(`/incidents/${encodeURIComponent(incident)}`)
+      .then((r) => {
+        if (!live) return
+        const reports = r.reports.map(({ claim, ...receipt }) => ({ receipt, claim: parseClaim(claim).value }))
+        if (reports.length >= 2) setIncidentReports({ incident, reports })
+      })
+      .catch((e) => live && fail(e))
+    return () => {
+      live = false
+    }
+  }, [open?.receipt.incident, api])
+
   const show = (r: string | null) => {
     window.location.assign(r ? `#/${r}` : '#')
     if (!r) setOpen(null)
@@ -222,6 +278,9 @@ export function Desk() {
     !q || [c.reference, c.clientReference, c.summary.reporter, c.summary.address, ...(c.summary.plates ?? [])].some((s) => s?.toLowerCase().includes(q))
   const rows = (claims ?? []).filter((c) => (filter === 'all' || c.status === filter) && matches(c))
   const showing = open && open.receipt.reference === ref ? open : null
+  // the fetched incident, but only once it actually names the report on screen — a stale
+  // answer for a report we have since left never reads as this one's
+  const linked = showing && incidentReports && incidentReports.incident === showing.receipt.incident ? incidentReports.reports : null
 
   return (
     <div className="min-h-screen">
@@ -318,6 +377,7 @@ export function Desk() {
                         {c.summary.hurt > 0 && <span className="font-semibold text-red-700">· {c.summary.hurt} hurt</span>}
                         {c.summary.drivable === false && <span className="font-semibold text-amber-700">· not drivable</span>}
                         {c.summary.photos > 0 && <span>· {c.summary.photos} photos</span>}
+                        {c.incident && <span>· {incidentReports && c.incident === incidentReports.incident ? `${incidentReports.reports.length} accounts` : 'linked'}</span>}
                         {(c.signals?.length ?? 0) > 0 && (
                           <span className="font-semibold text-brand-700">
                             · {c.signals!.length} seen before
@@ -357,8 +417,7 @@ export function Desk() {
                   </button>
                 </div>
               </div>
-              <WorthALook claim={showing.claim} signals={showing.receipt.signals ?? []} onOpen={show} />
-              <ReportDocument claim={showing.claim} voice="desk" badge={<StatusPill status={showing.receipt.status} />} />
+              <ReportView key={showing.receipt.reference} showing={showing} linked={linked} onOpen={show} />
             </section>
           )}
         </div>

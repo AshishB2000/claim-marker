@@ -44,6 +44,13 @@ export type MapSceneProps = {
   tapMode?: TapMode
   /** a playback frame; while it is set the cars follow it and the markers hide */
   poses?: CarPose[] | null
+  /**
+   * A second account's vehicles, drawn faintly over the first for the desk's `Compare` view —
+   * somebody else's story of the same cars, not something to edit: no markers, no drag or turn
+   * handles, no labels, just the body at reduced opacity and its travel path dashed. Absent or
+   * empty leaves the map exactly as it is without this prop; the customer's page never passes it.
+   */
+  ghosts?: ClaimVehicle[] | null
   onSelect?: (id: string | null) => void
   /** a car was picked up, is being dragged, was let go */
   onGrab?: (id: string) => void
@@ -239,6 +246,18 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       })
       pushRoads(map, latest.current.roads)
 
+      // the other account's travel paths: dashed, same colour family, under the first
+      // account's own paths and heads so a ghost never reads as the primary story
+      map.addSource('ghost-paths', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addLayer({
+        id: 'ghost-paths',
+        type: 'line',
+        source: 'ghost-paths',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': 6, 'line-opacity': 0.5, 'line-dasharray': [2, 2] },
+      })
+      pushGhostGeometry(map, latest.current.ghosts ?? [])
+
       map.addSource('paths', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       map.addSource('heads', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       map.addLayer({
@@ -273,6 +292,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       state.styleReady = true
       pushGeometry(map, latest.current.vehicles)
       state.cars.setPoses(latest.current.poses ?? posesOf(latest.current.vehicles))
+      state.cars.setGhosts(posesOf(latest.current.ghosts ?? []))
     })
 
     // the footprints are in metres, so they grow and shrink with the zoom
@@ -470,6 +490,15 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     if (s?.styleReady) pushRoads(s.map, roads)
   }, [roads])
 
+  // ── ghosts: the other account's cars and paths, decoration only ──────
+  const { ghosts } = props
+  useEffect(() => {
+    const s = live.current
+    if (!s) return
+    if (s.styleReady) pushGhostGeometry(s.map, ghosts ?? [])
+    s.cars.setGhosts(posesOf(ghosts ?? []))
+  }, [ghosts])
+
   // ── playback: the cars follow the frame, the handles step aside ─────
   const { poses } = props
   useEffect(() => {
@@ -555,6 +584,17 @@ function pushGeometry(map: MapLibreMap, vehicles: ClaimVehicle[]) {
 function pushRoads(map: MapLibreMap, roads: FeatureCollection | null | undefined) {
   const source = map.getSource('roads')
   if (source instanceof GeoJSONSource) source.setData(roads ?? { type: 'FeatureCollection', features: [] })
+}
+
+/** the other account's travel paths — no arrowhead, no flow animation: decoration, never picked */
+function pushGhostGeometry(map: MapLibreMap, ghosts: ClaimVehicle[]) {
+  const paths: Feature[] = []
+  for (const v of ghosts) {
+    if (!v.position || v.path.length === 0) continue
+    paths.push({ type: 'Feature', properties: { color: ROLE_COLOR[v.role] }, geometry: { type: 'LineString', coordinates: [...v.path, v.position] } })
+  }
+  const source = map.getSource('ghost-paths')
+  if (source instanceof GeoJSONSource) source.setData({ type: 'FeatureCollection', features: paths })
 }
 
 /**
