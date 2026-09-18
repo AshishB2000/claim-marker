@@ -16,8 +16,10 @@
  * document sent twice is filed once; an expired or forged token is refused; a flood is rate
  * limited; the built page is served with a CSP and its runtime config; the webhook carries a
  * valid signature; the desk lists, opens and re-files the report; a report older than
- * RETAIN_DAYS is gone by the time the server is up; and who may link what to an incident is
- * decided by the token, never by the document.
+ * RETAIN_DAYS is gone by the time the server is up; who may link what to an incident is
+ * decided by the token, never by the document; and the desk's map draws three reports filed at
+ * three places as three pins in their status colours, folds them into a cluster as it zooms
+ * out, opens one when it is tapped, and narrows the list to what is in view.
  *
  * Then a second, shorter walk through the demo portal the same server serves at /demo: sign in
  * as a sample customer, report an accident in the *built* page it embeds — not the dev page —
@@ -662,6 +664,160 @@ if (trimmedSeed.location.address.length !== 200 || trimmedSeed.vehicles.length !
 const huge = await invite(crasher, { padding: 'x'.repeat(20_000) }).then((r) => r.status, () => 'reset')
 if (huge === 201) fail('a 20 kB invite was accepted')
 ok(`invite: the address is capped at 200, an unknown body is dropped, a 20 kB body is refused (${huge})`)
+
+// ── the desk's map of everything ──────────────────────────────────────
+// Three reports at three places, in the three statuses. The desk draws a pin apiece in its own
+// colour, folds them into a cluster as it zooms out, opens one when it is tapped, and narrows
+// the list to the part of the world on screen.
+
+const mapIp = { 'x-forwarded-for': '198.51.100.44' }
+const mapSession = async (id) => (await (await mint({ 'x-api-key': API_KEY, ...mapIp }, { customer: { id, policy: 'POL-MAP' }, ttlSeconds: 600 })).json()).token
+const fileAt = async (id, location) =>
+  (
+    await (
+      await fetch(`${API}/claims`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${await mapSession(id)}`, ...mapIp },
+        body: JSON.stringify({ schema: 'claim/1', vehicles: [], incident: { kind: 'collision', at: '2026-09-06T17:30', location } }),
+      })
+    ).json()
+  ).reference
+
+const PLACES = [
+  { id: 'map-one', status: 'new', colour: '#1f56e6', location: { lng: -73.9859, lat: 40.7573, address: 'Broadway at 7th, New York' } },
+  { id: 'map-two', status: 'reviewing', colour: '#d97706', location: { lng: -118.2437, lat: 34.0522, address: 'Wilshire Boulevard, Los Angeles' } },
+  { id: 'map-three', status: 'closed', colour: '#64748b', location: { lng: -0.1276, lat: 51.5072, address: 'Trafalgar Square, London' } },
+]
+for (const place of PLACES) {
+  place.reference = await fileAt(place.id, place.location)
+  if (!place.reference) fail(`the report at ${place.location.address} was not filed`)
+  const { summary } = await filed(place.reference)
+  if (summary.lng !== place.location.lng || summary.lat !== place.location.lat) fail(`the receipt for ${place.reference} does not carry its place: ${JSON.stringify(summary)}`)
+  if (place.status === 'new') continue
+  const moved = await fetch(`${API}/claims/${place.reference}`, { method: 'PATCH', headers: { 'content-type': 'application/json', ...desk.headers }, body: JSON.stringify({ status: place.status }) })
+  if (!moved.ok) fail(`moving ${place.reference} to ${place.status} gave ${moved.status}`)
+}
+ok(`server: three receipts carry where they happened (${PLACES.map((p) => `${p.reference} ${p.status}`).join(', ')})`)
+
+/** the colour under the middle of the map, where a map showing one report has put its pin */
+const centreColour = () =>
+  deskPage.evaluate(() => {
+    const canvas = document.querySelector('.maplibregl-canvas')
+    if (!canvas) return null
+    const off = document.createElement('canvas')
+    off.width = canvas.width
+    off.height = canvas.height
+    const ctx = off.getContext('2d')
+    ctx.drawImage(canvas, 0, 0)
+    const px = ctx.getImageData(Math.round(canvas.width / 2) - 3, Math.round(canvas.height / 2) - 3, 6, 6).data
+    const seen = new Map()
+    for (let i = 0; i < px.length; i += 4) {
+      const hex = '#' + [px[i], px[i + 1], px[i + 2]].map((n) => n.toString(16).padStart(2, '0')).join('')
+      seen.set(hex, (seen.get(hex) ?? 0) + 1)
+    }
+    return [...seen].sort((a, b) => b[1] - a[1])[0][0]
+  })
+
+const near = (a, b, tolerance = 8) => a && b && [1, 3, 5].every((i) => Math.abs(parseInt(a.slice(i, i + 2), 16) - parseInt(b.slice(i, i + 2), 16)) <= tolerance)
+/** the map draws on a frame of its own, and flies: wait for what should be there rather than a timeout */
+const settles = async (test) => {
+  for (let i = 0; i < 60; i++) {
+    if (await test()) return true
+    await deskPage.waitForTimeout(250)
+  }
+  return false
+}
+
+const openDeskMap = async () => {
+  await deskPage.goto(`${PAGE}/adjuster.html?api=${API}`)
+  await deskPage.getByRole('button', { name: 'Map', exact: true }).click()
+  await deskPage.locator('.maplibregl-canvas').waitFor({ timeout: 20000 })
+}
+await openDeskMap()
+const deskFind = deskPage.getByRole('searchbox', { name: 'Search reports' })
+const listed = () => deskPage.locator('aside ul li').count()
+
+// one report at a time: the map frames its one pin in the middle, so the colour under the
+// middle is that report's status and nothing the basemap happens to paint
+for (const place of PLACES) {
+  await deskFind.fill(place.reference)
+  if (!(await settles(async () => (await listed()) === 1))) fail(`searching for ${place.reference} left ${await listed()} rows`)
+  if (!(await settles(async () => near(await centreColour(), place.colour)))) fail(`the pin for a "${place.status}" report is ${await centreColour()}, not ${place.colour}`)
+}
+ok('desk map: a pin per report — brand blue for new, amber for in review, slate for closed')
+
+// the heat layer, around the one report still on the map, and only while it is on: the ground
+// within 60 px of the pin — and not the pin itself, which is drawn over the heat either way
+const aroundThePin = () =>
+  deskPage.evaluate(() => {
+    const canvas = document.querySelector('.maplibregl-canvas')
+    const off = document.createElement('canvas')
+    off.width = canvas.width
+    off.height = canvas.height
+    const ctx = off.getContext('2d')
+    ctx.drawImage(canvas, 0, 0)
+    const px = ctx.getImageData(Math.round(canvas.width / 2) - 60, Math.round(canvas.height / 2) - 60, 120, 120).data
+    const out = []
+    for (let y = 0; y < 120; y++) {
+      for (let x = 0; x < 120; x++) {
+        if (Math.abs(x - 60) < 16 && Math.abs(y - 60) < 16) continue
+        const i = (y * 120 + x) * 4
+        out.push((px[i] << 16) | (px[i + 1] << 8) | px[i + 2])
+      }
+    }
+    return out
+  })
+const changed = (a, b) => a.reduce((n, v, i) => n + (v === b[i] ? 0 : 1), 0)
+
+const cold = await aroundThePin()
+await deskPage.getByRole('button', { name: 'Heat' }).click()
+if (!(await settles(async () => changed(await aroundThePin(), cold) > 1000))) fail('turning the heat layer on drew nothing around the report')
+const warm = await aroundThePin()
+await deskPage.getByRole('button', { name: 'Heat' }).click()
+if (!(await settles(async () => changed(await aroundThePin(), warm) > 1000))) fail('turning the heat layer off left it on the map')
+ok(`desk map: the heat layer paints volume over the region while it is on, and nothing when it is off (${changed(warm, cold)} px around the pin)`)
+
+// tapping the pin opens that report
+const box = await deskPage.locator('.maplibregl-canvas').boundingBox()
+await deskPage.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+const tapped = PLACES[2].reference
+await deskPage
+  .waitForFunction((r) => window.location.hash.includes(r), tapped, { timeout: 10000 })
+  .catch(() => fail(`tapping the pin did not open ${tapped}: the hash is ${deskPage.url()}`))
+await deskPage.locator('text=Reported by').waitFor({ timeout: 20000 }).catch(() => fail('tapping the pin opened no document'))
+ok(`desk map: tapping a pin opens its report (${tapped})`)
+
+// zoomed out to the whole world, everything filed folds into one cluster, and tapping it opens it up
+await openDeskMap()
+const clusterCounts = async () => (await deskPage.locator('.desk-cluster').allInnerTexts()).map(Number)
+const biggest = async () => Math.max(0, ...(await clusterCounts()))
+for (let i = 0; i < 6; i++) {
+  await deskPage.getByRole('button', { name: 'Zoom out' }).click()
+  await deskPage.waitForTimeout(300)
+}
+if (!(await settles(async () => (await biggest()) >= 3))) fail(`zoomed out to the world, the reports do not cluster: ${JSON.stringify(await clusterCounts())}`)
+const clustered = await biggest()
+await deskPage.locator('.desk-cluster').first().click()
+if (!(await settles(async () => (await biggest()) < clustered))) fail(`tapping the cluster of ${clustered} did not open it up: ${JSON.stringify(await clusterCounts())}`)
+const left = await biggest()
+ok(`desk map: zoomed out the reports fold into a cluster of ${clustered}, and tapping it splits them into ${left ? `clusters of at most ${left}` : 'separate pins'}`)
+
+// and the list follows the map when it is asked to
+await openDeskMap()
+const all = await listed()
+await deskPage.getByRole('button', { name: "Only what's on the map" }).click()
+// fewer than the whole list already: a report with no place is on no map
+const framed = await listed()
+if (framed < PLACES.length || framed > all) fail(`the map's own view lists ${framed} of ${all} reports, and the three just filed are on it`)
+for (let i = 0; i < 8; i++) {
+  await deskPage.getByRole('button', { name: 'Zoom in' }).click()
+  await deskPage.waitForTimeout(250)
+}
+if (!(await settles(async () => (await listed()) < framed))) fail(`zoomed into the ocean between them, the list still holds ${await listed()} of ${framed} reports`)
+const narrowed = await listed()
+await deskPage.getByRole('button', { name: "Only what's on the map" }).click()
+if (!(await settles(async () => (await listed()) === all))) fail(`the list did not come back when it stopped following the map: ${await listed()} of ${all}`)
+ok(`desk map: "only what's on the map" narrows the list to the view (${all} filed, ${framed} on the map, ${narrowed} in the view) and gives it back`)
 
 // ── the demo portal, on the same server, embedding the built page ─────
 

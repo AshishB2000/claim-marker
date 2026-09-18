@@ -1076,6 +1076,50 @@ a real account well is a question for a real key and `scripts/assist-server.mjs`
 `fill_the_report` tool inlines the enums so it cannot misspell one and whose prompt says to
 extract only what was said.
 
+## The desk's map of everything (v9)
+
+An inbox is a list because that is the order reports arrive in, which is the one thing an
+adjuster already knows. What they do not know from a list is that four of this morning's reports
+are the same junction, or that a street has had eleven in a month. The desk's map answers that
+and nothing else: it is a second way of reading the list it sits above, not a second screen.
+
+**The place rides on the receipt, as one more thing the summary carries.** `summarise()` in the
+claim server adds `lng` and `lat` beside the address. `GET /claims` stays receipts only — the
+desk never loads nine documents to draw nine points — and a receipt filed before that line
+existed simply has no place and is not on the map. It is still in the list, like a report of a
+kind that was never diagrammed; the map is a view of the inbox, never a filter on it.
+
+**One clustered source, and the pin says what the row says.** `src/adjuster/DeskMap.tsx` is one
+MapLibre map on the same keyless street basemap the customer's page uses, with one GeoJSON
+source and `cluster: true`. A point is coloured by its status in the colours the inbox rows
+already wear — brand blue new, amber in review, slate closed — grows when someone was hurt or
+the car cannot be driven, and wears a red ring when the server has seen a photograph, a VIN or a
+plate on it before. Nothing on it is an opinion: every one of those is a fact already on the
+receipt, and the pin is the same sentence as the row, drawn where it happened.
+
+**The heat layer is the other question.** Volume over a region rather than one report at a
+time, weighted by `point_count` so a cluster stands for the reports inside it instead of
+thinning out as the map zooms away from them.
+
+**The clusters are DOM markers, not a symbol layer.** A cluster's count is text, and text on a
+MapLibre style needs a glyph server — another host in the served page's CSP, and another thing
+to be down, for a number a `div` can hold. This is the same answer the scenario map gives:
+interaction and labels are DOM, the canvas draws.
+
+**"Only what's on the map" is the one place the map narrows the list.** The map and the list
+show the same reports — the status chips, the date chips (today, 7 days, 30 days) and the search
+all apply to both — and only that toggle makes the list follow the view. The filtering is pure
+(`src/adjuster/pins.ts`: `pins`, `inRange`, `inView`), which is where the two things that would
+otherwise be found by hand are pinned down: "today" is the desk's day from midnight rather than
+the last twenty-four hours, and a view that crosses the antimeridian has a west greater than its
+east and still holds its points.
+
+**The map is told only when the points change.** The desk hands down a fresh array on every
+render, including the render its own `onBounds` causes; `DeskMap` compares the drawn collection
+before calling `setData` and refitting, or `fitBounds` would answer its own `moveend` for ever.
+That is the whole reason the bounds live in the desk's state and the data does not depend on
+them.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:
