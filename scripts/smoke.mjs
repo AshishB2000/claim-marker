@@ -634,11 +634,19 @@ const watched = await page.evaluate(async (impact) => {
   const play = window.__play
   if (!play?.timeline) return { error: 'the diagram step did not expose the replay clock on window.__play' }
   const RING_MS = 600 // src/map/playback.ts
-  const src = map.getCanvas()
   const size = 160
   const off = document.createElement('canvas')
   off.width = off.height = size
   const ctx = off.getContext('2d', { willReadFrequently: true })
+  // the box around the impact, wherever the camera has put it
+  const box = () => {
+    const src = map.getCanvas()
+    const p = map.project(impact)
+    const dpr = src.width / src.clientWidth
+    ctx.clearRect(0, 0, size, size)
+    ctx.drawImage(src, (p.x - size / 2) * dpr, (p.y - size / 2) * dpr, size * dpr, size * dpr, 0, 0, size, size)
+    return ctx.getImageData(0, 0, size, size).data
+  }
   // A building's own wall, once the camera is tilted. Where the map is drawing one is asked of
   // the map rather than worked out from a footprint: a block's centroid at this zoom is
   // usually off the top of the frame while the building itself fills it. So a coarse grid is
@@ -647,6 +655,7 @@ const watched = await page.evaluate(async (impact) => {
   // grey — the satellite's picture of the same block, at this zoom, never is.
   const COLUMN = 24
   const wall = () => {
+    const src = map.getCanvas()
     const dpr = src.width / src.clientWidth
     const on = (x, y) => map.queryRenderedFeatures([x, y], { layers: ['buildings'] })
     for (let gx = 0.15; gx < 1; gx += 0.2) {
@@ -674,14 +683,6 @@ const watched = await page.evaluate(async (impact) => {
     return null
   }
   const walls = []
-  // the box around the impact, wherever the camera has put it
-  const box = () => {
-    const p = map.project(impact)
-    const dpr = src.width / src.clientWidth
-    ctx.clearRect(0, 0, size, size)
-    ctx.drawImage(src, (p.x - size / 2) * dpr, (p.y - size / 2) * dpr, size * dpr, size * dpr, 0, 0, size, size)
-    return ctx.getImageData(0, 0, size, size).data
-  }
   // one moment on the playback clock, settled: the seek holds the frame loop there, the page
   // hands that frame to the map, and the map is made to paint before the pixels are read back
   const at = async (ms) => {
@@ -708,12 +709,15 @@ const watched = await page.evaluate(async (impact) => {
   const born = lit(await at(impactMs))
   const frames = []
   for (const u of [0.6, 0.7, 0.8]) {
-    frames.push(await at(impactMs + u * RING_MS))
-    // the city, on the very frames the shockwave is measured on: same settled shot, tilted
-    if (map.getPitch() > 40 && walls.length < 3) {
-      const w = wall()
-      if (w) walls.push(w)
-    }
+    const f = await at(impactMs + u * RING_MS)
+    frames.push(f)
+    // The city is read off these same three frames. They are already settled and the camera is
+    // already tilted on them — the pitch assertion below says so — and the wall is taken after
+    // the ring's pixels have been copied out of the canvas, so the most expensive thing here
+    // (a grid of queryRenderedFeatures and a canvas read) costs the measurement beside it
+    // nothing. Three readings prove the city; there is no fourth frame to want.
+    const w = wall()
+    if (w) walls.push(w)
   }
   play.stop()
   walls.sort((a, b) => b.grey - a.grey)
@@ -734,7 +738,7 @@ if (Math.abs(watched.pitch - watched.gonePitch) > 1)
   fail(`the frames compared are not the same shot, so nothing is proved (pitch ${watched.pitch.toFixed(0)}° with the ring, ${watched.gonePitch.toFixed(0)}° without)`)
 if (peak < 0.1) fail(`no shockwave: it lit [${watched.rings.map(pc).join(' ')}] of the box around the impact against the same frame with the ring gone`)
 if (watched.born > 0.05) fail(`the box around the impact changes without a shockwave in it (${pc(watched.born)} at the moment of impact, where the ring has no radius yet)`)
-if (!watched.wall) fail(`no building stood up in front of the tilted camera on ${watched.rings.length} sampled frames`)
+if (!watched.wall) fail(`no building stood up in front of the tilted camera on the shockwave's own frames`)
 if (watched.wall.grey < 0.9) fail(`what the extrusion layer drew is not its own flat grey: ${(watched.wall.grey * 100).toFixed(0)}% grey, mean rgb(${watched.wall.mean})`)
 await page.waitForFunction(() => !document.querySelector('.maplibregl-map').classList.contains('mk-playing'), null, { timeout: 12000 })
 const home = await page.evaluate(() => ({ pitch: window.__map.getPitch(), bearing: window.__map.getBearing() }))

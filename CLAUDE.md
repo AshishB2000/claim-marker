@@ -303,8 +303,9 @@ off — and `ReportDocument` takes `roads`/`buildings` as **props** because the 
 too and must have neither (`claim/1` carries the road in words and the buildings not at all).
 The smoke's pixel check asks the map **where** it is drawing a building rather than projecting
 a footprint — at that zoom a block's centroid is usually off the top of the frame while the
-building fills it — and is capped at three frames, because it runs inside the window the
-shockwave statistic is sampled in and must not cost it its frame rate.
+building fills it — and it rides the three frames the shockwave check already seeks to and
+settles, after that check has copied its pixels out, so the city costs it neither a frame nor
+a second playback.
 
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
