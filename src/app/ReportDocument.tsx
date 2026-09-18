@@ -518,6 +518,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                 poses={play.poses}
                 mode={play.mode}
                 clock={play.clock}
+                onPlaybackStop={play.stop}
                 className="h-[360px]"
               />
               {play.canPlay && (

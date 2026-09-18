@@ -16,6 +16,7 @@
 import { cap, conditionLabels, deskVoice, driverName, vehicleName } from './describe'
 import { KIND_INFO, instantOf, type Claim, type ClaimVehicle, type Incident, type Location, type Role } from './schema'
 import { bearing, distance, normalizeBearing, type LngLat } from '../geo'
+import { impactPlaceOf, lengthOf, routeOf, timelineOf } from '../map/playback'
 import { zoneById } from '../zones'
 
 /** one thing the two accounts both speak to */
@@ -131,6 +132,40 @@ function matchVehicles(a: Claim, b: Claim): { pairs: Pair[]; unmatched: string[]
     if (!usedB.has(bv)) unmatched.push(`${vehicleName(bv, 'en')} appears only in ${partyLabel(b)}'s account.`)
   }
   return { pairs, unmatched }
+}
+
+/** the account has something driving, so playing it back gives its impact a moment as well as a place */
+const timed = (c: Claim) =>
+  c.vehicles.some((v) => {
+    const route = routeOf(v)
+    return route !== null && lengthOf(route) > 0
+  })
+
+/** where this account puts the impact: the cross its customer placed, or where its own cars meet */
+const impactPointOf = (c: Claim): LngLat | null => c.impact ?? impactPlaceOf(c.vehicles, timelineOf(c.vehicles).impactT)
+
+/**
+ * The headline above the comparison: how far apart the two accounts put the impact, and how far
+ * apart it happens once both diagrams are played from the same start — the one number a table of
+ * rows cannot show, because it belongs to neither row and neither account.
+ *
+ * The metres are between each account's own point of impact; an account whose customer never
+ * placed the cross still has the place its cars meet. The seconds are the gap between the two
+ * `impactMs` on that shared clock, so an account with nothing driving has no moment to compare,
+ * and this says so rather than reporting a gap of nought. A gap is a gap: two people remember a
+ * two-second event differently, and nothing here reads it as anything more than that.
+ */
+export function impactApart(a: Claim, b: Claim): string {
+  const pa = impactPointOf(a)
+  const pb = impactPointOf(b)
+  if (!pa || !pb) return `${cap(partyLabel(pa ? b : a))}'s account does not put the impact anywhere on a map.`
+  const metres = fmtMetres(distance(pa, pb))
+  const untimed = [timed(a) ? null : partyLabel(a), timed(b) ? null : partyLabel(b)].filter((s): s is string => s !== null)
+  if (untimed.length > 0) {
+    return `The two accounts' impacts are ${metres} apart; ${untimed.map((who) => `${who}'s account`).join(' and ')} ${untimed.length > 1 ? 'have' : 'has'} no route to time it from.`
+  }
+  const seconds = Math.abs(timelineOf(a.vehicles).impactMs - timelineOf(b.vehicles).impactMs) / 1000
+  return `The two accounts' impacts are ${metres} and ${seconds.toFixed(1)} s apart.`
 }
 
 /**

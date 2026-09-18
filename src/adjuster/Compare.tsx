@@ -10,17 +10,16 @@
  * an accusation — the one `compare.ts` keeps out of its own source — is kept out of this file
  * on the same terms: not in the code, not in a message, not in a comment, this one included.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { compare, type Row } from '../claim/compare'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { compare, impactApart, type Row } from '../claim/compare'
 import { deskVoice } from '../claim/describe'
 import { findings, type Finding } from '../claim/plausibility'
 import { distance, type LngLat } from '../geo'
 import type { Claim, ClaimVehicle } from '../claim/schema'
 import type { Lang } from '../i18n'
 import { Icon } from '../app/icons'
-import { MapScene } from '../map/MapScene'
-import type { CarPose } from '../map/carLayer'
-import { HOLD_MS, durationOf, ease, posesAt } from '../map/playback'
+import { MapScene, type MapSceneHandle } from '../map/MapScene'
+import { usePlayback } from '../map/usePlayback'
 import { ReportDocument } from '../app/ReportDocument'
 import type { Receipt } from './Desk'
 
@@ -81,58 +80,16 @@ function FindingsCard({ heading, items }: { heading: string; items: Finding[] })
 
 const NO_VEHICLES: ClaimVehicle[] = []
 
-/** a ghost vehicle at its current pose: position and heading replaced, path (and everything else) kept so the dashed route still draws */
-function withPoses(vehicles: ClaimVehicle[], poses: CarPose[]): ClaimVehicle[] {
-  const byId = new Map(poses.map((p) => [p.id, p]))
-  return vehicles.map((v) => {
-    const p = byId.get(v.id)
-    return p ? { ...v, position: p.position, heading: p.heading } : v
-  })
-}
-
 /**
- * Both accounts' playback from one clock: each side runs out its own route over its own
- * duration, so the two versions of the same seconds move together and the shorter route holds
- * its last pose (`posesAt` clamps past t=1) while the longer one keeps going, rather than the
- * two snapping into lockstep.
+ * The other account's vehicles are drawn over the first as ghosts, and both accounts commonly
+ * call their own car "a". The ids only have to be unique to name the one the camera chases —
+ * `CarLayer` keeps the two sets apart itself — so the ghosts get a prefix here and the two
+ * documents are left exactly as they were filed.
  */
-function usePlayBoth(left: ClaimVehicle[], right: ClaimVehicle[]) {
-  const [frame, setFrame] = useState<{ left: CarPose[]; right: CarPose[] } | null>(null)
-  const raf = useRef(0)
-  const hold = useRef(0)
+const GHOST = 'other:'
 
-  const stop = () => {
-    cancelAnimationFrame(raf.current)
-    clearTimeout(hold.current)
-    setFrame(null)
-  }
-
-  const start = () => {
-    cancelAnimationFrame(raf.current)
-    clearTimeout(hold.current)
-    const leftMs = durationOf(left)
-    const rightMs = durationOf(right)
-    const longestMs = Math.max(leftMs, rightMs)
-    const t0 = performance.now()
-    const tick = (now: number) => {
-      const elapsed = now - t0
-      setFrame({ left: posesAt(left, ease(Math.min(1, elapsed / leftMs))), right: posesAt(right, ease(Math.min(1, elapsed / rightMs))) })
-      if (elapsed < longestMs) raf.current = requestAnimationFrame(tick)
-      else hold.current = window.setTimeout(stop, HOLD_MS)
-    }
-    raf.current = requestAnimationFrame(tick)
-  }
-
-  useEffect(
-    () => () => {
-      cancelAnimationFrame(raf.current)
-      clearTimeout(hold.current)
-    },
-    [],
-  )
-
-  return { frame, playing: frame !== null, toggle: () => (frame !== null ? stop() : start()) }
-}
+/** the file name the desk's "Save video" offers, by the account it opens with */
+const videoName = (reference: string, type: string) => `${reference}-both-accounts.${type.includes('mp4') ? 'mp4' : 'webm'}`
 
 function RowGroup({ heading, rows }: { heading: string; rows: Row[] }) {
   if (rows.length === 0) return null
@@ -162,7 +119,22 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
   // called unconditionally, before the `reports.length < 2` guard below, so the hook count
   // never varies across renders (react/rules-of-hooks) — the pair itself may be null
   const pair = reports.length >= 2 ? orderPair(reports) : null
-  const play = usePlayBoth(pair?.[0].claim.vehicles ?? NO_VEHICLES, pair?.[1].claim.vehicles ?? NO_VEHICLES)
+  // memoised on the prop itself: the ghosts are an identity `usePlayback` and `MapScene` both
+  // key on, so rebuilding the array every render would rebuild the other account's timeline
+  // and re-push its bodies with it
+  const ghosts = useMemo(() => (reports.length >= 2 ? orderPair(reports)[1].claim.vehicles.map((v) => ({ ...v, id: GHOST + v.id })) : NO_VEHICLES), [reports])
+  // one clock, two accounts: each side drives its own routes over its own duration, and the
+  // moment of impact on that shared clock is what the two ticks under the map compare
+  const play = usePlayback(pair?.[0].claim.vehicles ?? NO_VEHICLES, ghosts)
+  const [follow, setFollow] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const map = useRef<MapSceneHandle>(null)
+  // DEV only, like `window.__map` and the diagram step's own: the shared clock, so
+  // `scripts/integration-smoke.mjs` can hold both accounts on a chosen frame
+  useEffect(() => {
+    if (import.meta.env.DEV) Object.assign(window, { __play: play })
+  }, [play])
+
   if (!pair) return null
   const [left, right] = pair
   const cmp = compare(left.claim, right.claim)
@@ -171,34 +143,104 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
   const leftLoc = left.claim.incident.location
   const rightLoc = right.claim.incident.location
   const center: LngLat | null = leftLoc ? [leftLoc.lng, leftLoc.lat] : rightLoc ? [rightLoc.lng, rightLoc.lat] : null
-  const canPlayBoth = [...left.claim.vehicles, ...right.claim.vehicles].some((v) => v.position && v.path.length > 0)
+  const theirCar = ghosts.find((v) => v.role === 'insured' && v.position)
+  const ticks = [
+    { at: play.timeline.impactMs, color: '#0f172a', who: "the policyholder's account" },
+    ...(ghosts.length > 0 ? [{ at: play.ghostTimeline.impactMs, color: '#94a3b8', who: "the other driver's account" }] : []),
+  ]
+
+  /** the same recorder the customer's page runs at send time, over both accounts; nothing leaves the desk */
+  const save = async () => {
+    setSaving(true)
+    try {
+      await map.current?.stop()
+      const blob = await map.current?.record('cinematic')
+      if (!blob) return
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = videoName(left.receipt.reference, blob.type)
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
-    <div data-compare className="space-y-6">
+    <div data-compare data-follow={follow ?? ''} className="space-y-6">
       {center && (
-        <div className="relative overflow-hidden rounded-xl ring-1 ring-slate-900/10">
-          <MapScene
-            center={center}
-            style={left.claim.incident.surface}
-            vehicles={left.claim.vehicles}
-            ghosts={play.frame ? withPoses(right.claim.vehicles, play.frame.right) : right.claim.vehicles}
-            impact={left.claim.impact}
-            selected={null}
-            interactive={false}
-            lang={lang}
-            poses={play.frame?.left ?? null}
-            className="h-[420px]"
-          />
-          {canPlayBoth && (
-            <button type="button" className="chip absolute top-3 right-3 print:hidden" onClick={play.toggle} aria-pressed={play.playing}>
-              {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? 'Stop' : 'Play both'}
-            </button>
+        <div className="overflow-hidden rounded-xl ring-1 ring-slate-900/10">
+          <div className="relative">
+            <MapScene
+              ref={map}
+              center={center}
+              style={left.claim.incident.surface}
+              vehicles={left.claim.vehicles}
+              ghosts={ghosts}
+              ghostPoses={play.ghostPoses}
+              impact={left.claim.impact}
+              selected={null}
+              interactive={false}
+              lang={lang}
+              poses={play.poses}
+              mode={play.mode}
+              clock={play.clock}
+              follow={follow ?? undefined}
+              className="h-[420px]"
+            />
+            {play.canPlay && (
+              <div className="absolute top-3 right-3 flex gap-1.5 print:hidden">
+                <button type="button" className="chip" onClick={play.playing ? play.stop : () => play.start()} aria-pressed={play.playing}>
+                  {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? 'Stop' : 'Play both'}
+                </button>
+                {!play.playing && (
+                  <button type="button" className="chip" onClick={() => play.start('cinematic')}>
+                    <Icon.film /> Watch both
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          {play.canPlay && (
+            <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 bg-white px-4 py-3 print:hidden">
+              <div className="relative min-w-[220px] flex-1">
+                <input
+                  type="range"
+                  className="w-full"
+                  aria-label="Scrub both accounts"
+                  min={0}
+                  max={Math.round(play.duration)}
+                  step={20}
+                  value={Math.round(play.clock)}
+                  onChange={(e) => play.seek(Number(e.target.value))}
+                />
+                {ticks.map((tick) => (
+                  <span
+                    key={tick.who}
+                    title={`Impact in ${tick.who} at ${(tick.at / 1000).toFixed(1)} s`}
+                    data-impact-tick={tick.at.toFixed(0)}
+                    className="pointer-events-none absolute -top-0.5 h-2.5 w-0.5 rounded-full"
+                    style={{ left: `${(tick.at / play.duration) * 100}%`, background: tick.color }}
+                  />
+                ))}
+              </div>
+              <span className="text-xs text-slate-500 tabular-nums">{(play.clock / 1000).toFixed(1)} s</span>
+              <button type="button" className="chip" onClick={() => setFollow((f) => (f ? null : (theirCar?.id ?? null)))} disabled={!theirCar}>
+                <Icon.film /> Swap
+              </button>
+              <span className="text-xs text-slate-500">Watching {follow ? "the other driver's car" : "the policyholder's car"}</span>
+              <button type="button" className="chip ml-auto" onClick={save} disabled={saving}>
+                {saving ? <Icon.spinner /> : <Icon.film />} {saving ? 'Saving…' : 'Save video'}
+              </button>
+            </div>
           )}
         </div>
       )}
 
       <div className="card overflow-hidden">
         <table className="w-full text-sm">
+          <caption className="border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-slate-700">{impactApart(left.claim, right.claim)}</caption>
           <thead>
             <tr className="border-b border-slate-100">
               <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500"></th>

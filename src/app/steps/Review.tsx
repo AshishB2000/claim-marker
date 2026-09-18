@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useClaim, type Step } from '../../claim/store'
 import { isReplay, makeReference, toDocument } from '../../claim/schema'
 import type { MapSceneHandle } from '../../map/MapScene'
+import { VIDEO_MS } from '../../map/record'
 import type { DamageMarkerHandle } from '../../marker/DamageMarker'
 import { Icon } from '../icons'
 import { Field, YesNo } from '../ui'
@@ -12,8 +13,14 @@ import { assistOn, checkReport } from '../../assist/client'
 import type { Check } from '../../assist/schema'
 import { useLang, useT } from '../../i18n/useT'
 
-/** a person will wait this long for a video that is not the point of the report, and no longer */
-const RECORD_TIMEOUT_MS = 8000
+/**
+ * A person will wait this long for a video that is not the point of the report, and no longer.
+ * The recording itself is capped at {@link VIDEO_MS} of wall time, whatever the playback would
+ * take; the rest is the encoder finishing on a loaded machine. Throwing away a recording that
+ * was seconds from being done is how a report ends up with no replay at all on exactly the
+ * machines where it would be worth most.
+ */
+const RECORD_TIMEOUT_MS = VIDEO_MS + 3000
 
 const blobToDataUrl = (blob: Blob) =>
   new Promise<string>((resolve, reject) => {
@@ -24,7 +31,8 @@ const blobToDataUrl = (blob: Blob) =>
   })
 
 /**
- * The playback, recorded and turned into the attachment `submitClaim` sends — but a report is
+ * The playback — the cinematic one, the camera and all, unless the customer asked for less
+ * motion — recorded and turned into the attachment `submitClaim` sends. But a report is
  * never held up by it: raced against a hard ceiling, so a slow recording just gets left behind
  * rather than making the customer wait. Any failure along the way — no recorder, a rejected
  * promise, an oversized result `isReplay` refuses — resolves to `null` silently; the customer
@@ -36,7 +44,7 @@ async function recordReplay(map: MapSceneHandle | null): Promise<string | null> 
     const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), RECORD_TIMEOUT_MS))
     // the recording that loses the race keeps running after this returns — and after the page
     // has moved on and the map is gone — so anything it throws then is caught here, not left loose
-    const blob = await Promise.race([map.record().catch(() => null), timeout])
+    const blob = await Promise.race([map.record('cinematic').catch(() => null), timeout])
     if (!blob) return null
     const dataUrl = await blobToDataUrl(blob)
     return isReplay(dataUrl) ? dataUrl : null
@@ -147,6 +155,10 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
         const png = h.export().png
         if (png) damage[id] = png
       }
+      // "Watch it" may be running on this very map: hand it back flat first, or the still is a
+      // frame of the chase with a shockwave in it and the recorder starts against a camera
+      // something else is still driving
+      await map.current?.stop()
       const scene = map.current?.export() ?? null
       setRecording(true)
       const replay = await recordReplay(map.current)

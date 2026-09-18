@@ -21,6 +21,7 @@ import {
   along,
   cameraAt,
   durationOf,
+  impactPlaceOf,
   ease,
   endOf,
   frameAt,
@@ -32,6 +33,7 @@ import {
   shotAt,
   shots,
   timelineOf,
+  wallMsOf,
   type Camera,
 } from '../src/map/playback'
 
@@ -259,5 +261,94 @@ describe('the shot list', () => {
     expect(ringAt(tl, tl.impactMs)).toEqual({ metres: 0, opacity: 1 })
     expect(ringAt(tl, tl.impactMs + 300)).toEqual({ metres: RING_M / 2, opacity: 0.5 })
     expect(ringAt(tl, tl.impactMs + 601)).toBeNull()
+  })
+})
+
+// ── two accounts of one accident, on one clock ───────────────────────
+// The desk plays the policyholder's diagram and the other driver's over the same milliseconds.
+// Each side drives its own routes over its own duration — `headOn` meets at the end of a 40 m
+// drive, `shortDrive` at the end of a 12 m one — so the two impacts fall at different moments
+// of the shared clock, which is the whole point of showing them together.
+const shortDrive: ClaimVehicle[] = [
+  car('a', [destination(here, 180, 12)], here, 0),
+  { ...car('b', [destination(here, 0, 17)], destination(here, 0, 5), 180), role: 'other' },
+]
+
+describe('two accounts on one clock', () => {
+  it('scrub in lockstep: one moment moves both sets, each along its own route', () => {
+    const mine = timelineOf(headOn)
+    const theirs = timelineOf(shortDrive)
+    let lastMine = 0
+    let lastTheirs = 0
+    for (const ms of [0, 400, 800, 1200, 2000, 4000, 8000]) {
+      const a = frameAt(headOn, mine, ms)
+      const b = frameAt(shortDrive, theirs, ms)
+      // both sets are somewhere at every moment, and neither ever goes backwards
+      expect(a.poses).toHaveLength(2)
+      expect(b.poses).toHaveLength(2)
+      expect(a.t).toBeGreaterThanOrEqual(lastMine)
+      expect(b.t).toBeGreaterThanOrEqual(lastTheirs)
+      lastMine = a.t
+      lastTheirs = b.t
+    }
+    // a moment into the drive, both have moved off their starting positions
+    const moved = (vehicles: ClaimVehicle[], tl: ReturnType<typeof timelineOf>) =>
+      distance(frameAt(vehicles, tl, 900).poses[0].position, posesAt(vehicles, 0)[0].position)
+    expect(moved(headOn, mine)).toBeGreaterThan(0.5)
+    expect(moved(shortDrive, theirs)).toBeGreaterThan(0.5)
+    // the shorter drive holds its last pose while the longer one is still going
+    const held = frameAt(shortDrive, theirs, theirs.ms + 1000).poses
+    expect(distance(held[0].position, posesAt(shortDrive, 1)[0].position)).toBeLessThan(0.01)
+    expect(frameAt(headOn, mine, theirs.ms + 1000).t).toBeLessThan(1)
+  })
+
+  it('the two impact ticks are ordered on that clock, and neither is past its own drive', () => {
+    const mine = timelineOf(headOn)
+    const theirs = timelineOf(shortDrive)
+    expect(theirs.impactMs).toBeLessThan(mine.impactMs)
+    expect(theirs.impactMs).toBeLessThanOrEqual(theirs.ms)
+    expect(mine.impactMs).toBeLessThanOrEqual(mine.ms)
+    // and the gap between them is what the desk's headline reports, in seconds
+    expect((mine.impactMs - theirs.impactMs) / 1000).toBeCloseTo((durationOf(headOn) - durationOf(shortDrive)) / 1000, 6)
+  })
+
+  it('the chase follows the vehicle it is given, whichever account it belongs to', () => {
+    const both = [...headOn, ...shortDrive.map((v) => ({ ...v, id: `other:${v.id}` }))]
+    const tl = timelineOf(headOn)
+    expect(shots(both, tl)[1].chase!.follow).toBe('a')
+    expect(shots(both, tl, 'other:a')[1].chase!.follow).toBe('other:a')
+    // an id nobody has falls back to the reporter's own car rather than losing the chase
+    expect(shots(both, tl, 'nobody')[1].chase!.follow).toBe('a')
+    // and the camera reads that pose out of the combined list
+    const home: Camera = { center: here, zoom: 19.9, pitch: 0, bearing: 0 }
+    const at = ESTABLISH_MS + BLEND_MS
+    const poses = [...frameAt(headOn, tl, at).poses, ...frameAt(shortDrive, timelineOf(shortDrive), at).poses.map((p) => ({ ...p, id: `other:${p.id}` }))]
+    const theirs = cameraAt(shots(both, tl, 'other:a'), at, poses, home)
+    const mine = cameraAt(shots(both, tl), at, poses, home)
+    expect(distance(theirs.center, mine.center)).toBeGreaterThan(1)
+    expect(distance(theirs.center, poses.find((p) => p.id === 'other:a')!.position)).toBeCloseTo(BEHIND_M, 1)
+  })
+
+  it('an account that never placed the cross still has a place: where its two cars meet', () => {
+    const tl = timelineOf(headOn)
+    const place = impactPlaceOf(headOn, tl.impactT)!
+    const [a, b] = posesAt(headOn, ease(tl.impactT))
+    expect(distance(place, a.position)).toBeCloseTo(distance(place, b.position), 1)
+    expect(distance(place, here)).toBeLessThan(5)
+    expect(impactPlaceOf([], 1)).toBeNull()
+    expect(impactPlaceOf([car('a', [], here, 0)], 1)).toEqual(here)
+  })
+
+  it('a cinematic run costs more wall time than clock, because the slow-motion is a quarter rate', () => {
+    const tl = timelineOf(headOn)
+    const list = shots(headOn, tl)
+    const end = tl.ms + HOLD_MS
+    const wall = wallMsOf(list, end)
+    expect(wall).toBeGreaterThan(end)
+    // exactly the slow-motion window, which costs four seconds for every one of the clock
+    const slow = list[3].at - list[2].at
+    expect(wall).toBeCloseTo(end - slow + slow / SLOW_RATE, 6)
+    // nothing past the end is counted, and a run of no length costs nothing
+    expect(wallMsOf(list, 0)).toBe(0)
   })
 })

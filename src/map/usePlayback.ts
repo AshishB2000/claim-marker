@@ -3,10 +3,13 @@ import type { ClaimVehicle } from '../claim/schema'
 import type { CarPose } from './carLayer'
 import { HOLD_MS, advance, endOf, frameAt, shotAt, shots, timelineOf, type PlaybackMode, type Shot } from './playback'
 
-type Frame = { poses: CarPose[]; t: number; ms: number; rate: number; mode: PlaybackMode }
+type Frame = { poses: CarPose[]; ghostPoses: CarPose[] | null; t: number; ms: number; rate: number; mode: PlaybackMode }
 
 /** the customer asked for less motion: the tilt, the chase and the slow-motion stay off, and "Watch it" is "Play it back" */
-const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+export const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+
+/** one empty second account, stable so the memos below do not rebuild every render */
+const NO_GHOSTS: ClaimVehicle[] = []
 
 /**
  * A playback of the scenario: `poses` is null when idle and the frame's poses while playing.
@@ -14,15 +17,26 @@ const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(pre
  * hides the handles, and in cinematic mode drives the camera. The clock is the playback's
  * own, in ms, held in a ref rather than read off `performance.now()`, so it can be seeked and
  * run at a rate; a cinematic run's shot list sets the rate as it goes.
+ *
+ * `ghosts` is a second account of the same accident — the desk's compare view. It has a
+ * `Timeline` of its own, because each side's drive is as long as its own routes, but there is
+ * one clock: at any moment both sets are that many milliseconds into their own drive, and the
+ * shorter one holds its last pose (`frameAt` clamps) while the longer one keeps going. That is
+ * what makes the two impact moments comparable at all — they are two marks on one ruler.
  */
-export function usePlayback(vehicles: ClaimVehicle[]) {
+export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | null) {
   const [frame, setFrame] = useState<Frame | null>(null)
+  const others = ghosts ?? NO_GHOSTS
   const timeline = useMemo(() => timelineOf(vehicles), [vehicles])
+  const ghostTimeline = useMemo(() => timelineOf(others), [others])
   const raf = useRef(0)
   const clock = useRef(0)
   /** the rate asked for from outside; a cinematic shot multiplies it */
   const base = useRef(1)
   const run = useRef<{ list: Shot[] | null; end: number } | null>(null)
+
+  /** the drive, the longer of the two, plus the hold on the last frame */
+  const duration = Math.max(timeline.ms, others.length ? ghostTimeline.ms : 0) + HOLD_MS
 
   const stop = useCallback(() => {
     cancelAnimationFrame(raf.current)
@@ -32,15 +46,22 @@ export function usePlayback(vehicles: ClaimVehicle[]) {
 
   /** the frame at the clock's current moment, on screen */
   const show = useCallback(
-    (rate: number) => setFrame({ ...frameAt(vehicles, timeline, clock.current), ms: clock.current, rate, mode: run.current?.list ? 'cinematic' : 'diagram' }),
-    [vehicles, timeline],
+    (rate: number) =>
+      setFrame({
+        ...frameAt(vehicles, timeline, clock.current),
+        ghostPoses: others.length ? frameAt(others, ghostTimeline, clock.current).poses : null,
+        ms: clock.current,
+        rate,
+        mode: run.current?.list ? 'cinematic' : 'diagram',
+      }),
+    [vehicles, timeline, others, ghostTimeline],
   )
 
   const start = useCallback(
     (mode: PlaybackMode = 'diagram') => {
       cancelAnimationFrame(raf.current)
-      const list = mode === 'cinematic' && !reducedMotion() ? shots(vehicles, timeline) : null
-      const r = { list, end: list ? endOf(list) : timeline.ms + HOLD_MS }
+      const list = mode === 'cinematic' && !reducedMotion() ? shots([...vehicles, ...others], timeline) : null
+      const r = { list, end: Math.max(list ? endOf(list) : 0, duration) }
       run.current = r
       clock.current = 0
       let last = performance.now()
@@ -54,7 +75,7 @@ export function usePlayback(vehicles: ClaimVehicle[]) {
       }
       raf.current = requestAnimationFrame(tick)
     },
-    [vehicles, timeline, show, stop],
+    [vehicles, others, timeline, duration, show, stop],
   )
 
   /**
@@ -67,10 +88,10 @@ export function usePlayback(vehicles: ClaimVehicle[]) {
     (ms: number) => {
       cancelAnimationFrame(raf.current)
       // the clock `ms` on from zero at rate 1: the same clamp the run itself advances under
-      clock.current = advance(0, ms, 1, run.current?.end ?? timeline.ms + HOLD_MS)
+      clock.current = advance(0, ms, 1, run.current?.end ?? duration)
       show(base.current)
     },
-    [timeline, show],
+    [duration, show],
   )
 
   const setRate = useCallback((rate: number) => {
@@ -79,9 +100,11 @@ export function usePlayback(vehicles: ClaimVehicle[]) {
 
   useEffect(() => () => cancelAnimationFrame(raf.current), [])
 
-  const canPlay = vehicles.some((v) => v.position && v.path.length > 0)
+  const canPlay = [...vehicles, ...others].some((v) => v.position && v.path.length > 0)
   return {
     poses: frame?.poses ?? null,
+    /** the second account at the same moment, or null when there is not one */
+    ghostPoses: frame?.ghostPoses ?? null,
     playing: frame !== null,
     canPlay,
     /** how far through the drive, 0–1 */
@@ -91,6 +114,10 @@ export function usePlayback(vehicles: ClaimVehicle[]) {
     rate: frame?.rate ?? 1,
     mode: frame?.mode ?? 'diagram',
     timeline,
+    /** the second account's own timeline: its drive, and where its impact falls on the shared clock */
+    ghostTimeline,
+    /** the whole clock a scrubber runs across: the longer drive plus the hold */
+    duration,
     start,
     stop,
     seek,

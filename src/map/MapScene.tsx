@@ -20,8 +20,9 @@ import { translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
 import { SIZE } from '../vehicles/bodies'
 import { CarLayer, shockRing, type CarPose } from './carLayer'
-import { cameraAt, ringAt, shotAt, shots, timelineOf, type Camera, type PlaybackMode, type Shot, type Timeline } from './playback'
+import { MAX_PITCH, cameraAt, ringAt, shotAt, shots, timelineOf, type Camera, type PlaybackMode, type Shot, type Timeline } from './playback'
 import { damageCount, paintOverlay, recordPlayback, type OverlayLabel } from './record'
+import { reducedMotion } from './usePlayback'
 import { styleFor, type MapStyle } from './styles'
 
 export type MapSceneHandle = {
@@ -31,10 +32,18 @@ export type MapSceneHandle = {
   recentre: () => void
   /**
    * The diagram's playback, recorded as a video: the vehicles' routes into the impact, held
-   * there, then handed back exactly as it was. Null when the browser cannot record it or there
-   * is nothing to play — never throws.
+   * there, then handed back exactly as it was — `cinematic` records the camera moves and the
+   * ghosts too, and falls back to the flat replay when the viewer asked for less motion. Null
+   * when the browser cannot record it or there is nothing to play — never throws.
    */
-  record: () => Promise<Blob | null>
+  record: (mode?: PlaybackMode) => Promise<Blob | null>
+  /**
+   * Hand the map back flat and idle: any cinematic replay running on it is ended, the camera
+   * jumps to the view it was let off at, and this resolves once the map has painted that way.
+   * What `export()` and `record()` are worth depends on it — a still taken mid-chase is a
+   * tilted frame with a shockwave in it — so the review page's send calls it first.
+   */
+  stop: () => Promise<void>
 }
 
 /** what a tap on the map means right now */
@@ -75,6 +84,16 @@ export type MapSceneProps = {
    * empty leaves the map exactly as it is without this prop; the customer's page never passes it.
    */
   ghosts?: ClaimVehicle[] | null
+  /** the ghosts at a moment of the same playback; without it they stand where they came to rest */
+  ghostPoses?: CarPose[] | null
+  /**
+   * The vehicle the cinematic camera chases, by id — a ghost's id as readily as one of
+   * `vehicles`, which is how the desk swaps to the other driver's car. Unset follows the
+   * reporter's own, as `shots` always did.
+   */
+  follow?: string
+  /** the playback running on this map should stop: `export()` and `record()` say so before they take the map over */
+  onPlaybackStop?: () => void
   onSelect?: (id: string | null) => void
   /** a car was picked up, is being dragged, was let go */
   onGrab?: (id: string) => void
@@ -94,8 +113,6 @@ export type MapSceneProps = {
 
 /** close enough that a sedan is eighty pixels long; the imagery overscales gracefully past 19 */
 const ZOOM = 19.9
-/** the map may tilt this far, and only while a cinematic replay runs */
-const MAX_PITCH = 60
 /** the white flow line along a travel path, and how wide it becomes as a light trail in slow motion */
 const FLOW_WIDTH = 3
 const TRAIL_WIDTH = 7
@@ -184,6 +201,8 @@ type Handles = { car: Marker; turn: HTMLElement; tagwrap: HTMLElement; tag: HTML
 /** one cinematic replay, from the moment the camera is let off the leash to the moment it is handed back */
 type Cinematic = {
   shots: Shot[]
+  /** the id the shot list was built to chase, so a Swap mid-playback re-cuts it */
+  follow: string | undefined
   timeline: Timeline
   /** the view the customer left, restored exactly at the end */
   home: Camera
@@ -204,6 +223,8 @@ type Live = {
   style: MapStyle
   /** set while a cinematic replay has the camera */
   cine: Cinematic | null
+  /** set while the recorder owns the map: the playback effects keep their hands off it */
+  recording: boolean
 }
 
 type Props = Omit<MapSceneProps, 'className' | 'ref'>
@@ -257,7 +278,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     map.keyboard.disableRotation()
     if (init.interactive) map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
     map.addControl(new ScaleControl({ maxWidth: 90, unit: 'metric' }), 'bottom-left')
-    const state: Live = { map, cars: new CarLayer(init.center), handles: new Map(), impact: null, styleReady: false, style: init.style, cine: null }
+    const state: Live = { map, cars: new CarLayer(init.center), handles: new Map(), impact: null, styleReady: false, style: init.style, cine: null, recording: false }
     live.current = state
     // a handle for poking at the live map from the console; never in production
     if (import.meta.env.DEV) Object.assign(window, { __map: map })
@@ -564,19 +585,21 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
   }, [buildings])
 
   // ── ghosts: the other account's cars and paths, decoration only ──────
-  const { ghosts } = props
+  // The dashed routes are the vehicles' own and are pushed when they change; the bodies follow
+  // `ghostPoses` while a playback is running, exactly as the first account's follow `poses`.
+  const { ghosts, ghostPoses } = props
   useEffect(() => {
     const s = live.current
-    if (!s) return
+    if (!s || s.recording) return
     if (s.styleReady) pushGhostGeometry(s.map, ghosts ?? [])
-    s.cars.setGhosts(posesOf(ghosts ?? []))
-  }, [ghosts])
+    s.cars.setGhosts(ghostPoses ?? posesOf(ghosts ?? []))
+  }, [ghosts, ghostPoses])
 
   // ── playback: the cars follow the frame, the handles step aside ─────
   const { poses } = props
   useEffect(() => {
     const s = live.current
-    if (!s) return
+    if (!s || s.recording) return
     s.map.getContainer().classList.toggle('mk-playing', !!poses)
     s.cars.setPoses(poses ?? posesOf(latest.current.vehicles))
   }, [poses])
@@ -587,24 +610,21 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
   // — it is handed back at exactly the view the customer left, before the markers return.
   const mode = props.mode ?? 'diagram'
   const clock = props.clock ?? 0
+  const follow = props.follow
   useEffect(() => {
     const s = live.current
-    if (!s) return
+    if (!s || s.recording) return
     const { map, cars } = s
     if (mode !== 'cinematic' || !poses) {
-      if (!s.cine) return
-      map.jumpTo({ center: ll(s.cine.home.center), zoom: s.cine.home.zoom, pitch: 0, bearing: 0 })
-      map.setMaxPitch(0)
-      cars.setDecor([])
-      if (map.getLayer('paths-flow')) map.setPaintProperty('paths-flow', 'line-width', FLOW_WIDTH)
-      s.cine = null
+      flatten(s)
       return
     }
     if (!s.cine) {
       const vehicles = latest.current.vehicles
       const timeline = timelineOf(vehicles)
       s.cine = {
-        shots: shots(vehicles, timeline),
+        shots: [],
+        follow: undefined,
         timeline,
         home: { center: fromLL(map.getCenter()), zoom: map.getZoom(), pitch: 0, bearing: 0 },
         ring: shockRing(),
@@ -614,7 +634,13 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       map.setMaxPitch(MAX_PITCH)
     }
     const c = s.cine
-    const cam = cameraAt(c.shots, clock, poses, c.home)
+    // built here and not at the start of the run, so "Swap" mid-playback re-cuts the chase onto
+    // the other car; the ghosts are in the list because one of them may be the car it follows
+    if (c.shots.length === 0 || c.follow !== follow) {
+      c.follow = follow
+      c.shots = shots([...latest.current.vehicles, ...(latest.current.ghosts ?? [])], c.timeline, follow)
+    }
+    const cam = cameraAt(c.shots, clock, [...poses, ...(ghostPoses ?? [])], c.home)
     map.jumpTo({ center: ll(cam.center), zoom: cam.zoom, pitch: cam.pitch, bearing: cam.bearing })
     // slow motion: the travel paths brighten into light trails, their dashes racing
     const slow = shotAt(c.shots, clock).rate < 1
@@ -633,7 +659,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       c.ring.material.opacity = ring.opacity
       cars.setDecor([{ object: c.ring, at: impact, metres: ring.metres }])
     } else cars.setDecor([])
-  }, [mode, clock, poses])
+  }, [mode, clock, poses, ghostPoses, follow])
 
   // ── impact ──────────────────────────────────────────────────────────
   const { impact } = props
@@ -667,15 +693,41 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
         return compose(s.map, latest.current.vehicles, latest.current.impact, latest.current.lang ?? 'en')
       },
       recentre: () => live.current?.map.easeTo({ center: ll(latest.current.center), zoom: ZOOM, duration: 700 }),
-      record: () => {
+      record: (mode) => {
         const s = live.current
         if (!s) return Promise.resolve(null)
+        // whatever the camera was doing, the recorder owns it from here: the effects above step
+        // aside for as long as it runs, or they would fight it frame by frame
+        flatten(s)
+        s.recording = true
         return recordPlayback({
           map: s.map,
           cars: s.cars,
           vehicles: latest.current.vehicles,
+          ghosts: latest.current.ghosts ?? [],
           impact: latest.current.impact,
           lang: latest.current.lang ?? 'en',
+          mode: mode === 'cinematic' && !reducedMotion() ? 'cinematic' : 'diagram',
+          follow: latest.current.follow,
+          ring: shockRing(),
+        }).finally(() => {
+          s.recording = false
+        })
+      },
+      stop: async () => {
+        const s = live.current
+        if (!s) return
+        latest.current.onPlaybackStop?.()
+        if (!flatten(s)) return
+        s.cars.setPoses(posesOf(latest.current.vehicles))
+        // the jump above is not on the canvas until the map has painted again; a still taken
+        // before that is the frame the chase was on. The timeout is the safety net for a map
+        // that will never paint again — a send is never held up by its own picture.
+        await new Promise<void>((resolve) => {
+          const done = () => resolve()
+          setTimeout(done, 300)
+          s.map.once('render', done)
+          s.map.triggerRepaint()
         })
       },
     }),
@@ -683,6 +735,22 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
   )
 
   return <div ref={container} className={className} />
+}
+
+/**
+ * Hand the camera back: the view the cinematic replay was let off at, flat, north-up, with the
+ * tilt locked again and the shockwave gone. True when there was a replay to end. The effect
+ * below calls it when the playback stops, and the handle's `stop`/`record` call it because
+ * neither a still nor a recording may start on a map mid-chase.
+ */
+function flatten(s: Live): boolean {
+  if (!s.cine) return false
+  s.map.jumpTo({ center: ll(s.cine.home.center), zoom: s.cine.home.zoom, pitch: 0, bearing: 0 })
+  s.map.setMaxPitch(0)
+  s.cars.setDecor([])
+  if (s.map.getLayer('paths-flow')) s.map.setPaintProperty('paths-flow', 'line-width', FLOW_WIDTH)
+  s.cine = null
+  return true
 }
 
 function removeHandles(h: Handles) {

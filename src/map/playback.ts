@@ -113,6 +113,29 @@ export function impactTimeOf(vehicles: ClaimVehicle[]): number {
   return best
 }
 
+/**
+ * Where the accident is by the diagram alone: the mid-point between the two nearest vehicles at
+ * a moment of the drive — `impactTimeOf`'s, normally. An account whose customer placed the cross
+ * has `claim.impact` and never needs this; one that did not still has a place the desk can
+ * measure the other account's cross against.
+ */
+export function impactPlaceOf(vehicles: ClaimVehicle[], t: number): LngLat | null {
+  const poses = posesAt(vehicles, ease(t))
+  if (poses.length === 0) return null
+  let nearest = Infinity
+  let best: LngLat = poses[0].position
+  for (let a = 0; a < poses.length; a++) {
+    for (let b = a + 1; b < poses.length; b++) {
+      const d = distance(poses[a].position, poses[b].position)
+      if (d >= nearest) continue
+      nearest = d
+      const [p, q] = [poses[a].position, poses[b].position]
+      best = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]
+    }
+  }
+  return best
+}
+
 export function timelineOf(vehicles: ClaimVehicle[]): Timeline {
   const ms = durationOf(vehicles)
   const impactT = impactTimeOf(vehicles)
@@ -162,6 +185,8 @@ export const CHASE_PITCH = 55
 export const CHASE_ZOOM = 20.5
 /** the chase camera's centre sits this far behind the car it follows */
 export const BEHIND_M = 4
+/** the map may tilt this far, and only while a cinematic replay runs */
+export const MAX_PITCH = 60
 export const SLOW_RATE = 0.25
 export const SLOW_BEFORE_MS = 600
 export const SLOW_AFTER_MS = 300
@@ -183,9 +208,17 @@ export const RING_M = 8
  * MIN_BLEND_MS` at the earliest to `SLOW_AFTER_MS` past the impact. The keyframes come out
  * strictly increasing by construction, so `shotAt` never has a tie to break — two shots on one
  * tick is how the ease, or the slow-motion, silently disappears.
+ *
+ * `follow` names the vehicle the chase is behind; without it the chase follows the reporter's
+ * own car, as it always did. The desk hands both accounts' vehicles in one list so the camera
+ * can be swapped to the other driver's car, which is drawn as a ghost — hence by id rather than
+ * by role, the two accounts each calling their own car `insured`.
  */
-export function shots(vehicles: ClaimVehicle[], timeline: Timeline): Shot[] {
-  const mine = vehicles.find((v) => v.role === 'insured' && v.position) ?? vehicles.find((v) => v.position)
+export function shots(vehicles: ClaimVehicle[], timeline: Timeline, follow?: string): Shot[] {
+  const mine =
+    (follow ? vehicles.find((v) => v.id === follow && v.position) : undefined) ??
+    vehicles.find((v) => v.role === 'insured' && v.position) ??
+    vehicles.find((v) => v.position)
   const chase: Chase | null = mine ? { follow: mine.id, pitch: CHASE_PITCH, bearing: posesAt([mine], 0)[0].heading, zoom: CHASE_ZOOM } : null
   // when the slow-motion begins: SLOW_BEFORE_MS ahead of the impact, or as soon as the shortest
   // overhead and ease can be done, whichever is later
@@ -238,6 +271,21 @@ export function cameraAt(list: Shot[], ms: number, poses: CarPose[], home: Camer
     pitch: mix(from.pitch, to.pitch),
     bearing: lerpAngle(from.bearing, to.bearing, u),
   }
+}
+
+/**
+ * How long a run takes in **wall** time: each shot's stretch of the clock divided by the rate
+ * it plays at, so a slow-motion window costs four wall seconds for every clock second. The
+ * recorder needs this because `MediaRecorder` records wall time and the video has a ceiling.
+ */
+export function wallMsOf(list: Shot[], end: number): number {
+  let wall = 0
+  for (let i = 0; i < list.length; i++) {
+    const from = list[i].at
+    const to = Math.min(end, list[i + 1]?.at ?? end)
+    if (to > from) wall += (to - from) / list[i].rate
+  }
+  return wall
 }
 
 /** the shockwave at this moment — its radius in metres and how much of it is left — or null when there is none */
