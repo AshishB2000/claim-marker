@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { KIND, MAX_MARKS, RADIUS_M, WEIGHT, damageUniforms } from '../src/marker/damageUniforms'
+import { KIND, KIND_MISSING_WHEEL, MAX_MARKS, RADIUS_M, WEIGHT, damageUniforms } from '../src/marker/damageUniforms'
 import { damage } from '../src/schema'
 import { radiusToWorld, toWorld } from '../src/vehicles/bodies'
 import { zoneById } from '../src/zones'
@@ -43,6 +43,11 @@ describe('damageUniforms', () => {
     expect(Array.from(u.points.slice(0, 3))).toEqual(toWorld('sedan', door.anchor).map((n) => Math.fround(n)))
     expect(u.radii[0]).toBeCloseTo(radiusToWorld('sedan', door.radius))
     expect(u.severities[0]).toBe(WEIGHT.missing)
+  })
+
+  it('tells a missing wheel apart from a missing panel, so only the wheel takes it', () => {
+    const u = damageUniforms([damage('left_front_wheel', [0.42, 0.3, 0.66], 'missing'), damage('left_front_fender', [0.65, 0.58, 0.92], 'missing')], 'sedan')
+    expect(Array.from(u.kinds.slice(0, 2))).toEqual([KIND_MISSING_WHEEL, KIND.missing])
   })
 
   it('keeps the first twelve marks and leaves the rest to their pins', () => {

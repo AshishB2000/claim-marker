@@ -17,6 +17,8 @@ export const MAX_MARKS = 12
 
 /** the kind code the shader branches on, per `claim-marker/1` severity */
 export const KIND: Record<Severity, number> = { scratch: 0, dent: 1, crack: 2, missing: 3 }
+/** a missing *wheel* is its own code: only the wheel takes it, and a missing fender leaves the tyre beside it alone */
+export const KIND_MISSING_WHEEL = 4
 
 /** how far a mark reaches on the panel, in metres; a missing part reaches as far as its zone */
 export const RADIUS_M: Record<Severity, number> = { scratch: 0.28, dent: 0.22, crack: 0.26, missing: 0.4 }
@@ -45,7 +47,7 @@ export function damageUniforms(damages: Damage[], body: Vehicle): DamagePack {
     points.set(toWorld(body, zone ? zone.anchor : d.point), i * 3)
     radii[i] = zone ? radiusToWorld(body, zone.radius) : RADIUS_M[d.severity]
     severities[i] = WEIGHT[d.severity]
-    kinds[i] = KIND[d.severity]
+    kinds[i] = zone && /wheel/.test(zone.id) ? KIND_MISSING_WHEEL : KIND[d.severity]
   })
   return { count: marks.length, points, radii, severities, kinds }
 }

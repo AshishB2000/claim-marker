@@ -15,6 +15,7 @@
 import { readFileSync } from 'node:fs'
 import { stampExif } from './exif-write.mjs'
 import { chromium } from 'playwright'
+import { zoneById } from '../src/zones.ts'
 
 const args = process.argv.slice(2)
 const origin = args.find((a) => !a.startsWith('--')) ?? 'http://localhost:5173'
@@ -86,6 +87,7 @@ const names = (lang) => ({
   hitOnBumper: t('scene.vehicle.hit', { panel: t('zone.front_bumper').toLowerCase() }).replace(/^\s*·\s*/, ''),
 
   dent: t('severity.dent'),
+  missing: t('severity.missing'),
   addPhotos: t('damage.addPhotos'),
   // the scene photograph from the Where step is already photo 1, so the damage shot is photo 2
   photo2: t('damage.photo.alt', { n: 2 }),
@@ -168,8 +170,8 @@ const draft = () => page.evaluate(() => JSON.parse(localStorage.getItem('claim-m
 const state = () => page.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state)
 
 /** distinct colours in a data URL or canvas, sampled sparsely — a blank frame has one or two */
-const colours = (sel) =>
-  page.evaluate(async (sel) => {
+const colours = (sel, p = page) =>
+  p.evaluate(async (sel) => {
     const c = document.querySelector(sel)
     if (!c) return 0
     const img = new Image()
@@ -187,13 +189,95 @@ const colours = (sel) =>
   }, sel)
 
 /** wait for a real frame: three.js skips objects whose shaders are still linking */
-const settled = async (sel) => {
+const settled = async (sel, p = page) => {
   for (let i = 0; i < 60; i++) {
-    if ((await colours(sel)) >= 50) return
-    await page.waitForTimeout(300)
+    if ((await colours(sel, p)) >= 50) return
+    await p.waitForTimeout(300)
   }
   fail(`${sel} never rendered a frame`)
 }
+
+/**
+ * The marker's canvas, read back: the mean luminance of a ring 8–16 px round where a point in
+ * the kit's units lands (the ring skips the pin's own dot), the colour of a 6-px spot `dy`
+ * below it, and the frame as a PNG. `n` picks the marker when a page has several.
+ */
+const markerSample = (point, dy = 0, n = 0, p = page) =>
+  p.evaluate(
+    ([point, dy, n]) => {
+      const c = document.querySelectorAll('.cm-root canvas')[n]
+      const [x, y] = c.__probe.project(point)
+      const off = document.createElement('canvas')
+      off.width = c.width
+      off.height = c.height
+      const ctx = off.getContext('2d')
+      ctx.drawImage(c, 0, 0)
+      const ring = ctx.getImageData(x - 20, y - 20, 40, 40).data
+      let sum = 0
+      let count = 0
+      for (let j = 0; j < 40; j++)
+        for (let i = 0; i < 40; i++) {
+          const r = Math.hypot(i - 20, j - 20)
+          if (r < 8 || r > 16) continue
+          const k = (j * 40 + i) * 4
+          sum += 0.299 * ring[k] + 0.587 * ring[k + 1] + 0.114 * ring[k + 2]
+          count++
+        }
+      const spot = ctx.getImageData(x - 3, y + dy - 3, 6, 6).data
+      const rgb = [0, 0, 0]
+      for (let k = 0; k < spot.length; k += 4) for (let ch = 0; ch < 3; ch++) rgb[ch] += spot[k + ch] / 36
+      return { x, y, mean: sum / count, spot: rgb.map(Math.round), png: c.toDataURL('image/png') }
+    },
+    [point, dy, n],
+  )
+/** how many pixels differ between two PNGs of the same size by more than a little in any channel */
+const pixelsDiffering = (a, b, p = page) =>
+  p.evaluate(
+    async ([a, b]) => {
+      const load = async (src) => {
+        const img = new Image()
+        img.src = src
+        await img.decode()
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        const ctx = c.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        return ctx.getImageData(0, 0, img.width, img.height).data
+      }
+      const [pa, pb] = await Promise.all([load(a), load(b)])
+      let n = 0
+      for (let i = 0; i < pa.length; i += 4) if (Math.abs(pa[i] - pb[i]) > 20 || Math.abs(pa[i + 1] - pb[i + 1]) > 20 || Math.abs(pa[i + 2] - pb[i + 2]) > 20) n++
+      return n
+    },
+    [a, b],
+  )
+/**
+ * How many pixels of the nth marker canvas are the cavity a missing part shows — dark, and a
+ * shade warmer than the neutral of a tyre or the blue-black of glass — with the damage blended
+ * in by `strength`. Set through the store behind the canvas: the review page has no slider.
+ */
+const cavityPixels = (strength, n = 0, p = page) =>
+  p.evaluate(
+    async ([strength, n]) => {
+      const c = document.querySelectorAll('.cm-root canvas')[n]
+      c.__probe.store.getState().setStrength(strength)
+      await new Promise((r) => setTimeout(r, 500))
+      const off = document.createElement('canvas')
+      off.width = c.width
+      off.height = c.height
+      const ctx = off.getContext('2d')
+      ctx.drawImage(c, 0, 0)
+      const px = ctx.getImageData(0, 0, c.width, c.height).data
+      let count = 0
+      for (let i = 0; i < px.length; i += 4) {
+        const [r, g, b] = [px[i], px[i + 1], px[i + 2]]
+        if (r >= 12 && r < 60 && g <= r && b < g && r - b >= 2 && r - b <= 10) count++
+      }
+      return count
+    },
+    [strength, n],
+  )
 
 const centre = async (locator) => {
   const b = await locator.boundingBox()
@@ -664,6 +748,41 @@ const autoAfter = await page.evaluate(() => JSON.parse(localStorage.getItem('cla
 if (autoAfter.a !== 'user') fail(`vehicle A's marks should be the customer's after a tap, got ${JSON.stringify(autoAfter)}`)
 ok(`damage: ${d4.vehicles[0].damages[0].zone} from the impact + ${d4.vehicles[0].damages[1].zone} / dent by hand on the ${d4.vehicles[0].body}`)
 
+// ── the damage is on the paint, not just a pin on it ──────────────────
+// The dent: with the effect blended away through the real slider, the paint round the mark reads
+// lighter than with it on, and the frame the export takes differs from the unmarked car by more
+// than the pin. The picker is closed first and the camera given its moment to ease round.
+await page.locator('.cm-pop .cm-x').click({ force: true })
+await page.waitForTimeout(1500)
+const strengthSlider = page.locator('.cm-tools input[type=range]')
+if ((await strengthSlider.count()) !== 1) fail('the customer’s marker has no before/after slider')
+const dentPoint = d4.vehicles[0].damages[1].point
+const dented = await markerSample(dentPoint)
+await strengthSlider.fill('0')
+await page.waitForTimeout(500)
+const undented = await markerSample(dentPoint)
+await strengthSlider.fill('1')
+await page.waitForTimeout(500)
+const darker = 1 - dented.mean / undented.mean
+if (darker < 0.015) fail(`the dent is not in the paint: the ring round the mark reads ${undented.mean.toFixed(1)} without it and ${dented.mean.toFixed(1)} with it`)
+const differing = await pixelsDiffering(dented.png, undented.png)
+if (differing < 300) fail(`the marked car's export differs from the unmarked one by only ${differing} px`)
+ok(`damage: the dent is in the paint — ${(darker * 100).toFixed(1)}% darker round the mark, ${differing} px of the export differ from the unmarked car`)
+// A missing part is the whole panel: the left front door, picked at its own anchor, shows the
+// cavity just below the dot — dark, and warmer than glass or a tyre
+const door = zoneById(d4.vehicles[0].body, 'left_front_door')
+await page.evaluate((p) => document.querySelector('.cm-root canvas').__probe.store.getState().pick(p), door.anchor)
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: N.missing, exact: true }).click({ force: true })
+await page.waitForTimeout(400)
+await page.locator('.cm-pop .cm-x').click({ force: true })
+await page.waitForTimeout(1500)
+const hole = await markerSample(door.anchor, 14)
+if (Math.max(...hole.spot) > 60 || hole.spot[0] < hole.spot[2]) fail(`the missing door shows no cavity: rgb(${hole.spot}) just below the mark`)
+const d4b = await draft()
+if (d4b.vehicles[0].damages.length !== 3 || d4b.vehicles[0].damages[2].severity !== 'missing' || d4b.vehicles[0].damages[2].zone !== 'left_front_door') fail(`the missing door was not saved: ${JSON.stringify(d4b.vehicles[0].damages)}`)
+ok(`damage: the missing ${door.id.replace(/_/g, ' ')} is a cavity on the car, rgb(${hole.spot})`)
+
 // a photograph through the real file picker: downscaled to 1280 on the long edge, kept as a
 // JPEG on the claim, tagged with the vehicle it shows
 const png = await page.evaluate(() => {
@@ -718,6 +837,13 @@ if (!(await page.getByRole('button', { name: N.send }).isDisabled())) fail('Send
 await page.getByRole('textbox', { name: N.sign }).fill('Ashish B')
 if (await page.getByRole('button', { name: N.send }).isDisabled()) fail('Send should be enabled once confirmed and signed')
 if (!(await page.locator('text=Dana Q').count())) fail('review does not show the other driver')
+// the review's marked-up car is the same shader: the cavity of the missing door is in its frame,
+// and blending the damage away takes it out — the export at send is the car as it always renders
+await settled('.cm-root canvas')
+const reviewCavity = { off: await cavityPixels(0), on: await cavityPixels(1) }
+if (reviewCavity.on < reviewCavity.off + 150) fail(`the review's car does not show the missing door: ${reviewCavity.off} cavity px without the damage, ${reviewCavity.on} with it`)
+if (await page.locator('.cm-tools').count()) fail('the customer’s review page should not offer the before/after slider')
+ok(`review: the marked-up car shows the missing door (${reviewCavity.on - reviewCavity.off} px of cavity), and has no slider to blend it away before the export`)
 if (!(await page.locator('text=2026-0042').count())) fail('review does not show the police report number')
 if (!(await page.locator('text=Times Square').count())) fail('review does not show the address')
 if (!(await page.locator('text=The van pulled out across me.').count())) fail('review does not show the description')
@@ -755,7 +881,7 @@ if (doc.schema !== 'claim/1') fail(`document schema ${doc.schema}`)
 if (!/^CM-[A-HJ-NP-Z2-9]{6}$/.test(doc.reference)) fail(`reference ${doc.reference}`)
 if (doc.vehicles.length !== 3) fail(`document has ${doc.vehicles.length} vehicles`)
 if (doc.vehicles[0].make !== 'Honda' || doc.vehicles[0].year !== 2021) fail('document lost the make or year')
-if (doc.vehicles[0].damages.length !== 2) fail('document lost a damage')
+if (doc.vehicles[0].damages.length !== 3) fail('document lost a damage')
 if (doc.vehicles[1].damages.length !== 1) fail("document lost B's damage from the impact")
 if (!doc.impact) fail('document lost the impact')
 if (doc.incident.surface !== 'satellite') fail(`document ground ${doc.incident.surface}`)
@@ -799,6 +925,37 @@ if (!doc.attestation.agreed || doc.attestation.name !== 'Ashish B' || doc.attest
 ok(`sent: what the record said — ${doc.incident.context.weather.label}, ${doc.incident.context.road.class}${doc.incident.context.road.name ? ` "${doc.incident.context.road.name}"` : ''}, sun ${doc.incident.context.sun.altitude}° — beside what the customer answered`)
 ok('sent: the whole report — kind, conditions, VIN, the other driver and their insurer, an injured passenger, the police report, a witness, a photo, the car now, the pole, who to call, signed')
 ok(`sent: ${doc.reference}, scene ${sceneKb} kB, damage PNG ${Math.round(doc.attachments.damage.a.length / 1024)} kB`)
+
+// ── the desk shows the same car ───────────────────────────────────────
+// The claims desk renders this same document through the same component, so the missing door's
+// cavity is in its frame too — and the desk, unlike the review page, gets the before/after
+// slider and the severity map. Its API is answered here from the document just sent.
+const receipt = {
+  reference: doc.reference,
+  clientReference: null,
+  receivedAt: doc.submittedAt,
+  status: 'new',
+  files: {},
+  signals: [],
+  summary: { kind: doc.incident.kind, at: doc.incident.at, address: doc.incident.location.address, reporter: doc.reporter.name, vehicles: doc.vehicles.length, plates: [], hurt: 0, damaged: 2, photos: 2, drivable: false },
+}
+const deskPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
+deskPage.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+deskPage.on('pageerror', (e) => errors.push(String(e)))
+await deskPage.route(`${origin}/desk-api/**`, (route) => {
+  const path = new URL(route.request().url()).pathname.replace('/desk-api', '')
+  const body = path === '/claims' ? { claims: [receipt] } : path === `/claims/${doc.reference}` ? { ...receipt, claim: doc } : null
+  return body ? route.fulfill({ json: body }) : route.fulfill({ status: 404, json: { error: 'not found' } })
+})
+await deskPage.goto(`${origin}/adjuster.html?api=${origin}/desk-api#/${doc.reference}`, { waitUntil: 'networkidle' })
+await deskPage.waitForSelector('.cm-root canvas', { timeout: 20000 })
+await settled('.cm-root canvas', deskPage)
+const deskCavity = { off: await cavityPixels(0, 0, deskPage), on: await cavityPixels(1, 0, deskPage) }
+if (deskCavity.on < deskCavity.off + 150) fail(`the desk's car does not show the missing door: ${deskCavity.off} cavity px without the damage, ${deskCavity.on} with it`)
+if ((await deskPage.locator('.cm-tools input[type=range]').count()) < 1) fail('the desk’s marker has no before/after slider')
+if (!(await deskPage.getByRole('button', { name: 'Severity map' }).count())) fail('the desk’s marker has no severity map')
+await deskPage.close()
+ok(`desk: the same marked-up car — the missing door is ${deskCavity.on - deskCavity.off} px of cavity there too — with the before/after slider and the severity map`)
 
 // ── the replay, recorded at send time ─────────────────────────────────
 // A video data URL of a real size, and — the part that matters — a real frame inside it: the

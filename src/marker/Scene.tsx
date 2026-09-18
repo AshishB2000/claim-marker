@@ -239,8 +239,17 @@ export function Scene({
       }}
       onCreated={({ gl, camera }) => {
         onCanvas(gl.domElement)
-        // for the smoke: where a body point lands on this canvas, and the store behind it
-        if (import.meta.env.DEV) Object.assign(gl.domElement, { __probe: { camera, store } })
+        // for the smoke: the store behind this canvas, and where a point in the kit's units lands on it
+        if (import.meta.env.DEV)
+          Object.assign(gl.domElement, {
+            __probe: {
+              store,
+              project: (p: V3) => {
+                const v = new THREE.Vector3(...toWorld(store.getState().vehicle, p)).project(camera)
+                return [((v.x + 1) / 2) * gl.domElement.width, ((1 - v.y) / 2) * gl.domElement.height]
+              },
+            },
+          })
       }}
       onPointerMissed={() => store.getState().select(null)}
     >

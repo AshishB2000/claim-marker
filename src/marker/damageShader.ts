@@ -41,8 +41,8 @@ export type DamageUniforms = {
   uCmScale: { value: THREE.Vector3 }
 }
 
-/** the cavity colour a missing part shows, sRGB, before its depth vignette */
-export const CAVITY: V3 = [0.13, 0.12, 0.11]
+/** the cavity colour a missing part shows, sRGB, at its rim; it darkens to a third of this at the centre */
+export const CAVITY: V3 = [0.2, 0.19, 0.18]
 
 /** one set per body instance, shared by all of that instance's materials */
 export function createDamageUniforms(scale: V3): DamageUniforms {
@@ -128,6 +128,7 @@ const MARKS = /* glsl */ `
 float cmDish = 0.0;      // a dent: 1 at the centre, 0 at the rim
 vec3 cmBend = vec3(0.0); // a dent: the normal's tilt, in the body frame
 float cmScratch = 0.0;   // bare metal showing
+float cmGroove = 0.0;    // the scratch's own shadow, just outside the metal
 float cmCrack = 0.0;     // crack edges catching the light
 float cmHole = 0.0;      // a missing part
 float cmHoleT = 1.0;     // how far into the hole, 0 at the centre
@@ -149,7 +150,8 @@ float cmHeatOn = uCmRole < 2.0 ? uCmHeat : 0.0;
     if (r >= R) continue;
     float t = r / R;
     vec2 p = vec2(dot(d, cmH), dot(d, cmV));
-    if (k == 3.0) {
+    // a missing panel takes bodywork and glass; a missing wheel takes the wheel and nothing else
+    if ((k == 3.0 && uCmRole < 2.0) || (k == 4.0 && uCmRole == 2.0)) {
       float wobble = 0.06 * (cmHash(floor(p * 40.0)) - 0.5);
       cmHole = max(cmHole, 1.0 - smoothstep(0.97, 1.0, t + wobble));
       cmHoleT = min(cmHoleT, t);
@@ -158,10 +160,17 @@ float cmHeatOn = uCmRole < 2.0 ? uCmHeat : 0.0;
       cmDish = max(cmDish, dish);
       cmBend -= (d / max(r, 1e-4)) * sin(3.14159265 * t) * (0.5 + sev);
     } else if (uCmRole == 0.0 && k == 0.0) {
-      float width = 0.006 + 0.014 * cmHash(vec2(floor(p.x * 60.0), float(i)));
-      float ends = 1.0 - smoothstep(R * 0.7, R, abs(p.x));
-      float gaps = step(0.12, cmHash(vec2(floor(p.x * 25.0) + 7.0, float(i))));
-      cmScratch = max(cmScratch, (1.0 - smoothstep(width * 0.6, width, abs(p.y))) * ends * gaps);
+      // three ragged streaks of different lengths, the way a key or a wall leaves them
+      for (int j = 0; j < 3; j++) {
+        float fj = float(j);
+        float y0 = (fj - 1.0) * 0.03 * (0.6 + 0.8 * cmHash(vec2(fj, float(i))));
+        float width = 0.005 + 0.014 * cmHash(vec2(floor(p.x * 60.0) + fj * 9.0, float(i)));
+        float ends = 1.0 - smoothstep(R * (0.4 + 0.45 * cmHash(vec2(fj + 3.0, float(i)))), R, abs(p.x));
+        float gaps = step(0.15, cmHash(vec2(floor(p.x * 25.0) + 7.0 * fj, float(i))));
+        float streak = (1.0 - smoothstep(width * 0.5, width, abs(p.y - y0))) * ends * gaps;
+        cmScratch = max(cmScratch, streak);
+        cmGroove = max(cmGroove, (1.0 - smoothstep(width, width * 2.2, abs(p.y - y0))) * ends * gaps - streak);
+      }
     } else if (uCmRole == 1.0 && k == 2.0) {
       vec2 q = p / (R * 0.16);
       vec2 cell = floor(q);
@@ -184,14 +193,20 @@ float cmHeatOn = uCmRole < 2.0 ? uCmHeat : 0.0;
 cmDish *= uCmStrength;
 cmBend *= uCmStrength;
 cmScratch *= uCmStrength;
+cmGroove *= uCmStrength;
 cmCrack *= uCmStrength;
 cmHole *= uCmStrength;
-diffuseColor.rgb *= 1.0 - 0.15 * cmDish;
-diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.58, 0.59, 0.60), cmScratch);
+// the dish: 15 % darker toward the centre, and lit from above whatever the scene's light does —
+// the upper lip faces down and darkens, the lower lip faces up and brightens, so it reads as a
+// dent from every angle, under a studio environment too even in the flat light of the map
+diffuseColor.rgb *= (1.0 - 0.15 * cmDish) * (1.0 + 0.45 * clamp(cmBend.y, -1.0, 1.0));
+// bare metal in the streak, and its groove darker beside it, so it shows on light paint and dark
+diffuseColor.rgb *= 1.0 - 0.5 * cmGroove;
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.70, 0.71, 0.72), cmScratch);
 diffuseColor.rgb = mix(diffuseColor.rgb, cmHeatColour(cmHeatSum), cmHeatOn);`
 
 const ROUGHNESS = /* glsl */ `
-roughnessFactor = mix(roughnessFactor, 0.6, cmScratch);
+roughnessFactor = mix(roughnessFactor, 0.6, max(cmScratch, cmDish * 0.6));
 roughnessFactor = mix(roughnessFactor, 0.55, cmCrack);
 roughnessFactor = mix(roughnessFactor, 0.85, cmHeatOn);`
 
@@ -218,8 +233,8 @@ material.clearcoat *= (1.0 - 0.8 * cmDish) * (1.0 - cmScratch) * (1.0 - cmHeatOn
 /** after tone mapping and colour space, so the cavity is the cavity and not what the light makes of it */
 const CAVITY_GLSL = /* glsl */ `
 if (cmHole > 0.0) {
-  vec3 cmCav = vec3(${CAVITY.join(', ')}) * (0.5 + 0.5 * cmHoleT);
-  cmCav = mix(cmCav, vec3(0.42, 0.40, 0.37), smoothstep(0.86, 0.93, cmHoleT));
+  vec3 cmCav = vec3(${CAVITY.join(', ')}) * (0.3 + 0.7 * cmHoleT * cmHoleT);
+  cmCav = mix(cmCav, vec3(0.46, 0.44, 0.41), smoothstep(0.88, 0.95, cmHoleT));
   gl_FragColor.rgb = mix(gl_FragColor.rgb, cmCav, cmHole);
 }`
 
