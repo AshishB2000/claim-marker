@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 575 tests across 35 files
+npm test               # vitest, 583 tests across 36 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -423,6 +423,25 @@ customer's selects sit beside it in the document and must never be shown under t
 guarantee `export → load → export` is byte-identical, which is why coordinates round on the way
 in. Adding a field is fine; changing or removing one means a new schema version. `parseClaim`
 throws on structural nonsense but drops individual bad vehicles.
+
+**The damage is a shader, compared in the body's own frame** (`src/marker/damageShader.ts`,
+packed by `src/marker/damageUniforms.ts` — pure, no value imports of three, so
+`test/damageUniforms.test.ts` runs in plain node). Points are body metres (`toWorld` of the
+kit's units) read from a varying `vCmBody = (transformed + nodeOffset) × PROPORTION`, so the
+same uniforms draw the same marks in the studio and on the map, wherever the car stands.
+Four things that look wrong and are not: the dent's shading is **baked into the albedo** —
+top-lit lip and dark lip — because the studio environment is near-uniform and a tilted normal
+alone did not show; the tilt's direction goes through a `mat3(modelViewMatrix)` varying and is
+**renormalised**, since through the map's matrix it is 1e-7 long; a missing part is an **unlit
+cavity colour, not a discard** — the shells have no floor and a discarded hood on the map shows
+the road through the car; and a missing **wheel** is its own kind code, or a missing fender
+blacks out the tyre beside it. `patchDamage` composes over any `onBeforeCompile` already on the
+material (the studio's tint) and patches **only cloned materials** — `CarLayer.ownMaterials`
+clones every role per car for that reason; `instanceBody` alone shares the glass. `MAX_MARKS`
+is 12; the rest keep numbered pins. `strength` and `heatmap` are `MarkerStore` state, never
+persisted, never in `claim/1`; `ReportDocument` passes `tools` only off the customer's voice,
+because the review canvas is the send-time export. `CarPose.damages` must be filled by every
+pose source (`posesOf`, `posesAt`), or a replay strips the marks.
 
 **drei `<Html>` paints over the marker's canvas** regardless of 3D depth; anything that must
 appear above it has to be `<Html>` too with a higher `zIndexRange`.

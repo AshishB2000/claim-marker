@@ -1191,6 +1191,80 @@ the road back, be in the draft, and still be pressed after a reload. The unit te
 the intensities at 60°, 25°, 12.5°, 2°, 0° and below, the three sky buckets by channel order,
 which codes mean rain, snow and fog, and when the street counts as lit.
 
+## Real damage on the car (v10)
+
+A mark on the car used to be a pin: a numbered disc at the tap, the paint under it untouched.
+The report said "dent, left front door" and the picture showed a perfect door with a badge on
+it. Now the paint shows the damage: a dent is a dish in the bodywork, a scratch bares the metal,
+a crack spreads across the glass, and a missing part is a hole into the dark. The same car, marked
+the same way, in the studio, on the review page, on the desk and on the map.
+
+**Not geometry.** The kit's bodies are a few thousand triangles, and pushing vertices into a
+dent makes a pyramid. The precedent is the zone tint in `Car.tsx` — a world-space radial
+falloff patched into the material with `onBeforeCompile` — and the damage is the same idea per
+mark: `src/marker/damageUniforms.ts` packs the marks as flat typed arrays (twelve at most —
+`MAX_MARKS`; the rest keep their pins), and `src/marker/damageShader.ts` patches every material
+of one body instance to read them. The packing is pure and has no value import of three, so
+`test/damageUniforms.test.ts` runs in plain node; the shader module is the only thing that
+turns it into GPU state, and it composes over whatever `onBeforeCompile` a material already has,
+which is how it stacks on the studio's tint without either knowing about the other.
+
+**One frame for both scenes.** The marks are compared in the body's own frame — metres, nose
++Z, up +Y — carried from the vertex shader as `vCmBody = (transformed + offset) × PROPORTION`,
+where `offset` is where the mesh sits in its body (a wheel at its arch; the kit's nodes carry
+translations only). In the studio, world *is* that frame. On the map the car stands anywhere,
+mirrored by `CAR_BASIS` and 1e-7 to the metre, and none of that reaches the shader: the same
+uniforms draw the same damage wherever the car goes, with nothing to update when it moves. The
+one place the frames meet is the dent's normal tilt, a direction in body metres that has to
+become a view-space one — through `mat3(modelViewMatrix)`, a varying, and renormalised, because
+through the map's matrix that direction comes out 1e-7 long.
+
+**What each kind does.** A *dent* (bodywork: paint, trim, plastic) is a cosine dish scaled by the
+mark's weight: the normal tilts toward the centre, the albedo darkens 15 % toward it, the
+clearcoat is cut to a fifth so the reflection breaks, the roughness rises. And it is lit from
+above whatever the scene does — the upper lip darkens and the lower brightens in the albedo
+itself — because the studio's environment map is near-uniform at the angles a door reflects,
+and a tilted normal alone under it barely showed. A *scratch* (bodywork) is three ragged
+streaks of different lengths along the panel's own horizontal — across a hood or a roof, along
+everything else — hashed for their edges and gaps, bare metal (grey, roughness 0.6, metallic) in
+the streak and a darker groove beside it so it shows on light paint and dark. A *crack* (glass,
+headlights, taillights) is Voronoi cells and a few spokes spreading from the point in the panel's
+tangent plane, their edges emissive and rough, fading by the radius. A *missing* part is the
+whole zone — its measured anchor and reach from `zones.ts`, the same data `probe-zones.ts`
+proves, not the tap — painted an unlit cavity colour after tone mapping, darkening to a third
+toward the centre with a torn rim. **Not a discard**: the kit's shells have no floor, so a
+discarded hood seen from the map shows the road through the car. A missing *wheel* is its own
+code on the wire (`KIND_MISSING_WHEEL`), taken by the wheel's materials and no other, so a
+missing fender leaves the tyre beside it alone.
+
+**Before/after, and the severity map.** `strength` blends every effect from none to full and
+`heatmap` swaps the paint for a blue-to-red gradient of accumulated weight; both are
+`MarkerStore` state, defaulting to full and off, never persisted and never in the document.
+`DamageMarker` shows them as chips over its canvas (`tools`); the customer's damage step and
+the desk have them, the customer's review page does not — that canvas is exported as
+`attachments.damage` at send, and a slider left at zero would ship the car unmarked. On the
+map the layer draws at full strength with no map, because a diagram is not a place to argue with.
+
+**The pins.** Where the paint shows the damage, the customer's marker (`dots`) shrinks the pin
+to a dot without its number; from the thirteenth mark on it keeps the numbered pin, since the
+shader has stopped. The desk's and the review's pins stay numbered beside their numbered lists.
+
+**The map clones everything.** `instanceBody` gave every car its own paint and shared the rest
+of the template's materials; a uniform patched into a shared glass material would crack every
+windscreen on the map. `CarLayer` now clones every material once per car (`ownMaterials`),
+dresses it, fades it if it is a ghost's, and patches it; `CarPose.damages` carries the marks,
+`posesOf` and `posesAt` both fill it, so a replay of a dented car is a dented car.
+
+**What the smoke proves.** On the damage step it blends the dent away through the real slider
+and reads a ring round the mark — lighter without the dent than with it — and diffs the frame
+the export takes against the unmarked car's by more than the pin. It marks the left front door
+missing at its own anchor and reads the cavity just below the dot: dark, and warmer than glass
+or a tyre. On the review page the missing door's cavity pixels rise with the strength set
+through the store — there is no slider there, which is also asserted — and on the desk, its API
+answered from the document just sent, the same rise, with the slider and the severity map
+present. The unit test pins the packing: a dent at its own point in the body's metres, a
+missing part at its zone's anchor and reach, the wheel's own code, the cap at twelve.
+
 ## Tell us everything, once (v9)
 
 A form asks forty questions one at a time. A person who has just been in a crash tells you what
