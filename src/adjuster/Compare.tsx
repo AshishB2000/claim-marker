@@ -12,6 +12,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { compare, type Row } from '../claim/compare'
+import { deskVoice } from '../claim/describe'
 import { findings, type Finding } from '../claim/plausibility'
 import { distance, type LngLat } from '../geo'
 import type { Claim, ClaimVehicle } from '../claim/schema'
@@ -27,15 +28,16 @@ import type { Receipt } from './Desk'
 type Account = { receipt: Receipt; claim: Claim }
 
 /**
- * The left-hand column is always the policyholder's. Their document says so directly through
- * `reporter.party` on every report but the rare one filed before there were two accounts; when
- * neither side says "policyholder" (or, stranger still, both do), the earlier `receivedAt`
- * goes left instead — arbitrary, but stable, and the reason this comment exists.
+ * The left-hand column is always the policyholder's. Which side a report is comes from its
+ * **receipt** — the server sets `party` from the token it was sent with — never from the
+ * document's own `reporter.party`, which is whatever the sender wrote. When neither receipt says
+ * "policyholder" (or both do), the earlier `receivedAt` goes left instead — arbitrary, but
+ * stable, and the reason this comment exists.
  */
 function orderPair(reports: Account[]): [Account, Account] {
   const [first, second] = reports
-  const firstIsPolicyholder = first.claim.reporter.party === 'policyholder'
-  const secondIsPolicyholder = second.claim.reporter.party === 'policyholder'
+  const firstIsPolicyholder = first.receipt.party === 'policyholder'
+  const secondIsPolicyholder = second.receipt.party === 'policyholder'
   if (firstIsPolicyholder !== secondIsPolicyholder) return firstIsPolicyholder ? [first, second] : [second, first]
   return first.receipt.receivedAt <= second.receipt.receivedAt ? [first, second] : [second, first]
 }
@@ -144,7 +146,10 @@ function RowGroup({ heading, rows }: { heading: string; rows: Row[] }) {
       </tr>
       {rows.map((r) => (
         <tr key={r.key} className="border-b border-slate-100 last:border-b-0">
-          <td className="px-4 py-2 align-top text-slate-500">{r.label}</td>
+          <td className="px-4 py-2 align-top text-slate-500">
+            {r.label}
+            {r.seeded && <div className="text-xs text-slate-400">Seeded from the policyholder's account, not changed</div>}
+          </td>
           <td className="px-4 py-2 align-top">{r.a}</td>
           <td className="px-4 py-2 align-top">{r.b}</td>
           <td className="px-4 py-2 align-top text-slate-500">{r.gap ?? ''}</td>
@@ -225,8 +230,8 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
       <FindingsCard heading="From the other driver's account" items={findings(right.claim)} />
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <ReportDocument claim={left.claim} voice="desk" lang={lang} />
-        <ReportDocument claim={right.claim} voice="desk" lang={lang} />
+        <ReportDocument claim={left.claim} voice={deskVoice(left.receipt.party)} lang={lang} />
+        <ReportDocument claim={right.claim} voice={deskVoice(right.receipt.party)} lang={lang} />
       </div>
     </div>
   )

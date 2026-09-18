@@ -129,6 +129,36 @@ describe('bodies_overlap', () => {
     expect(codesOf(c, 'bodies_overlap')).toHaveLength(0)
   })
 
+  it('does not fire for a T-bone drawn nose to door, just touching', () => {
+    const c = bare()
+    c.vehicles[0].position = at // the sedan, nose north
+    c.vehicles[0].heading = 0
+    // the SUV crosses its path east–west, its flank against the sedan's nose
+    c.vehicles[1].position = destination(at, 0, SIZE.sedan.length / 2 + SIZE.suv.width / 2)
+    c.vehicles[1].heading = 90
+    expect(codesOf(c, 'bodies_overlap')).toHaveLength(0)
+  })
+
+  it('does not fire for a sideswipe drawn door to door in adjacent lanes', () => {
+    const c = bare()
+    c.vehicles[0].position = at
+    c.vehicles[0].heading = 0
+    c.vehicles[1].position = destination(at, 90, SIZE.sedan.width / 2 + SIZE.suv.width / 2)
+    c.vehicles[1].heading = 0
+    expect(codesOf(c, 'bodies_overlap')).toHaveLength(0)
+  })
+
+  it('still fires when a turned car is drawn well inside the other', () => {
+    const c = bare()
+    c.vehicles[0].position = at
+    c.vehicles[0].heading = 45
+    c.vehicles[1].position = destination(at, 45, 1.5)
+    c.vehicles[1].heading = 135
+    const found = codesOf(c, 'bodies_overlap')
+    expect(found).toHaveLength(1)
+    expect(found[0].evidence).toMatch(/least-overlapping axis/)
+  })
+
   it('the threshold is exported', () => {
     expect(OVERLAP_METRES).toBe(1)
   })

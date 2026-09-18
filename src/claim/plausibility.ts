@@ -54,7 +54,7 @@ function impactFrame(position: LngLat, heading: number, body: Vehicle, impact: L
   return toModel(body, [-d * Math.sin(rad), 0, d * Math.cos(rad)])
 }
 
-const positioned = (v: ClaimVehicle): v is ClaimVehicle & { position: LngLat } => v.position !== null
+const positioned = (v: ClaimVehicle): v is Positioned => v.position !== null
 
 /** true when every mark this vehicle carries is on `side`, and it carries at least one */
 function markedOnlyAt(v: ClaimVehicle, side: Side): boolean {
@@ -149,6 +149,36 @@ function damageWithoutReach(claim: Claim): Finding[] {
 /** two vehicles drawn standing inside one another by more than a token overlap */
 export const OVERLAP_METRES = 1
 
+type Positioned = ClaimVehicle & { position: LngLat }
+
+/**
+ * How far two drawn footprints push into each other — the separating-axis test on the two
+ * rotated rectangles `SIZE` gives, in metres east/north of `a`. The overlap on each of the four
+ * axes (each car's length and width) is the sum of the two footprints' half-extents along it
+ * less the distance between centres along it; the smallest of the four is how far they would
+ * have to move apart to stop touching. Zero or less means some axis separates them. A T-bone
+ * or a sideswipe drawn bumper-to-door is exactly zero here, where a test on half-lengths alone
+ * called both of them overlapping by metres.
+ */
+function penetration(a: Positioned, b: Positioned): number {
+  const d = distance(a.position, b.position)
+  const toward = (bearing(a.position, b.position) * Math.PI) / 180
+  const between: [number, number] = [d * Math.sin(toward), d * Math.cos(toward)]
+  const frame = (heading: number): [number, number][] => {
+    const h = (heading * Math.PI) / 180
+    return [
+      [Math.sin(h), Math.cos(h)], // along its length
+      [Math.cos(h), -Math.sin(h)], // across its width
+    ]
+  }
+  const dot = (p: [number, number], q: [number, number]) => p[0] * q[0] + p[1] * q[1]
+  const reach = ([along, across]: [number, number][], body: Vehicle, axis: [number, number]) =>
+    (SIZE[body].length / 2) * Math.abs(dot(along, axis)) + (SIZE[body].width / 2) * Math.abs(dot(across, axis))
+  const fa = frame(a.heading)
+  const fb = frame(b.heading)
+  return Math.min(...[...fa, ...fb].map((axis) => reach(fa, a.body, axis) + reach(fb, b.body, axis) - Math.abs(dot(between, axis))))
+}
+
 function bodiesOverlap(claim: Claim): Finding[] {
   const out: Finding[] = []
   const vs = claim.vehicles.filter(positioned)
@@ -156,15 +186,13 @@ function bodiesOverlap(claim: Claim): Finding[] {
     for (let j = i + 1; j < vs.length; j++) {
       const a = vs[i]
       const b = vs[j]
-      const d = distance(a.position, b.position)
-      const halfSum = (SIZE[a.body].length + SIZE[b.body].length) / 2
-      if (d >= halfSum - OVERLAP_METRES) continue
-      const overlap = halfSum - d
+      const overlap = penetration(a, b)
+      if (overlap <= OVERLAP_METRES) continue
       out.push({
         code: 'bodies_overlap',
         level: 'look',
         text: `${cap(vehicleName(a))} and ${vehicleName(b)} are drawn overlapping by ${overlap.toFixed(1)} m.`,
-        evidence: `centres ${d.toFixed(1)} m apart, combined half-lengths ${halfSum.toFixed(1)} m`,
+        evidence: `footprints overlap by ${overlap.toFixed(1)} m on their least-overlapping axis; centres ${distance(a.position, b.position).toFixed(1)} m apart`,
       })
     }
   }

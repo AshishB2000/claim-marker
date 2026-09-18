@@ -197,7 +197,7 @@ export type ReportDocumentProps = {
   markers?: RefObject<Map<string, DamageMarkerHandle>>
   /** what an adjuster sees instead of the draft badge */
   badge?: ReactNode
-  /** who is reading: the customer ("your Camry") or the claims desk ("the policyholder's") */
+  /** who is reading: the customer ("your Camry") or the claims desk ("the policyholder's", or "the other driver's" in theirs) */
   voice?: Voice
   /** which language to read it in; the claims desk renders this too and always stays English */
   lang?: Lang
@@ -312,10 +312,10 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
         <Part title={t('start.where.looked.title')}>
           <p className="mb-2 text-xs text-slate-500">{t('start.where.looked.source')}</p>
           <ul className="space-y-1.5 text-sm text-ink">
-            {lookedUpLines(ctx, claim.incident.conditions, lang).map((line, i) => (
+            {lookedUpLines(ctx, lang).map((line, i) => (
               <li key={i}>{line}</li>
             ))}
-            {voice === 'desk' &&
+            {voice !== 'customer' &&
               claim.vehicles
                 .filter((v) => v.position)
                 .map((v) => {
@@ -532,7 +532,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
             </figcaption>
           </figure>
         )}
-        {voice === 'desk' && claim.attachments.replay && <ReplayVideo src={claim.attachments.replay} lang={lang} />}
+        {voice !== 'customer' && claim.attachments.replay && <ReplayVideo src={claim.attachments.replay} lang={lang} />}
       </Part>
 
       {/* ── damage ──────────────────────────────────────────────── */}

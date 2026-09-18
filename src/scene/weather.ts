@@ -93,17 +93,19 @@ export function parseWeather(json: unknown, at: string): HourlyWeather | null {
 
 const isSnowCode = (code: number) => (code >= 71 && code <= 77) || code === 85 || code === 86
 
-function weatherFromCode(code: number, cloudPct: number): Weather {
+/** the claim's weather word for a WMO code, or null for a code this table does not list */
+export function weatherOfCode(code: number): Weather | null {
   if (code === 0 || code === 1) return 'clear'
   if (code === 2 || code === 3) return 'cloudy'
   if (code === 45 || code === 48) return 'fog'
   if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82) || (code >= 95 && code <= 99)) return 'rain'
   if (isSnowCode(code)) return 'snow'
-  // an unlisted code (Open-Meteo adds them rarely) falls back to how much sky is covered
-  // rather than defaulting to "clear", which would be a claim of good visibility this data
-  // does not support
-  return cloudPct > 60 ? 'cloudy' : 'clear'
+  return null
 }
+
+// an unlisted code (Open-Meteo adds them rarely) falls back to how much sky is covered rather
+// than defaulting to "clear", which would be a claim of good visibility this data does not support
+const weatherFromCode = (code: number, cloudPct: number): Weather => weatherOfCode(code) ?? (cloudPct > 60 ? 'cloudy' : 'clear')
 
 /**
  * The claim's own condition enums, derived rather than guessed at by the customer. `weather`
@@ -115,6 +117,18 @@ export function toConditions(w: HourlyWeather): { weather: Weather; road: Road }
   const recentPrecip = w.precipMm > 0 || w.prevPrecipMm[0] > 0 || w.prevPrecipMm[1] > 0
   const road: Road = isSnowCode(w.code) ? 'snow' : w.tempC <= 0 && recentPrecip ? 'icy' : recentPrecip ? 'wet' : 'dry'
   return { weather, road }
+}
+
+/**
+ * The road as the *kept* record says it: `toConditions`' rule over the one hour the document
+ * stores. A snow code is snow; precipitation that hour is wet, or icy at or below freezing.
+ * Null for a dry hour — the rain of the two hours before it, which `toConditions` could see,
+ * is not in the document, so "dry" is not something the record can still say.
+ */
+export function roadOfRecord(w: Pick<SceneWeather, 'code' | 'tempC' | 'precipMm'>): Road | null {
+  if (isSnowCode(w.code)) return 'snow'
+  if (w.precipMm === null || w.precipMm <= 0) return null
+  return w.tempC !== null && w.tempC <= 0 ? 'icy' : 'wet'
 }
 
 // short plain-English words for the WMO codes Open-Meteo actually returns (the official list

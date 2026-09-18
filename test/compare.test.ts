@@ -45,7 +45,10 @@ function pair(): { a: Claim; b: Claim } {
     ],
     impact: IMPACT,
     police: { called: true, department: '', report: '', citations: '' },
-    people: [{ ...newPerson('driver', 'a'), self: true, injured: false }],
+    people: [
+      { ...newPerson('driver', 'a'), self: true, injured: false },
+      { ...newPerson('driver', 'b'), name: 'Dana Q', injured: false },
+    ],
   }
 
   const b: Claim = {
@@ -58,7 +61,10 @@ function pair(): { a: Claim; b: Claim } {
     ],
     impact: IMPACT,
     police: { called: true, department: '', report: '', citations: '' },
-    people: [{ ...newPerson('driver', 'x'), self: true, injured: false }],
+    people: [
+      { ...newPerson('driver', 'x'), self: true, injured: false },
+      { ...newPerson('driver', 'y'), name: 'Sam Lee', injured: false },
+    ],
   }
 
   return { a, b }
@@ -71,7 +77,7 @@ describe('two accounts that agree', () => {
     expect(result.unmatched).toEqual([])
     expect(result.differ).toEqual([])
     expect(result.agree.map((r) => r.key).sort()).toEqual(
-      ['place', 'time', 'kind', 'rest:a', 'facing:a', 'from:a', 'rest:b', 'facing:b', 'from:b', 'impact', 'panel:a', 'panel:b', 'police', 'hurt', 'conditions'].sort(),
+      ['place', 'time', 'kind', 'rest:a', 'facing:a', 'from:a', 'rest:b', 'facing:b', 'from:b', 'impact', 'panel:a', 'panel:b', 'occupants:a', 'occupants:b', 'police', 'hurt', 'conditions'].sort(),
     )
   })
 })
@@ -173,6 +179,62 @@ describe('panels marked on a matched vehicle', () => {
     a.vehicles[0].damages = [damage('left_front_door', [0.65, 0.5, 0.16], 'scratch')]
     b.vehicles[1].damages = [damage('right_front_door', [-0.65, 0.5, 0.16], 'scratch')]
     expect(compare(a, b).differ.map((r) => r.key)).toContain('panel:a')
+  })
+})
+
+describe('who was in each vehicle', () => {
+  it('reads each account from its own side: the reporter is themself, not "the policyholder" twice', () => {
+    const { a, b } = pair()
+    const rows = compare(a, b).agree
+    const sedan = rows.find((r) => r.key === 'occupants:a')!
+    expect(sedan.label).toBe('Who was in red sedan')
+    expect(sedan.a).toBe('Driver: The policyholder')
+    expect(sedan.b).toBe('Driver: Sam Lee')
+    const suv = rows.find((r) => r.key === 'occupants:b')!
+    expect(suv.a).toBe('Driver: Dana Q')
+    expect(suv.b).toBe('Driver: The other driver')
+  })
+
+  it('differs when one account puts more people in the car', () => {
+    const { a, b } = pair()
+    b.people.push(newPerson('passenger', 'y'), newPerson('passenger', 'y'))
+    const row = compare(a, b).differ.find((r) => r.key === 'occupants:a')
+    expect(row?.b).toBe('Driver: Sam Lee, 2 passengers')
+  })
+
+  it('is left unmatched when only one account lists anyone in it', () => {
+    const { a, b } = pair()
+    b.people = b.people.filter((p) => p.vehicle !== 'y')
+    const result = compare(a, b)
+    expect([...result.agree, ...result.differ].map((r) => r.key)).not.toContain('occupants:a')
+    expect(result.unmatched).toContain('Who was in red sedan was not given by the other driver.')
+  })
+})
+
+describe('what the other driver was seeded with', () => {
+  it('marks the place and the time as seeded when the other driver left them as given', () => {
+    const { a, b } = pair()
+    const rows = compare(a, b).agree
+    expect(rows.find((r) => r.key === 'place')?.seeded).toBe(true)
+    expect(rows.find((r) => r.key === 'time')?.seeded).toBe(true)
+    // nothing else is ever seeded
+    expect(rows.filter((r) => r.seeded).map((r) => r.key).sort()).toEqual(['place', 'time'])
+  })
+
+  it('does not once they changed it, even to something that still agrees', () => {
+    const { a, b } = pair()
+    const [lng, lat] = destination(HERE, 45, 5)
+    b.incident.location = { lng, lat, address: 'Times Square, New York' }
+    b.incident.at = '2026-09-06T17:35'
+    const rows = compare(a, b).agree
+    expect(rows.find((r) => r.key === 'place')?.seeded).toBeUndefined()
+    expect(rows.find((r) => r.key === 'time')?.seeded).toBeUndefined()
+  })
+
+  it('does not between two accounts from the same side, where nothing was seeded', () => {
+    const { a } = pair()
+    const rows = compare(a, structuredClone(a)).agree
+    expect(rows.some((r) => r.seeded)).toBe(false)
   })
 })
 

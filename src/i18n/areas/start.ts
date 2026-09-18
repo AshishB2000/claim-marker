@@ -34,6 +34,8 @@ export const en = {
   'start.where.looked.windy': 'wind {kph} km/h',
   /** dark by the sun, when the record cannot say whether the street was lit */
   'start.where.looked.dark': 'After dark',
+  /** the record's hour had no precipitation; it cannot say whether the road was still wet from before */
+  'start.where.looked.noPrecip': 'No rain or snow that hour',
   'start.where.looked.lane': '1 lane',
   'start.where.looked.lanes': '{n} lanes',
   'start.where.looked.oneway': 'one-way',
@@ -209,6 +211,7 @@ export const es: Record<keyof typeof en, string> = {
   'start.where.looked.sun': '{light}, con el sol bajo hacia el {dir}',
   'start.where.looked.windy': 'viento {kph} km/h',
   'start.where.looked.dark': 'De noche',
+  'start.where.looked.noPrecip': 'Sin lluvia ni nieve a esa hora',
   'start.where.looked.lane': '1 carril',
   'start.where.looked.lanes': '{n} carriles',
   'start.where.looked.oneway': 'sentido único',

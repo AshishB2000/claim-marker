@@ -13,7 +13,7 @@
  *    this file's own source to prove it.
  * 3. Pure: no network, no store, no DOM. Two documents in, one comparison out.
  */
-import { cap, conditionLabels, vehicleName } from './describe'
+import { cap, conditionLabels, deskVoice, driverName, vehicleName } from './describe'
 import { KIND_INFO, instantOf, type Claim, type ClaimVehicle, type Incident, type Location, type Role } from './schema'
 import { bearing, distance, normalizeBearing, type LngLat } from '../geo'
 import { zoneById } from '../zones'
@@ -29,6 +29,11 @@ export type Row = {
   b: string
   /** how far apart they are, in the row's own units, when that is a number */
   gap?: string
+  /**
+   * The other driver's page started from the policyholder's answer here and it was not
+   * changed: the two agree because one was handed the other's, which says little either way.
+   */
+  seeded?: true
 }
 
 export type Comparison = { agree: Row[]; differ: Row[]; unmatched: string[] }
@@ -87,6 +92,16 @@ const panelLabels = (v: ClaimVehicle): string => {
   return labels.length ? labels.join(', ') : '(none marked)'
 }
 
+/** who was in a vehicle by one account — the driver and how many passengers — or null when it lists no one */
+function occupants(c: Claim, v: ClaimVehicle): { text: string; count: number } | null {
+  const inside = c.people.filter((p) => p.vehicle === v.id && (p.role === 'driver' || p.role === 'passenger'))
+  if (inside.length === 0) return null
+  const driver = inside.find((p) => p.role === 'driver')
+  const passengers = inside.filter((p) => p.role === 'passenger').length
+  const who = driver ? `Driver: ${driverName(driver, deskVoice(c.reporter.party)) ?? 'name not given'}` : 'No driver named'
+  return { text: passengers ? `${who}, ${passengers} passenger${passengers === 1 ? '' : 's'}` : who, count: inside.length }
+}
+
 type Pair = { a: ClaimVehicle; b: ClaimVehicle }
 
 /**
@@ -121,25 +136,39 @@ function matchVehicles(a: Claim, b: Claim): { pairs: Pair[]; unmatched: string[]
 /**
  * Compare two accounts of one accident, row by row. Order is fixed — place, time, kind, each
  * matched vehicle's rest position, heading and approach, the impact, each vehicle's marked
- * panels, the police, who was hurt, the conditions — so two comparisons of the same pair of
- * documents read the same way.
+ * panels, who was in each vehicle, the police, who was hurt, the conditions — so two
+ * comparisons of the same pair of documents read the same way.
  */
 export function compare(a: Claim, b: Claim): Comparison {
   const agree: Row[] = []
   const differ: Row[] = []
   const unmatched: string[] = []
   const push = (row: Row, agrees: boolean) => (agrees ? agree : differ).push(row)
+  // The other driver's page opens on the policyholder's place and time. The desk is not handed
+  // that seed, so an answer still exactly the policyholder's stands for "left as it was given".
+  // ponytail: exact equality — one re-entered to the very same value reads as seeded too, which
+  // for the desk is the same thing; hand the desk the seed if that ever needs telling apart
+  const seedable = a.reporter.party !== b.reporter.party
+  const seeded = (same: boolean): { seeded?: true } => (seedable && same ? { seeded: true } : {})
 
-  if (a.incident.location && b.incident.location) {
-    const gap = distance([a.incident.location.lng, a.incident.location.lat], [b.incident.location.lng, b.incident.location.lat])
-    push({ key: 'place', label: 'Where it happened', a: fmtLocation(a.incident.location), b: fmtLocation(b.incident.location), gap: fmtMetres(gap) }, gap <= PLACE_METRES)
-  } else if (a.incident.location || b.incident.location) {
-    unmatched.push(blank('Where it happened', a.incident.location ? b : a))
+  const la = a.incident.location
+  const lb = b.incident.location
+  if (la && lb) {
+    const gap = distance([la.lng, la.lat], [lb.lng, lb.lat])
+    push(
+      { key: 'place', label: 'Where it happened', a: fmtLocation(la), b: fmtLocation(lb), gap: fmtMetres(gap), ...seeded(la.lng === lb.lng && la.lat === lb.lat) },
+      gap <= PLACE_METRES,
+    )
+  } else if (la || lb) {
+    unmatched.push(blank('Where it happened', la ? b : a))
   }
 
   const timeGap = timeDiffMinutes(a.incident, b.incident)
   if (timeGap !== null) {
-    push({ key: 'time', label: 'When it happened', a: fmtLocalTime(a.incident), b: fmtLocalTime(b.incident), gap: fmtMinutes(timeGap) }, timeGap <= TIME_MINUTES)
+    push(
+      { key: 'time', label: 'When it happened', a: fmtLocalTime(a.incident), b: fmtLocalTime(b.incident), gap: fmtMinutes(timeGap), ...seeded(a.incident.at === b.incident.at) },
+      timeGap <= TIME_MINUTES,
+    )
   }
 
   push({ key: 'kind', label: 'What kind of incident', a: KIND_INFO[a.incident.kind].label, b: KIND_INFO[b.incident.kind].label }, a.incident.kind === b.incident.kind)
@@ -184,6 +213,14 @@ export function compare(a: Claim, b: Claim): Comparison {
     } else if (zonesA.size || zonesB.size) {
       unmatched.push(blank(`Where ${name} is marked damaged`, zonesA.size ? b : a))
     }
+  }
+
+  for (const { a: av, b: bv } of pairs) {
+    const inA = occupants(a, av)
+    const inB = occupants(b, bv)
+    const subject = `Who was in ${vehicleName(av, 'en')}`
+    if (inA && inB) push({ key: `occupants:${av.id}`, label: subject, a: inA.text, b: inB.text }, inA.count === inB.count)
+    else if (inA || inB) unmatched.push(blank(subject, inA ? b : a))
   }
 
   if (a.police.called !== null && b.police.called !== null) {

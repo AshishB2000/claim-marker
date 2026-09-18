@@ -7,10 +7,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { KIND_INFO, parseClaim, toDocument, type Claim, type Party } from '../claim/schema'
 import { findings, type Finding } from '../claim/plausibility'
+import { deskVoice } from '../claim/describe'
 import { config } from '../config'
 import { Icon } from '../app/icons'
 import { ReportDocument } from '../app/ReportDocument'
 import { Compare } from './Compare'
+import { inboxRows } from './inbox'
 
 /**
  * The claims server: `?api=` for a desk pointed at another one, then the build-time default,
@@ -49,7 +51,7 @@ export type Receipt = {
   signals?: Signal[]
   /** the id two reports of one accident share, when the other driver was invited to add theirs */
   incident?: string
-  /** which side of the accident this report is, when it carries an `incident` — the document's own `reporter.party`, mirrored onto the receipt */
+  /** which side of the accident this report is, when it carries an `incident` — set by the server from the token it was sent with, not from the document */
   party?: Party
   summary: {
     kind: Claim['incident']['kind']
@@ -161,7 +163,7 @@ function ReportView({ showing, linked, onOpen }: { showing: { receipt: Receipt; 
         </div>
       )}
       {!comparing && <WorthALook claim={showing.claim} signals={showing.receipt.signals ?? []} onOpen={onOpen} />}
-      {comparing && linked ? <Compare reports={linked} /> : <ReportDocument claim={showing.claim} voice="desk" badge={<StatusPill status={showing.receipt.status} />} />}
+      {comparing && linked ? <Compare reports={linked} /> : <ReportDocument claim={showing.claim} voice={deskVoice(showing.receipt.party)} badge={<StatusPill status={showing.receipt.status} />} />}
     </>
   )
 }
@@ -276,7 +278,8 @@ export function Desk() {
   const q = query.trim().toLowerCase()
   const matches = (c: Receipt) =>
     !q || [c.reference, c.clientReference, c.summary.reporter, c.summary.address, ...(c.summary.plates ?? [])].some((s) => s?.toLowerCase().includes(q))
-  const rows = (claims ?? []).filter((c) => (filter === 'all' || c.status === filter) && matches(c))
+  // the accounts of one accident share a row; it shows when any of them matches
+  const rows = inboxRows(claims ?? []).filter((g) => g.accounts.some((c) => (filter === 'all' || c.status === filter) && matches(c)))
   const showing = open && open.receipt.reference === ref ? open : null
   // the fetched incident, but only once it actually names the report on screen — a stale
   // answer for a report we have since left never reads as this one's
@@ -338,7 +341,7 @@ export function Desk() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && rows[0]) show(rows[0].reference)
+                if (e.key === 'Enter' && rows[0]) show(rows[0].lead.reference)
                 if (e.key === 'Escape') setQuery('')
               }}
             />
@@ -356,8 +359,10 @@ export function Desk() {
               </p>
             )}
             <ul className={`space-y-2 ${showing ? '' : 'grid gap-3 space-y-0 sm:grid-cols-2 lg:grid-cols-3'}`}>
-              {rows.map((c) => {
-                const on = c.reference === ref
+              {rows.map(({ lead: c, accounts }) => {
+                const on = accounts.some((a) => a.reference === ref)
+                // the open incident may know of an account this inbox has not loaded yet
+                const count = Math.max(accounts.length, incidentReports && c.incident === incidentReports.incident ? incidentReports.reports.length : 0)
                 return (
                   <li key={c.reference}>
                     <button
@@ -377,7 +382,7 @@ export function Desk() {
                         {c.summary.hurt > 0 && <span className="font-semibold text-red-700">· {c.summary.hurt} hurt</span>}
                         {c.summary.drivable === false && <span className="font-semibold text-amber-700">· not drivable</span>}
                         {c.summary.photos > 0 && <span>· {c.summary.photos} photos</span>}
-                        {c.incident && <span>· {incidentReports && c.incident === incidentReports.incident ? `${incidentReports.reports.length} accounts` : 'linked'}</span>}
+                        {c.incident && <span className={count > 1 ? 'font-semibold text-ink' : ''}>· {count > 1 ? `${count} accounts` : 'linked'}</span>}
                         {(c.signals?.length ?? 0) > 0 && (
                           <span className="font-semibold text-brand-700">
                             · {c.signals!.length} seen before

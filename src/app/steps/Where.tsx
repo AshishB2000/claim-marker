@@ -146,7 +146,7 @@ export function Where() {
     return () => ac.abort()
   }, [key, contextKey, incident.location, incident.at, sceneLookedUp])
 
-  const looked = incident.context ? lookedUpLines(incident.context, incident.conditions, lang) : []
+  const looked = incident.context ? lookedUpLines(incident.context, lang) : []
 
   const choose = (p: Place) => {
     setLocation({ lng: p.lng, lat: p.lat, address: p.address })
