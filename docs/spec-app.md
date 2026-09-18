@@ -986,6 +986,54 @@ also manages, but that the frame in the middle of the video is a real picture: i
 attachment into a `<video>`, seeks to half way, draws it to a canvas and counts distinct colours
 exactly as it does for the PNGs.
 
+## Tell us everything, once (v9)
+
+A form asks forty questions one at a time. A person who has just been in a crash tells you what
+happened in one breath: "this morning on 5th Avenue, in the rain, a black SUV pulled out and hit
+my front, my passenger hurt her neck, the police came". With the assistant on, the first screen
+offers exactly that — speak or type one account — and the rest of the flow starts already
+filled in.
+
+**It leans on the model harder than anything else in the page, so everything it produces is a
+proposal and never an entry.** A fifth task on `claim-assist/1`, `intake`: the customer's words
+go to the insurer's endpoint with the page's own enums (kinds, bodies, paint ids) and the
+current minute, and a *draft* comes back — kind, time, a place as words, conditions, vehicles,
+who was hurt, the police, other property. `parseIntake` builds its result from an allow-list,
+never by spreading the answer: an unknown enum drops that field, a time after "now" is dropped,
+six vehicles and twelve people at most, every string capped, garbage is an empty draft.
+
+**Names, phone numbers, licences, plates and VINs are not part of the shape at all.** The
+endpoint can send them — the assist smoke's stub does — and nothing comes out the other side:
+the customer types identity themselves, on the steps where they can see what they are typing.
+
+**"Here is what we understood"** is a row per proposal, each with its own tick, all ticked, every
+label from `describe.ts` and the dictionaries: the kind by name, the time formatted, each
+vehicle as the page would name it, "1 person hurt" rather than the model's words about an
+injury, "the police were called", the conditions as the review page reads them. "Use these"
+fills through the store's existing actions under the **prefill rule** — only what is empty,
+never what the customer already typed — and an unticked row changes nothing.
+
+Three things are deliberately not the model's:
+
+- **The statement is the customer's own words, verbatim.** `incident.description` becomes the
+  transcript, never the model's summary: it is their statement, and it is what they sign.
+- **The place is a search the customer finishes.** It lands in the Where step's search box as
+  the words they used, and they pick the match. The model never supplies a coordinate — it
+  cannot do spherical arithmetic, and a confident wrong pin is worse than an empty one.
+- **The diagram is drawn from their words by the step that already does that.** When the draft
+  had vehicles and a description, the scene step runs its existing `draw()` once, from a
+  microtask so the effect never sets state synchronously.
+
+A failing endpoint, an empty draft, or no assistant at all falls straight back to the ordinary
+first step with one quiet line; the kind cards underneath always work. The dictation is the same
+recogniser as the statement box (`src/app/speech.ts`).
+
+**What is not proved here.** The scripts prove the page's half of the contract — the request,
+the parsing, the proposals, the filling, the fallbacks — against a stub. Whether the model reads
+a real account well is a question for a real key and `scripts/assist-server.mjs`, whose
+`fill_the_report` tool inlines the enums so it cannot misspell one and whose prompt says to
+extract only what was said.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:

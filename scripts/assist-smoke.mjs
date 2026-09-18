@@ -509,6 +509,104 @@ await phone.getByRole('button', { name: 'dent', exact: true }).click({ force: tr
 await phone.waitForFunction(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.vehicles[0].damages.length === 2, null, { timeout: 5000 }).catch(() => fail('the tap did not mark the car'))
 ok('assist: a failed read is one quiet line and the car below still takes a mark by hand')
 
+// ── 9 · "just tell us what happened" ──────────────────────────────────
+// One account, a whole proposed report back, confirmed piece by piece. The stub answers with
+// things the page must never take from a model — a name, a plate, a VIN, a phone number — and
+// a place as words; the proposals must show none of the first and the page must turn the second
+// into a search the customer finishes, never a coordinate.
+const intakeCtx = await browser.newContext({ viewport: { width: 1280, height: 1000 } })
+const tell = await intakeCtx.newPage()
+tell.on('pageerror', (e) => errors.push(String(e)))
+const intakeState = () => tell.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state)
+await tell.goto(`${origin}/`, { waitUntil: 'networkidle' })
+// the customer had already typed their car's make before they tried talking instead
+await tell.evaluate(() => {
+  const raw = JSON.parse(localStorage.getItem('claim-marker/draft'))
+  raw.state.claim.vehicles[0].make = 'Subaru'
+  localStorage.setItem('claim-marker/draft', JSON.stringify(raw))
+})
+await tell.reload({ waitUntil: 'networkidle' })
+await tell.locator('text=Just tell us what happened').waitFor({ timeout: 15000 }).catch(() => fail('the intake card is not on the first screen'))
+
+const account = 'This morning at about 8.40 I was driving my red Honda Civic on 5th Avenue in the rain, a black SUV pulled out and hit my front. My passenger hurt her neck. The police came, report 2026-0042.'
+answer = (req) => [
+  200,
+  {
+    schema: 'claim-assist/1',
+    task: 'intake',
+    draft: {
+      kind: 'collision',
+      when: `${req.now.slice(0, 10)}T08:40`,
+      place: '5th Avenue and 42nd Street, New York',
+      conditions: { weather: 'rain', road: 'wet', light: 'daylight' },
+      vehicles: [
+        { role: 'insured', make: 'Honda', model: 'Civic', color: 'red', body: 'sedan', plate: 'ABC 123', vin: '1HGCM82633A004352' },
+        { role: 'other', color: 'black', body: 'suv', plate: 'XYZ 789' },
+      ],
+      people: [{ role: 'passenger', vehicle: 'insured', injured: true, injury: 'neck pain', name: 'Maria Lopez', phone: '555 0100' }],
+      police: { called: true, report: '2026-0042' },
+      description: 'A black SUV pulled out and hit my front.',
+      name: 'Ashish B',
+      email: 'me@example.com',
+    },
+  },
+]
+const beforeIntake = seen.length
+await tell.getByPlaceholder('What happened, where, when, who was involved…').fill(account)
+await tell.getByRole('button', { name: 'Tell us' }).click()
+await tell.locator('text=Here is what we understood').waitFor({ timeout: 15000 }).catch(() => fail('the proposal did not appear'))
+const sentIntake = seen.at(-1)
+if (seen.length !== beforeIntake + 1 || sentIntake.task !== 'intake' || sentIntake.transcript !== account) fail(`wrong intake request: ${JSON.stringify(sentIntake).slice(0, 200)}`)
+if (!sentIntake.kinds?.includes('collision') || !sentIntake.bodies?.includes('suv') || !sentIntake.colours?.includes('red')) fail('the intake request does not carry the enums')
+const proposal = await tell.locator('body').innerText()
+for (const secret of ['Maria Lopez', '555 0100', 'ABC 123', 'XYZ 789', '1HGCM82633A004352', 'Ashish B', 'me@example.com', 'neck pain']) {
+  if (proposal.includes(secret)) fail(`the proposal shows "${secret}", which came from the model`)
+}
+if (!proposal.includes('We’ll search for “5th Avenue and 42nd Street, New York”')) fail('the place is not offered as a search')
+if (!proposal.includes('1 person hurt')) fail('the injury is not a count')
+ok('intake: one account comes back as proposals — no names, plates, VINs or phone numbers, the injury as a count, the place as a search')
+
+// untick the police: that answer must stay the customer's to give
+await tell.getByLabel('The police were called').uncheck()
+await tell.getByRole('button', { name: 'Use these' }).click()
+await tell.getByRole('combobox', { name: 'Where did it happen?' }).waitFor({ timeout: 15000 }).catch(() => fail('"Use these" did not walk on to the Where step'))
+const searchBox = await tell.getByRole('combobox', { name: 'Where did it happen?' }).inputValue()
+if (searchBox !== '5th Avenue and 42nd Street, New York') fail(`the place search was not started from the account: "${searchBox}"`)
+const filled = (await intakeState()).claim
+if (filled.incident.kind !== 'collision') fail(`kind ${filled.incident.kind}`)
+if (!filled.incident.at.endsWith('T08:40')) fail(`the time was not filled: ${filled.incident.at}`)
+if (filled.incident.location) fail('the model supplied a location; only the customer picks one')
+if (JSON.stringify(filled.incident.conditions) !== JSON.stringify({ weather: 'rain', road: 'wet', light: 'daylight' })) fail(`conditions ${JSON.stringify(filled.incident.conditions)}`)
+if (filled.vehicles[0].make !== 'Subaru') fail(`a make the customer had typed was overwritten: ${filled.vehicles[0].make}`)
+if (filled.vehicles[0].model !== 'Civic' || filled.vehicles[0].color !== '#b91c1c') fail(`the customer's car was not filled: ${JSON.stringify(filled.vehicles[0]).slice(0, 160)}`)
+if (!filled.vehicles.some((v) => v.role === 'other' && v.body === 'suv' && v.color === '#1c1f26')) fail('the other vehicle was not proposed into the report')
+if (filled.vehicles.some((v) => v.plate || v.vin)) fail('a plate or VIN from the model reached the report')
+if (filled.people.some((p) => p.name || p.phone)) fail('a name or phone from the model reached the report')
+if (!filled.people.some((p) => p.role === 'passenger' && p.injured && p.vehicle === filled.vehicles[0].id)) fail('the hurt passenger was not placed in the customer\'s car')
+if (filled.police.called !== null) fail(`an unticked proposal was used anyway: police ${filled.police.called}`)
+if (filled.incident.description !== account) fail('the statement is not the customer\'s own words, verbatim')
+ok('intake: "Use these" fills what was empty, leaves what was typed and what was unticked, keeps the account verbatim, and opens the place search')
+
+// a failing endpoint is one quiet line, and the ordinary first step still works
+await tell.evaluate(() => localStorage.clear())
+await tell.reload({ waitUntil: 'networkidle' })
+answer = () => [502, { error: 'no' }]
+await tell.getByPlaceholder('What happened, where, when, who was involved…').fill('it went wrong')
+await tell.getByRole('button', { name: 'Tell us' }).click()
+await tell.locator("text=We couldn't make sense of that").waitFor({ timeout: 15000 }).catch(() => fail('a failed intake did not say so'))
+await tell.getByRole('radio', { name: /Hit while parked/ }).click()
+if ((await intakeState()).claim.incident.kind !== 'parked') fail('the kind cards stopped working after a failed intake')
+ok('intake: a failing endpoint is one quiet line and the kind cards still work')
+
+// the same card in Spanish, with nothing English left on it
+const esPage = await intakeCtx.newPage()
+await esPage.addInitScript(() => void (window.CLAIM_MARKER = { lang: 'es' }))
+await esPage.goto(`${origin}/`, { waitUntil: 'networkidle' })
+await esPage.locator('text=Cuéntanos qué pasó').waitFor({ timeout: 15000 }).catch(() => fail('the intake card is not in Spanish'))
+if (await esPage.locator('text=Just tell us what happened').count()) fail('English left on the Spanish intake card')
+ok('intake: the card reads in Spanish')
+await intakeCtx.close()
+
 if (errors.length) fail(`console errors:\n${errors.join('\n')}`)
 console.log('\nall assist checks passed')
 shutdown(0)

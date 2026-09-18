@@ -170,7 +170,8 @@ export const en = {
   'start.intake.hurt.none': 'No injuries mentioned',
   'start.intake.hurt.one': '{n} person hurt',
   'start.intake.hurt.other': '{n} people hurt',
-  'start.intake.property.label': 'Other property: {text}',
+  /** a label, not the model's words: what it read goes into the field, where the customer can see and change it */
+  'start.intake.property': 'Something other than a vehicle was damaged',
   'start.intake.vehicle.insured': 'Your vehicle',
   'start.intake.vehicle.other': 'Another vehicle',
   'start.intake.ai': 'Read from what you said. Nothing is added until you tick it and press "Use these".',
@@ -336,7 +337,7 @@ export const es: Record<keyof typeof en, string> = {
   'start.intake.hurt.none': 'No se mencionan heridos',
   'start.intake.hurt.one': '{n} persona herida',
   'start.intake.hurt.other': '{n} personas heridas',
-  'start.intake.property.label': 'Otro daño: {text}',
+  'start.intake.property': 'Se dañó algo que no es un vehículo',
   'start.intake.vehicle.insured': 'Tu vehículo',
   'start.intake.vehicle.other': 'Otro vehículo',
   'start.intake.ai': 'Se armó con lo que dijiste. No se agrega nada hasta que lo marques y presiones "Usar esto".',

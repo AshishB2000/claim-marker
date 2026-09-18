@@ -281,8 +281,12 @@ the page uses, via `dist/lib/claim.js`; do not hand-write validation in `server/
 
 **The AI never runs in the page.** `VITE_ASSIST_URL` points at an endpoint the insurer runs and
 that holds the key (`scripts/assist-server.mjs` is a reference one); unset, no AI exists in the
-page. Four tasks: `diagram`, `describe`, `check` (the report back as questions, on the review
-step) and `damage` (photographs back as marked panels, on the damage step). Positions on that
+page. Five tasks: `diagram`, `describe`, `check` (the report back as questions, on the review
+step) `damage` (photographs back as marked panels, on the damage step) and `intake` (one spoken or
+typed account back as a *proposed* draft of the first steps, on the kind step — ticked row by
+row, filled under the prefill rule, the statement kept as the customer's own words verbatim,
+the place handed to the Where step's search as words, never a coordinate; `parseIntake` is an
+allow-list and carries no names, phones, licences, plates or VINs whatever the endpoint sends). Positions on that
 wire are metres east/north of the incident, not `[lng, lat]`, because a model cannot do
 spherical arithmetic. Treat every answer as untrusted input: `parseScene` drops anything
 malformed or naming a vehicle the customer did not enter, and `applyScene` is a no-op when

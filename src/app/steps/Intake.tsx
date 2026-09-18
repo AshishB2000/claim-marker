@@ -211,7 +211,7 @@ export function Intake() {
             )}
             {result.draft.property && (
               <IntakeRow checked={result.take.property} onChange={(v) => setTake({ property: v })}>
-                {t('start.intake.property.label', { text: result.draft.property })}
+                {t('start.intake.property')}
               </IntakeRow>
             )}
           </div>
