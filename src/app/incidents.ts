@@ -17,14 +17,19 @@ export type Invite = { incident: string; url: string; expiresAt: string }
 
 const INC = /^INC-[A-Z0-9-]{4,32}$/
 
-export async function createIncident(seed: IncidentSeed): Promise<Invite | null> {
+/**
+ * `reference` is the insurer's own claim number, passed only when the report has already been
+ * sent — inviting from the done page is the common case, and that report went out with no
+ * incident in it, so naming it here is the only thing that can ever link the two.
+ */
+export async function createIncident(seed: IncidentSeed, reference?: string | null): Promise<Invite | null> {
   const url = incidentUrl('incidents')
   if (!url) return null
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(config.token ? { authorization: `Bearer ${config.token}` } : {}) },
-      body: JSON.stringify(seed),
+      body: JSON.stringify(reference ? { ...seed, reference } : seed),
     })
     if (!res.ok) return null
     const body = (await res.json()) as Partial<Invite>

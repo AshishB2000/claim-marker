@@ -40,7 +40,7 @@ export function Invite() {
     setBusy(true)
     setFailed(false)
     const seed = seedOf(claim.incident, othersOf(claim).map((v) => ({ body: v.body, color: v.color, make: v.make, model: v.model })))
-    const invite = await createIncident(seed)
+    const invite = await createIncident(seed, claim.reference)
     setBusy(false)
     if (!invite) return setFailed(true)
     shareIncident(invite.incident)

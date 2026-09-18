@@ -792,6 +792,22 @@ async function createIncident(req, res) {
   if (!seed) return json(res, 400, { error: 'a valid seed is required: location, at, surface and up to six vehicles' })
   const id = newIncidentId()
   await mkdir(incidentDir(id), { recursive: true })
+  /*
+   * The customer may invite the other driver *after* sending their own report — the page
+   * offers it again on the done page, which is often the first moment they have a free hand.
+   * That report was filed with no `incident.shared` in it, so nothing else will ever connect
+   * the two; naming it here is the only chance. Only their own report: a reference belonging
+   * to another customer is not theirs to attach an incident to.
+   */
+  const mine = typeof body?.reference === 'string' ? body.reference.trim().toUpperCase() : ''
+  if (safeRef(mine) && existsSync(folder(mine))) {
+    const receipt = await receiptOf(mine).catch(() => null)
+    const ours = !sender.customer || receipt?.customer?.id === sender.customer.id
+    if (receipt && ours && !receipt.incident) {
+      await writeFile(join(folder(mine), 'receipt.json'), JSON.stringify({ ...receipt, incident: id, party: 'policyholder' }, null, 2))
+      await addIncidentReport(id, mine, false)
+    }
+  }
   // who invited travels beside the seed, never inside it — the other driver is handed the
   // seed alone by GET /incidents/:id/seed, and must never learn the customer's id this way
   await writeFile(seedFile(id), JSON.stringify({ ...seed, invited: { by: sender.customer?.id ?? null, at: new Date().toISOString() } }, null, 2))
