@@ -703,10 +703,14 @@ const asphalt = await page.evaluate(() => {
   return hit / n
 })
 if (asphalt < 0.5) fail(`the parking lot did not paint (${(asphalt * 100).toFixed(0)}% tarmac)`)
+// there is no real city around a drawn parking lot, any more than there is a real road
+const shown = () => page.evaluate(() => ['buildings', 'roads-casing'].map((id) => window.__map.getLayoutProperty(id, 'visibility')))
+if ((await shown()).some((v) => v !== 'none')) fail(`the road and the buildings are still drawn on the parking lot: ${await shown()}`)
 await page.getByRole('radio', { name: N.satellite }).click()
 await page.waitForTimeout(2000)
 if ((await draft()).incident.surface !== 'satellite') fail('could not switch back to the satellite map')
-ok(`map: drawn parking lot for places the map cannot show (${(asphalt * 100).toFixed(0)}% tarmac), cars kept, back to satellite`)
+if ((await shown()).some((v) => v !== 'visible')) fail(`the road and the buildings did not come back on the satellite map: ${await shown()}`)
+ok(`map: drawn parking lot for places the map cannot show (${(asphalt * 100).toFixed(0)}% tarmac), no road or buildings on it, cars kept, back to satellite`)
 
 await page.getByRole('textbox', { name: N.describeLabel }).fill('The van pulled out across me.')
 await noEnglish('the map')

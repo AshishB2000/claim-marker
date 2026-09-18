@@ -201,7 +201,7 @@ how the portal's same-origin iframe is configured at all.
 `timezone=auto` so the hourly stamps are local and the hour matches `at` by string),
 `sun.ts` (the NOAA approximation, no dependency) and `road.ts` (Overpass inside 60 m, the Kumi Systems mirror because `overpass-api.de` answers
 406 to whole networks; also
-returns the ways as GeoJSON for the diagram to draw). All three are pure apart from one
+returns the ways as GeoJSON for the diagram to draw, and the buildings within 150 m to extrude). All three are pure apart from one
 `fetch` each, all three resolve `null` on any failure, and nothing on the page depends on
 any of them. `incident.utcOffset` is what makes `at` an instant — `instantOf(at, utcOffset)`
 — and is filled by the weather lookup, which resolves the zone anyway. `incident.context`
@@ -277,6 +277,21 @@ them. The shockwave goes through `CarLayer.setDecor()` — placed by `vehicleMat
 once through `reverseWinding` — and is cleared at the end of playback, so no export ever
 holds it. The playback rate is `rate` in code, never "speed": the words fault, liability,
 blame, speed and cost stay out of anything the customer or the desk reads.
+
+**The city is one more thing the same Overpass answer carries.** `roadQuery` asks for
+`way[building]` within `BUILDING_RADIUS` (150 m) alongside the road's 60, and `parseBuildings`
+— pure, tested against the recorded fixture — turns every **closed** building way into a
+polygon with a `height`: the `height` tag in metres, else `building:levels` × 3.2, else 8 m,
+with absurd values treated as no answer. `parseRoad` hands them out beside `ways`, so a place
+with no road has no result to hang them on. The store keeps `buildings` beside `roadWays` and
+**persists neither**. `MapScene` draws them as one `fill-extrusion` layer added **first** of
+everything `style.load` adds — so the road, the paths, the cars and the shockwave are over it —
+and visible on `satellite` and `streets` only, like the road (`onRealGround` governs both). The
+grey stops short of white on purpose: at 0.85 over the brightest imagery no channel reaches
+200, so a wall never reads as the shockwave, the flow line or a label. Flat map, flat
+footprints; it is a city only while a cinematic replay is tilting the camera. The smoke's pixel
+check asks the map **where** it is drawing a building rather than projecting a footprint — at
+that zoom a block's centroid is usually off the top of the frame while the building fills it.
 
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
@@ -434,7 +449,7 @@ src/claim/        the claim/1 document, the persisted store, prefill, the outbox
 src/config.ts     runtime configuration and the host-page channel
 public/sw.js      the offline shell; its precache list is patched in by vite.config.ts
 src/map/          MapLibre scene, the three.js car layer, the transform maths, styles
-src/scene/        what the place and the time say for themselves: the weather, the sun, the road
+src/scene/        what the place and the time say for themselves: the weather, the sun, the road and its buildings
 src/vehicles/     model loading + paint re-authoring, body previews, the paint palette
 src/marker/       the 3D damage marker
 src/assist/       the optional assistant: the wire contract and its parsers, the metric frame, the client
