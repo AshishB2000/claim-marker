@@ -9,6 +9,8 @@ import {
   ESTABLISH_MS,
   HOLD_MS,
   MAX_MS,
+  MIN_BLEND_MS,
+  MIN_ESTABLISH_MS,
   MIN_MS,
   RING_M,
   SLOW_AFTER_MS,
@@ -186,11 +188,47 @@ describe('the shot list', () => {
     expect(endOf(list)).toBe(tl.ms + HOLD_MS + BLEND_MS)
   })
 
-  it('an impact early in a short drive never puts the slow-motion before the chase', () => {
-    const early = shots(tBone, { ms: MIN_MS, impactT: 0.2, impactMs: 300 })
-    inOrder(early)
-    expect(early[2].at).toBe(ESTABLISH_MS)
-    expect(early[3].at).toBeGreaterThanOrEqual(early[2].at)
+  it('an early impact shrinks the overhead and the ease to fit, and the slow-motion still covers the impact', () => {
+    const home: Camera = { center: here, zoom: 19.9, pitch: 0, bearing: 0 }
+    // impactMs is never past the drive, so the short clock takes only the moments that fit on it
+    const sweep = [
+      { ms: MIN_MS, impacts: [300, 800, 1400] },
+      { ms: MAX_MS, impacts: [300, 800, 1400, 3000] },
+    ]
+    for (const { ms, impacts } of sweep) {
+      for (const impactMs of impacts) {
+        const tl = { ms, impactT: impactMs / ms, impactMs }
+        const list = shots(tBone, tl)
+        const why = `ms ${ms}, impact at ${impactMs}`
+        // strictly increasing: never a tie for shotAt to break
+        for (let i = 1; i < list.length; i++) expect(list[i].at, why).toBeGreaterThan(list[i - 1].at)
+        // the rate drops to a quarter at the impact
+        expect(shotAt(list, impactMs).rate, why).toBe(SLOW_RATE)
+        // the window is the full width, or as much as the clock allows: from the earliest the
+        // shortest overhead and ease can be done, to SLOW_AFTER_MS past the impact
+        const earliest = MIN_ESTABLISH_MS + MIN_BLEND_MS
+        expect(list[3].at - list[2].at, why).toBe(Math.min(SLOW_BEFORE_MS + SLOW_AFTER_MS, impactMs - earliest + SLOW_AFTER_MS))
+        // the ease survives: at least MIN_BLEND_MS, done before the slow-motion, from home
+        const [, chase] = list
+        expect(chase.blend, why).toBeGreaterThanOrEqual(MIN_BLEND_MS)
+        expect(chase.at, why).toBeGreaterThanOrEqual(MIN_ESTABLISH_MS)
+        expect(chase.at + chase.blend, why).toBeLessThanOrEqual(list[2].at)
+        const at = (t: number) => cameraAt(list, t, frameAt(tBone, tl, t).poses, home)
+        expect(at(chase.at), why).toEqual(home)
+        const mid = at(chase.at + chase.blend / 2)
+        expect(mid.pitch, why).toBeGreaterThan(0)
+        expect(mid.pitch, why).toBeLessThan(CHASE_PITCH)
+        expect(shotAt(list, chase.at).rate, why).toBe(1)
+      }
+    }
+    // with room to spare the constants are used as they are
+    const roomy = shots(tBone, { ms: MAX_MS, impactT: 0.5, impactMs: 3000 })
+    expect(roomy[1]).toMatchObject({ at: ESTABLISH_MS, blend: BLEND_MS })
+    expect(roomy[2].at).toBe(3000 - SLOW_BEFORE_MS)
+    // an impact in the first 300 ms is the start of the drive: the window still runs, in order
+    const atStart = shots(tBone, { ms: MIN_MS, impactT: 0, impactMs: 0 })
+    for (let i = 1; i < atStart.length; i++) expect(atStart[i].at).toBeGreaterThan(atStart[i - 1].at)
+    expect(atStart[3].at - atStart[2].at).toBe(SLOW_AFTER_MS)
   })
 
   it('the shot running now is the last to have begun', () => {
