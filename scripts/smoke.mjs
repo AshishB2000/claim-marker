@@ -560,46 +560,78 @@ if ((await page.locator('.mk-car').count()) !== 3) fail('the cars did not come b
 ok('map: playback ran and handed the map back')
 
 // watch it: the camera opens up and chases, the shockwave rings the impact, and the diagram
-// comes back exactly as it was — flat, north-up, every marker where it stood
+// comes back exactly as it was — flat, north-up, every marker where it stood. The ring lives
+// 600 ms of the playback's clock and a loaded machine decides how many frames of that a
+// sampler gets to see, so nothing here races it: the replay's own clock is driven from here
+// (`window.__play`, DEV only, from the diagram step) and settled frames of the same chase shot
+// are compared — inside the ring's life against just after it has gone, one camera, one pose.
 const carsBefore = await page.evaluate(() => [...document.querySelectorAll('.mk-car')].map((e) => [e.getBoundingClientRect().left, e.getBoundingClientRect().top]))
 await page.getByRole('button', { name: N.watch }).click()
 await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
 const watched = await page.evaluate(async (impact) => {
   const map = window.__map
-  const src = map.getCanvas()
+  const play = window.__play
+  if (!play?.timeline) return { error: 'the diagram step did not expose the replay clock on window.__play' }
+  const RING_MS = 600 // src/map/playback.ts
   const size = 160
   const off = document.createElement('canvas')
   off.width = off.height = size
   const ctx = off.getContext('2d', { willReadFrequently: true })
-  // the share of near-white pixels in a box around the impact, wherever the camera has put it
-  const white = () => {
+  // the box around the impact, wherever the camera has put it
+  const box = () => {
+    const src = map.getCanvas()
     const p = map.project(impact)
     const dpr = src.width / src.clientWidth
     ctx.clearRect(0, 0, size, size)
     ctx.drawImage(src, (p.x - size / 2) * dpr, (p.y - size / 2) * dpr, size * dpr, size * dpr, 0, 0, size, size)
-    const px = ctx.getImageData(0, 0, size, size).data
+    return ctx.getImageData(0, 0, size, size).data
+  }
+  // one moment on the playback clock, settled: the seek holds the frame loop there, the page
+  // hands that frame to the map, and the map is made to paint before the pixels are read back
+  const at = async (ms) => {
+    play.seek(ms)
+    await new Promise((r) => setTimeout(r, 250))
+    for (let i = 0; i < 2; i++)
+      await new Promise((r) => {
+        map.once('render', () => requestAnimationFrame(r))
+        map.triggerRepaint()
+      })
+    return { px: box(), pitch: map.getPitch() }
+  }
+  const { impactMs } = play.timeline
+  // the reference frame: the same shot once the ring has gone — same camera, same cars, no
+  // shockwave — so what lights up against it is the shockwave and nothing else
+  const gone = await at(impactMs + RING_MS + 50)
+  const lit = ({ px }) => {
     let n = 0
-    for (let i = 0; i < px.length; i += 4) if (px[i] > 200 && px[i + 1] > 200 && px[i + 2] > 200) n++
+    for (let i = 0; i < px.length; i += 4) if (px[i] - gone.px[i] > 25 && px[i + 1] - gone.px[i + 1] > 25) n++
     return n / (px.length / 4)
   }
-  let pitch = 0
-  const whites = []
-  const t0 = performance.now()
-  while (document.querySelector('.maplibregl-map').classList.contains('mk-playing') && performance.now() - t0 < 30000) {
-    pitch = Math.max(pitch, map.getPitch())
-    whites.push(white())
-    await new Promise((r) => setTimeout(r, 50))
-  }
-  const sorted = [...whites].sort((a, b) => a - b)
-  return { pitch, frames: whites.length, peak: sorted[sorted.length - 1], median: sorted[sorted.length >> 1], after: map.getPitch(), bearing: map.getBearing() }
+  // the ring is scaled from nothing, so the moment of impact itself is the control: the same
+  // frame again, with a ring of no radius in it
+  const born = lit(await at(impactMs))
+  const frames = []
+  for (const u of [0.6, 0.7, 0.8]) frames.push(await at(impactMs + u * RING_MS))
+  play.stop()
+  return { born, rings: frames.map(lit), pitch: Math.max(...frames.map((f) => f.pitch)), gonePitch: gone.pitch }
 }, (await draft()).impact)
-if (watched.pitch < 40) fail(`watching never tilted the map (pitch peaked at ${watched.pitch.toFixed(0)}°)`)
-if (watched.peak < watched.median + 0.08) fail(`no shockwave: white around the impact peaked at ${(watched.peak * 100).toFixed(0)}% against a median of ${(watched.median * 100).toFixed(0)}% over ${watched.frames} frames`)
-if (watched.after !== 0 || watched.bearing !== 0) fail(`the map came back tilted (pitch ${watched.after}, bearing ${watched.bearing})`)
+const pc = (n) => `${(n * 100).toFixed(0)}%`
+if (watched.error) fail(watched.error)
+const peak = Math.max(...(watched.rings ?? [0]))
+if (watched.pitch < 40) fail(`watching never tilted the map (pitch was ${watched.pitch.toFixed(0)}° on the shockwave's own frames)`)
+if (Math.abs(watched.pitch - watched.gonePitch) > 1)
+  fail(`the frames compared are not the same shot, so nothing is proved (pitch ${watched.pitch.toFixed(0)}° with the ring, ${watched.gonePitch.toFixed(0)}° without)`)
+if (peak < 0.1) fail(`no shockwave: it lit [${watched.rings.map(pc).join(' ')}] of the box around the impact against the same frame with the ring gone`)
+if (watched.born > 0.05) fail(`the box around the impact changes without a shockwave in it (${pc(watched.born)} at the moment of impact, where the ring has no radius yet)`)
+await page.waitForFunction(() => !document.querySelector('.maplibregl-map').classList.contains('mk-playing'), null, { timeout: 12000 })
+const home = await page.evaluate(() => ({ pitch: window.__map.getPitch(), bearing: window.__map.getBearing() }))
+if (home.pitch !== 0 || home.bearing !== 0) fail(`the map came back tilted (pitch ${home.pitch}, bearing ${home.bearing})`)
 const carsAfter = await page.evaluate(() => [...document.querySelectorAll('.mk-car')].map((e) => [e.getBoundingClientRect().left, e.getBoundingClientRect().top]))
 if (carsAfter.length !== carsBefore.length || carsAfter.some(([x, y], i) => Math.abs(x - carsBefore[i][0]) > 1 || Math.abs(y - carsBefore[i][1]) > 1))
   fail(`the markers came back somewhere else: ${JSON.stringify(carsBefore)} → ${JSON.stringify(carsAfter)}`)
-ok(`map: watched it — the camera tilted to ${watched.pitch.toFixed(0)}°, the shockwave peaked at ${(watched.peak * 100).toFixed(0)}% white around the impact (median ${(watched.median * 100).toFixed(0)}%, ${watched.frames} frames), and the map came back flat with the markers where they were`)
+ok(
+  `map: watched it — the camera tilted to ${watched.pitch.toFixed(0)}°, the shockwave lit [${watched.rings.map(pc).join(' ')}] of the box around the impact against the same frame once it had gone (${pc(watched.born)} before it had any radius), and the map came back flat with the markers where they were`,
+)
 
 // somewhere the map cannot show — a garage, a covered car park: the same diagram on a
 // drawn parking lot. The ground is saved with the claim, and the cars survive the switch.

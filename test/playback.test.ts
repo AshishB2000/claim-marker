@@ -29,7 +29,6 @@ import {
   lerpAngle,
   posesAt,
   ringAt,
-  seekTo,
   shotAt,
   shots,
   timelineOf,
@@ -143,11 +142,8 @@ describe('the clock', () => {
   const a = car('a', [start], here, 0)
   const tl = timelineOf([a])
 
-  it('seeks to a fraction of the drive, clamped, and the frame is that moment', () => {
-    expect(seekTo(0.5, tl)).toBe(tl.ms / 2)
-    expect(seekTo(-1, tl)).toBe(0)
-    expect(seekTo(2, tl)).toBe(tl.ms)
-    const half = frameAt([a], tl, seekTo(0.5, tl))
+  it('a moment on the clock is that frame of the drive', () => {
+    const half = frameAt([a], tl, tl.ms / 2)
     expect(half.t).toBe(0.5)
     expect(half.poses).toEqual(posesAt([a], ease(0.5)))
     expect(distance(half.poses[0].position, start)).toBeCloseTo(20, 0)
