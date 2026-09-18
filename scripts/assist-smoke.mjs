@@ -73,7 +73,10 @@ function shutdown(code) {
   process.exit(code)
 }
 
-browser = await chromium.launch()
+// A camera the guided tiles can actually open. Chromium's fake device plays a moving test
+// pattern into getUserMedia, which is enough to prove the sheet opens, samples frames, hints,
+// shoots and — the part that matters — lets the camera go again afterwards.
+browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
 const errors = []
 // step 5 asks the stub for a 502 on purpose; the browser logs every failed fetch
@@ -354,8 +357,19 @@ ok('assist: "Go to that step" opens the step that answers the question')
 
 // ── 8 · the phone: the camera first, and the photos read by themselves ─
 
-const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
+const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, permissions: ['camera'] })
 const phone = await phoneCtx.newPage()
+// every track the page is ever handed, so the walk can prove the camera is released and not
+// merely hidden — a page that leaves the camera light on after the sheet closes ends a pilot
+await phone.addInitScript(() => {
+  window.__tracks = []
+  const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+  navigator.mediaDevices.getUserMedia = async (c) => {
+    const stream = await real(c)
+    window.__tracks.push(...stream.getTracks())
+    return stream
+  }
+})
 phone.on('console', (m) => m.type() === 'error' && !expected.test(m.text()) && errors.push(m.text()))
 phone.on('pageerror', (e) => errors.push(String(e)))
 const state = () => phone.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state)
@@ -395,9 +409,42 @@ answer = () => [
     ],
   },
 ]
+
+/** one guided shot through the live camera: open the sheet, press the shutter, wait for the photo */
+const shootTile = async (tile) => {
+  const before = (await state()).claim.attachments.photos.length
+  await phone.getByRole('button', { name: tile }).click()
+  await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ timeout: 20000 })
+  await phone.getByRole('button', { name: 'Take photo' }).click()
+  await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ state: 'detached', timeout: 10000 })
+  await phone
+    .waitForFunction((n) => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.attachments.photos.length > n, before, { timeout: 15000 })
+    .catch(() => fail(`the "${tile}" shutter did not land a photo`))
+}
+
 const before8 = seen.length
-const [chooser] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The damage, close up' }).click()])
-await chooser.setFiles({ name: 'damage.png', mimeType: 'image/png', buffer: PNG })
+// the tile opens the live camera, not a file picker: this is a phone with a camera in it
+await phone.getByRole('button', { name: 'The damage, close up' }).click()
+await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ timeout: 20000 })
+// the sheet renders first and the stream arrives a moment later, as it does on a phone
+await phone.waitForFunction(() => window.__tracks.length === 1, null, { timeout: 15000 }).catch(() => fail('the guide did not open the camera'))
+// the hints are hints: whatever the fake device's test pattern reads as, the shutter works
+await phone.waitForTimeout(900)
+const shutter = phone.getByRole('button', { name: 'Take photo' })
+if (await shutter.isDisabled()) fail('the shutter was disabled — the checks are hints, never gates')
+await shutter.click()
+await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ state: 'detached', timeout: 10000 })
+const releasedShot = await phone.evaluate(() => window.__tracks.every((t) => t.readyState === 'ended'))
+if (!releasedShot) fail('the camera was still running after the shutter closed the sheet')
+// the frame goes through the same `addPhotos` a picked file does, so it is downscaled and
+// re-encoded before it is kept — which takes a moment
+await phone
+  .waitForFunction(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.attachments.photos.length === 1, null, { timeout: 15000 })
+  .catch(() => fail('the shutter did not land a photo'))
+const shot = (await state()).claim.attachments.photos.at(-1)
+if (!shot?.data.startsWith('data:image/jpeg;base64,') || shot.of !== 'a') fail(`the shutter did not land a photo of A: ${JSON.stringify(shot?.of)}`)
+ok('assist: the guided tile opens the real camera, the shutter lands a photo, and closing releases the camera')
+
 await phone
   .getByRole('button', { name: 'Add Hood' })
   .waitFor({ timeout: 20000 })
@@ -431,8 +478,7 @@ answer = () => [
     ],
   },
 ]
-const [chooser2] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The same, from a step back' }).click()])
-await chooser2.setFiles({ name: 'step-back.png', mimeType: 'image/png', buffer: PNG })
+await shootTile('The same, from a step back')
 await phone
   .getByRole('button', { name: 'Add Front bumper' })
   .waitFor({ timeout: 20000 })
@@ -446,8 +492,7 @@ ok('assist: another photo reads again, a panel already marked is not offered twi
 
 // the endpoint failing is a quiet line, and the car underneath still takes a tap
 answer = () => [502, { error: 'the assistant could not answer' }]
-const [chooser3] = await Promise.all([phone.waitForEvent('filechooser'), phone.getByRole('button', { name: 'The whole side of the car' }).click()])
-await chooser3.setFiles({ name: 'side.png', mimeType: 'image/png', buffer: PNG })
+await shootTile('The whole side of the car')
 await phone.waitForFunction(() => document.body.innerText.includes('We could not read the photos this time'), null, { timeout: 20000 }).catch(() => fail('a failed read did not say so'))
 if (await phone.getByRole('button', { name: /^Add / }).count()) fail('a failed read left a suggestion up')
 

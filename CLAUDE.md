@@ -200,6 +200,18 @@ against `sceneKey(incident)` — never a `setState` in the effect. `contextKey` 
 `roadWays` are not persisted on purpose. The roads layer draws on `satellite` and `streets`
 only; `alignToRoad` turns a dropped car to the road's line and **never moves it**.
 
+**A photograph's EXIF is read before `shrink` destroys it, and only distances are kept.**
+`src/claim/exif.ts` (pure, no dependency, both TIFF byte orders, never throws) runs on the
+original bytes in `addPhotos`; `photoDistances` in `photos.ts` turns what it found into
+`Photo.minutesFromIncident` / `metresFromScene`. **The raw position never reaches the
+document** — a gallery photo can carry the customer's home — and lives only in the store's
+in-memory `photoExif`, which also lets the distances follow a moved pin. The Where step
+offers "start from a photo you took" as a third way in; iOS strips location from picked
+photos, so it is offered and never relied on. `CameraGuide.tsx` opens the live camera from
+the guided tiles when `getUserMedia` exists, samples 160-px greyscale frames through
+`photoQuality.ts` every 300 ms, and its hints are **hints, never gates** — the shutter is
+always enabled, and every exit path stops the tracks.
+
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
 and friends directly; those are only the defaults `config` starts from. `main.tsx` awaits
@@ -343,7 +355,7 @@ era that still suits it. The app itself is Tailwind (`src/app.css`).
 src/app/          the seven steps, the shell, the shared ReportDocument, submit
 src/app/steps/damage/   the damage step's three parts: the camera, the suggestions, the marker
 src/adjuster/     the claims desk (adjuster.html), the insurer's side
-src/claim/        the claim/1 document, the persisted store, prefill, the outbox
+src/claim/        the claim/1 document, the persisted store, prefill, the outbox, a photo's own EXIF
 src/config.ts     runtime configuration and the host-page channel
 public/sw.js      the offline shell; its precache list is patched in by vite.config.ts
 src/map/          MapLibre scene, the three.js car layer, the transform maths, styles

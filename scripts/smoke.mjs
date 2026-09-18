@@ -13,6 +13,7 @@
  * dictionary is still on the page.
  */
 import { readFileSync } from 'node:fs'
+import { stampExif } from './exif-write.mjs'
 import { chromium } from 'playwright'
 
 const args = process.argv.slice(2)
@@ -40,6 +41,8 @@ const names = (lang) => ({
   no: t('common.no'),
 
   where: t('start.where.label'),
+  fromPhoto: t('start.where.photo.start'),
+  usePhoto: t('start.where.photo.use'),
   lookedUp: t('start.where.looked.title'),
   when: t('start.where.when'),
   weatherSel: t('start.where.weather'),
@@ -83,8 +86,9 @@ const names = (lang) => ({
 
   dent: t('severity.dent'),
   addPhotos: t('damage.addPhotos'),
-  photo1: t('damage.photo.alt', { n: 1 }),
-  caption1: t('damage.photo.captionAria', { n: 1 }),
+  // the scene photograph from the Where step is already photo 1, so the damage shot is photo 2
+  photo2: t('damage.photo.alt', { n: 2 }),
+  caption2: t('damage.photo.captionAria', { n: 2 }),
   markedForYou: t('damage.auto.title', { panel: t('zone.front_bumper').toLowerCase() }),
   drivable: t('damage.now.drivableAria'),
   airbags: t('damage.now.airbagsAria'),
@@ -230,6 +234,33 @@ await next()
 
 // ── 1 · where ──────────────────────────────────────────────────────────
 if (!(await page.getByRole('button', { name: starts(N.continue) }).isDisabled())) fail('Continue should be disabled until a place is chosen')
+
+// ── a photograph that knows where and when it was taken ───────────────
+// A date far enough back that the weather comes from the archive rather than the forecast
+// endpoint, which is the path an insurer's real claims take. The zone is stamped into the
+// photograph too, so the minutes come out zero on a machine in any zone.
+const past = new Date(Date.now() - 10 * 86400000)
+const pastLocal = `${new Date(past.getTime() - past.getTimezoneOffset() * 60000).toISOString().slice(0, 11)}08:00`
+const withExif = stampExif(readFileSync(new URL('./fixtures/scene.jpg', import.meta.url)), {
+  takenAt: pastLocal,
+  offset: '-04:00',
+  lng: -73.9859,
+  lat: 40.7573,
+})
+await page.setInputFiles(`input[type=file][aria-label="${N.fromPhoto}"]`, { name: 'scene.jpg', mimeType: 'image/jpeg', buffer: withExif })
+await page.waitForSelector('[data-photo-found]', { timeout: 20000 })
+const offered = await page.locator('[data-photo-found]').innerText()
+if (!/Times Square|40\.757/.test(offered)) fail(`the photo's own place was not offered: ${offered}`)
+await page.getByRole('button', { name: N.usePhoto }).click()
+await page.waitForTimeout(400)
+const fromPic = await draft()
+if (!fromPic.incident.location || Math.abs(fromPic.incident.location.lat - 40.7573) > 0.001) fail(`the photo did not fill the place: ${JSON.stringify(fromPic.incident.location)}`)
+if (fromPic.incident.at !== pastLocal) fail(`the photo did not fill the time: ${fromPic.incident.at} vs ${pastLocal}`)
+const scenePic = fromPic.attachments.photos[0]
+if (!scenePic || scenePic.of !== null) fail('the photo was not kept as a photo of the scene')
+if (scenePic.metresFromScene !== 0 || scenePic.minutesFromIncident !== 0) fail(`the photo's distances are wrong: ${JSON.stringify(scenePic)}`)
+ok(`where: a photograph filled the place and the time by itself, and is ${scenePic.metresFromScene} m / ${scenePic.minutesFromIncident} min from the claim`)
+
 await page.getByRole('combobox', { name: N.where }).fill('Times Square New York')
 await page.waitForSelector('[role=option]', { timeout: 20000 })
 await page.locator('[role=option]').first().click()
@@ -245,10 +276,8 @@ await settled('.maplibregl-canvas')
 const streetColours = await colours('.maplibregl-canvas')
 if (streetColours < 60) fail(`the street map looks blank (${streetColours} distinct colours)`)
 // ── the scene fills itself in ─────────────────────────────────────────
-// a date far enough back that the weather comes from the archive rather than the forecast
-// endpoint, which is the path an insurer's real claims take
-const past = new Date(Date.now() - 10 * 86400000)
-const pastLocal = new Date(past.getTime() - past.getTimezoneOffset() * 60000).toISOString().slice(0, 11) + '08:00'
+// the photograph already set this minute; setting it again is what a customer who typed it
+// would do, and the lookup has to answer for it either way
 await page.locator('input[type=datetime-local]').fill(pastLocal)
 await page.waitForSelector(`[data-looked] [data-looked-lines] li`, { timeout: 30000 })
 const lookedLines = await page.locator('[data-looked-lines] li').allInnerTexts()
@@ -583,9 +612,9 @@ const png = await page.evaluate(() => {
   return c.toDataURL('image/png').split(',')[1]
 })
 await page.locator(`input[aria-label="${N.addPhotos}"]`).setInputFiles({ name: 'bumper.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') })
-await page.waitForSelector(`img[alt="${N.photo1}"]`, { timeout: 15000 })
-await page.getByRole('textbox', { name: N.caption1 }).fill('Front bumper, close up')
-const photo = (await draft()).attachments.photos[0]
+await page.waitForSelector(`img[alt="${N.photo2}"]`, { timeout: 15000 })
+await page.getByRole('textbox', { name: N.caption2 }).fill('Front bumper, close up')
+const photo = (await draft()).attachments.photos[1]
 if (!photo || !photo.data.startsWith('data:image/jpeg;base64,')) fail('the photo was not kept as a JPEG')
 if (photo.of !== 'a') fail(`the photo should be of vehicle A, got ${photo.of}`)
 const photoKb = Math.round(photo.data.length / 1024)
@@ -670,7 +699,17 @@ const sam = doc.people.find((p) => p.role === 'passenger')
 if (!sam || sam.vehicle !== 'a' || !sam.injured || !/whiplash/i.test(sam.injury)) fail(`passenger ${JSON.stringify(sam)}`)
 if (!doc.people.find((p) => p.role === 'witness' && p.name === 'Wit Ness')) fail('witness lost')
 if (doc.police.called !== true || doc.police.report !== '2026-0042') fail(`police ${JSON.stringify(doc.police)}`)
-if (doc.attachments.photos.length !== 1 || doc.attachments.photos[0].caption !== 'Front bumper, close up' || doc.attachments.photos[0].of !== 'a') fail('photo lost')
+const damagePic = doc.attachments.photos.find((p) => p.of === 'a')
+if (doc.attachments.photos.length !== 2 || !damagePic || damagePic.caption !== 'Front bumper, close up') fail(`photos lost: ${JSON.stringify(doc.attachments.photos.map((p) => [p.of, p.caption]))}`)
+// the photograph knew where it was taken; the document knows only how far that was from the
+// claim — and it followed, because the customer then picked the geocoder's Times Square,
+// which is a few metres off the one the camera recorded
+const sent = doc.attachments.photos.find((p) => p.of === null)
+if (sent?.minutesFromIncident !== 0) fail(`the scene photo lost its time: ${JSON.stringify(sent?.minutesFromIncident)}`)
+if (typeof sent?.metresFromScene !== 'number' || sent.metresFromScene > 50) fail(`the scene photo's distance did not follow the place: ${JSON.stringify(sent?.metresFromScene)}`)
+const coords = JSON.stringify(doc.attachments.photos)
+if (/"(lng|lat|gps|latitude|longitude)"/i.test(coords) || /-73\.98/.test(coords)) fail('a coordinate from a photograph reached the document')
+ok(`sent: a photograph reports ${sent.metresFromScene} m / ${sent.minutesFromIncident} min from the claim, and no coordinate of its own`)
 const cond = doc.vehicles[0].condition
 if (cond.drivable !== false || cond.airbags !== true || cond.towed !== true || !/Mike/.test(cond.location)) fail(`condition ${JSON.stringify(cond)}`)
 if (doc.property.description !== 'Traffic light pole') fail(`property ${JSON.stringify(doc.property)}`)

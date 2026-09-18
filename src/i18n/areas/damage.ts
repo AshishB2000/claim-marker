@@ -42,7 +42,7 @@ export const en = {
   'damage.camera.hint.too_bright': 'Too bright — move out of the glare',
   // the check behind this fires when the frame is almost featureless, which is what a panel
   // filling the whole frame looks like — so the fix is to back off a little, not lean in
-  'damage.camera.hint.move_closer': 'Step back a little',
+  'damage.camera.hint.step_back': 'Step back a little',
 
   // ── the photo card everywhere else
   'damage.photos.title': 'Photos',
@@ -149,7 +149,7 @@ export const es: Record<keyof typeof en, string> = {
   'damage.camera.hint.hold_still': 'No te muevas',
   'damage.camera.hint.too_dark': 'Muy oscuro: enciende la luz o cambia de lugar',
   'damage.camera.hint.too_bright': 'Muy claro: aléjate del reflejo',
-  'damage.camera.hint.move_closer': 'Aléjate un poco',
+  'damage.camera.hint.step_back': 'Aléjate un poco',
 
   'damage.photos.title': 'Fotos',
   'damage.photos.lead':

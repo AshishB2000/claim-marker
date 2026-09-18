@@ -794,6 +794,61 @@ simply absent — which is why every field is nullable and the card prints only 
 Neither is evidence; both are context, and the report labels them "from public records" so
 nobody mistakes them for the customer's answer.
 
+## Photos that report for you (v9)
+
+A photograph taken at the scene already knows where and when it was taken. The page reads
+that, uses it, and throws the coordinates away.
+
+**Read it before it is destroyed.** `shrink()` re-encodes every photograph through a canvas to
+get it down to 1280 px, and a canvas keeps no metadata at all. So `addPhotos` reads the
+original bytes first: `src/claim/exif.ts` walks the JPEG's segments to the `APP1` "Exif" block,
+reads the TIFF header in **either byte order**, and picks out `DateTimeOriginal`,
+`OffsetTimeOriginal` and the GPS IFD. About a hundred and twenty lines, no dependency, and
+nothing in it throws — a truncated file, a nonsense offset, a zero denominator in a rational
+all come back as "it did not say".
+
+**The document records distances, never coordinates.** `Photo.minutesFromIncident` and
+`Photo.metresFromScene`, both rounded, absent when the photograph said nothing. This is not a
+nicety: a picture chosen from the gallery can carry the customer's home, their child's school,
+every place they have been. What a claim needs is "taken two hours later and four hundred
+metres away", and that is exactly what it gets. The position itself lives in
+`store.photoExif`, in memory only, never persisted and never sent; `scripts/smoke.mjs` walks
+every photograph in the sent document and fails on anything coordinate-shaped.
+
+Those distances **follow** the claim: move the pin or change the time and every photograph
+still holding its metadata is re-measured. A draft reopened tomorrow keeps the numbers it was
+given and simply stops following, because the metadata is not on disk to re-read.
+
+**A third way in.** On the Where step, beside search and "use my location": start from a photo
+you took. If it carries a position, it is reverse-geocoded and offered — "that photo was taken
+at 5th Ave & 42nd St, 17:42" — and accepting fills the place and the time. Offered, never
+relied on: **iOS strips the location out of a picked photo unless the customer has granted full
+library access**, and a camera-capture input frequently carries none at all. When it says
+nothing, the page says so plainly and keeps the photograph anyway, because a photograph of the
+scene is worth having either way.
+
+**The live camera guide** (`src/app/steps/damage/CameraGuide.tsx`) opens from the four guided
+tiles when `getUserMedia` exists — a phone. A full-screen sheet with the real camera behind an
+SVG frame for the shot being asked for: a box for the close-up, the body's own side silhouette
+for the whole side, a plate-shaped box for the other vehicle. Every 300 ms it draws the frame
+into a 160-px greyscale canvas and runs `src/claim/photoQuality.ts` over it: the variance of a
+3×3 Laplacian for blur, the mean and the clipped fractions for exposure. "Hold still", "Too
+dark — turn on the light or move", "Step back a little".
+
+**Those are hints and never gates.** The shutter is always enabled. A blurry photograph of real
+damage beats no photograph, and a form that refuses to take a picture at the roadside because
+it does not like the light is a form people abandon. The shutter draws the full-resolution
+frame to a canvas and hands it to the same `addPhotos`, so the downscaling, the cap of twelve
+and the photo-first suggestions all behave exactly as they did. Everything that ends the
+session — a rejection, Escape, the close button, unmounting — goes through one cleanup that
+calls `track.stop()`: `scripts/assist-smoke.mjs` wraps `getUserMedia`, keeps every track the
+page was handed, and fails if one is still live after the sheet closes. A page that leaves the
+camera light on is a page an insurer stops piloting.
+
+Where `getUserMedia` does not exist the old hidden `<input capture>` path runs, unchanged, and
+a camera that refuses to open falls back to it for that tap. The desktop card never opens the
+guide: a laptop webcam pointed at a bumper is not a thing that happens.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:

@@ -121,13 +121,13 @@ describe('hintFor', () => {
     expect(hintFor(blurred, WIDTH, HEIGHT)).toBe('hold_still')
   })
 
-  it('calls a flat but correctly exposed field move_closer', () => {
+  it('calls a flat but correctly exposed field step_back', () => {
     const frame = uniform(WIDTH, HEIGHT, 128)
     // one bright speck, away from the border, is enough to be "sharp" by variance without
     // making the frame anything but almost featureless
     frame[10 * WIDTH + 10] = 255
     expect(sharpness(frame, WIDTH, HEIGHT)).toBeGreaterThanOrEqual(BLUR_SHARPNESS)
-    expect(hintFor(frame, WIDTH, HEIGHT)).toBe('move_closer')
+    expect(hintFor(frame, WIDTH, HEIGHT)).toBe('step_back')
   })
 
   it('calls a sharp, well-exposed, detailed frame fine', () => {

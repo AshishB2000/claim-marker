@@ -77,7 +77,7 @@ export function exposure(gray: Uint8ClampedArray | Uint8Array): { mean: number; 
 }
 
 /** what to tell the customer, or null when the shot is fine */
-export type Hint = 'hold_still' | 'too_dark' | 'too_bright' | 'move_closer'
+export type Hint = 'hold_still' | 'too_dark' | 'too_bright' | 'step_back'
 
 // Thresholds are named and exported so a reader can tune them and a test can assert against
 // them rather than against copied magic numbers.
@@ -107,7 +107,7 @@ export function hintFor(gray: Uint8ClampedArray | Uint8Array, width: number, hei
   if (sharpness(gray, width, height) < BLUR_SHARPNESS) return 'hold_still'
   // sharp and well exposed, but a flat wall or a blank panel filling the frame is also "sharp"
   // by variance alone — it just has almost no edges anywhere in it
-  if (edgeFraction(gray, width, height) < FLAT_EDGE_FRACTION) return 'move_closer'
+  if (edgeFraction(gray, width, height) < FLAT_EDGE_FRACTION) return 'step_back'
   return null
 }
 
