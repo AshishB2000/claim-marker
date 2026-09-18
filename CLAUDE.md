@@ -208,9 +208,9 @@ any of them. `incident.utcOffset` is what makes `at` an instant — `instantOf(a
 is what the record said; `incident.conditions` stays the customer's answer, and
 `autoConditions` is `autoDamage`'s bargain for the three selects (`auto` follows the place
 and the time, `user` is final). "Still looking it up" is **derived** from `contextKey`
-against `sceneKey(incident)` — never a `setState` in the effect. `contextKey` and
-`roadWays` are not persisted on purpose. The roads layer draws on `satellite` and `streets`
-only; `alignToRoad` turns a dropped car to the road's line and **never moves it**.
+against `sceneKey(incident)` — never a `setState` in the effect. `contextKey`,
+`roadWays` and `buildings` are not persisted on purpose. The roads layer draws on `satellite`
+and `streets` only; `alignToRoad` turns a dropped car to the road's line and **never moves it**.
 
 **A photograph's EXIF is read before `shrink` destroys it, and only distances are kept.**
 `src/claim/exif.ts` (pure, no dependency, both TIFF byte orders, never throws) runs on the
