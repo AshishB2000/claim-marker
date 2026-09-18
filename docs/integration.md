@@ -237,6 +237,89 @@ request that carries an `Origin` header — which a browser always does — is r
 per IP (default 30) and answer `429` with `Retry-After: 60` above that. The page already
 treats `429` as an outage, so a limited report waits in the outbox rather than being lost.
 
+## 2c. Linked reports: the other driver
+
+At the scene the customer shows a QR code; the other driver scans it and gives their own
+account on their own phone — no app, no account, and never a look at the first report. Three
+endpoints, needing `SESSION_SECRET` (they are `503` without it):
+
+**`POST /incidents`** — the customer invites the other driver. Bearer: exactly what
+`POST /claims` accepts (a session token, or the shared `CLAIM_TOKEN`). The body is a minimal,
+non-identifying seed; the server keeps only these keys and drops everything else it is sent —
+no reporter, no description, nothing that names anyone:
+
+```
+POST /incidents
+Authorization: Bearer <the customer's own token>
+
+{ "location": { "lng": -73.9859, "lat": 40.7573, "address": "5th Ave & 42nd St" },
+  "at": "2026-09-17T14:30", "utcOffset": -240, "surface": "satellite",
+  "vehicles": [ { "body": "sedan", "color": "#b91c1c", "make": "Toyota", "model": "Camry" } ] }
+
+201 { "incident": "INC-DJKDKX",
+      "url": "https://claims.example.com/?party=eyJzdWIiOi…",
+      "expiresAt": "2026-09-21T01:47:13.000Z" }
+```
+
+`location` wants sane `lng`/`lat` and an address; `at` is `YYYY-MM-DDTHH:mm`; `utcOffset` an
+integer within ±960 minutes or `null`; `surface` one of `satellite`, `streets`, `lot`, `paper`;
+up to six vehicles, each only `body`, `color` (`#rrggbb`), `make` and `model` (60 characters
+each) — no plate, no VIN, no owner. `url` is the whole QR code payload: hand it straight to a
+QR generator, or open it as is on the other driver's phone. It carries a **party token**, the
+same shape session tokens are (`base64url(payload).base64url(hmac-sha256)`, `sub`
+`"party:INC-DJKDKX"`), minted for 72 hours instead of a day — long enough to survive the tow
+truck, the evening and the next morning — because `server/session.mjs`'s `sign()` takes an
+optional maximum beyond its usual one-day cap for exactly this call site. It is never a
+customer session: a party token cannot list, read or file under `/claims` as anyone, only
+under the incident it names.
+
+**`GET /incidents/:id/seed`** — what the other driver's page starts from. Bearer: a party
+token whose `sub` is exactly `party:<id>`; any other token, an expired one, a forged one, or a
+party token for a different incident answers `401` — never `403`, never `404`, always "a party
+token for this incident is required", so the response never says whether an incident exists to
+someone who cannot prove they were invited to it.
+
+```
+GET /incidents/INC-DJKDKX/seed
+Authorization: Bearer <the party token from the QR code>
+
+200 { "location": { … }, "at": "2026-09-17T14:30", "utcOffset": -240,
+      "surface": "satellite", "vehicles": [ { "body": "sedan", "color": "#b91c1c", … } ] }
+```
+
+The answer is the stored seed and nothing else — not because anything is filtered out on the
+way here, but because `POST /incidents` never wrote the first report's names, phones, plates,
+VINs, people, damage, description, photographs or reference to it in the first place.
+
+**`POST /claims`**, from the other driver, with the party token as its bearer — the same
+endpoint the customer's page sends to. `incident.shared` on the document names the incident,
+and `reporter.party` is `"other_party"`; the receipt that comes back carries `incident` and
+`party` alongside the usual `reference` and `status`. A party token may file **one** report:
+sending a second, different document with the same party token is answered exactly like a
+resend — `200`, the first report's reference, `duplicate: true` — because the token already
+spent its one report.
+
+**`GET /incidents/:id`** — the desk reads both. Bearer: `DESK_TOKEN` (a demo visitor's session
+reads only what is in their own scope, the same rule as `GET /claims/:ref`).
+
+```
+GET /incidents/INC-DJKDKX
+Authorization: Bearer <desk token>
+
+200 { "incident": "INC-DJKDKX",
+      "reports": [ { "reference": "INS-2026-857MVB", "party": "other_party", …, "claim": { … } },
+                    { "reference": "INS-2026-X93KMT", "party": "policyholder", …, "claim": { … } } ] }
+```
+
+`reports` is newest last, each one the receipt exactly as `GET /claims/:ref` shows it — plus
+`incident` and `party` — with `claim` alongside it, so the desk can lay both accounts of the
+same accident side by side. `404` for an unknown incident id.
+
+**Building this against your own backend instead of the reference server:** the wire contract
+is the party token (who may see the seed and file the one report) and, on every receipt,
+`incident.shared` plus `reporter.party`. That pair is all a backend needs to link two accounts
+of one accident itself, whatever it does with the three endpoints above.
+
 ## 3. The reference server
 
 `server/claim-server.mjs` is a complete receiving end in one file with no dependencies, to
@@ -252,7 +335,9 @@ node server/claim-server.mjs                     # http://localhost:8788
 It validates each document with the page's parser, files it under `data/claims/<reference>/`
 as `claim.json` plus `scene.png`, `damage-a.png`, `photo-01.jpg`…, answers with its own
 reference, dedupes on the idempotency key, and serves `GET /claims`, `GET /claims/:ref`,
-`GET /claims/:ref/files/:name` and `PATCH /claims/:ref { status }` to the desk.
+`GET /claims/:ref/files/:name` and `PATCH /claims/:ref { status }` to the desk. It is also
+where [linked reports](#2c-linked-reports-the-other-driver) live: `POST /incidents`,
+`GET /incidents/:id/seed` and `GET /incidents/:id`.
 
 **The webhook.** With `WEBHOOK_URL` set, each new report is announced:
 
