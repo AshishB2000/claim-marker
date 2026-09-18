@@ -122,9 +122,6 @@ export function timelineOf(vehicles: ClaimVehicle[]): Timeline {
 
 // ── the clock ─────────────────────────────────────────────────────────
 
-/** `t` (0–1) of the drive as a moment on its clock, in ms */
-export const seekTo = (t: number, timeline: Timeline): number => clamp01(t) * timeline.ms
-
 /** the clock `wallMs` later at `rate`, never past `end` and never backwards */
 export const advance = (ms: number, wallMs: number, rate: number, end: number): number => Math.min(end, ms + Math.max(0, wallMs) * rate)
 
