@@ -269,8 +269,13 @@ live instance at the first playback frame and drops it to 0 — after jumping ba
 it captured — on the last, or on a Stop, before the markers return. The DOM-marker maths
 assumes a flat map; keep it that way. The playback clock is the hook's own (`usePlayback`
 holds it in a ref and advances it by wall delta × `rate`), not `performance.now()`; `seek`
-and slow motion depend on that. The pure parts — `Timeline`, `impactTimeOf` (closest
-approach, sixty samples), `shots`, `cameraAt`, `ringAt` — live in `src/map/playback.ts`,
+and slow motion depend on that. `seek(ms)` is a moment on that clock — past the drive, into
+the hold, where the shockwave is — and it holds the frame loop there, which is how the smoke
+proves the ring without racing it: it drives `window.__play` (DEV only, from the diagram step,
+like `__map`) and diffs one settled frame of a shot against the same shot once the ring has
+gone, rather than sampling for a peak a loaded machine's frame rate decides. The pure parts —
+`Timeline`, `impactTimeOf` (closest approach, sixty samples), `shots`, `cameraAt`, `ringAt` —
+live in `src/map/playback.ts`,
 which must stay free of value imports of maplibre or three so `test/playback.test.ts` runs
 in plain node. `ease` and `HOLD_MS` have one home there; `record.ts` and `Compare.tsx` import
 them. The shockwave goes through `CarLayer.setDecor()` — placed by `vehicleMatrix`, wound
