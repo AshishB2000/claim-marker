@@ -505,12 +505,21 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                 lang={lang}
                 interactive={false}
                 poses={play.poses}
+                mode={play.mode}
+                clock={play.clock}
                 className="h-[360px]"
               />
               {play.canPlay && (
-                <button className="chip absolute top-3 right-3 print:hidden" onClick={play.playing ? play.stop : play.start} aria-pressed={play.playing}>
-                  {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
-                </button>
+                <div className="absolute top-3 right-3 flex gap-1.5 print:hidden">
+                  <button className="chip" onClick={play.playing ? play.stop : () => play.start()} aria-pressed={play.playing}>
+                    {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
+                  </button>
+                  {!play.playing && (
+                    <button className="chip" onClick={() => play.start('cinematic')}>
+                      <Icon.film /> {t('scene.play.watch')}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
             <figcaption className="flex flex-wrap items-center gap-x-4 gap-y-1 bg-slate-50 px-4 py-2 text-xs text-slate-600">

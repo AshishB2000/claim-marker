@@ -263,6 +263,21 @@ failure sends without it. `attachments.replay` is capped by `isReplay` (4 MB of 
 not persisted in the draft. The smoke decodes it and counts colours on the **middle frame**,
 because a valid video of a black rectangle is the failure that matters.
 
+**The map tilts only inside a cinematic playback, and never with a marker in reach.**
+`MapScene` is still built `pitch 0, maxPitch 0`; `mode="cinematic"` raises `maxPitch` on the
+live instance at the first playback frame and drops it to 0 — after jumping back to the view
+it captured — on the last, or on a Stop, before the markers return. The DOM-marker maths
+assumes a flat map; keep it that way. The playback clock is the hook's own (`usePlayback`
+holds it in a ref and advances it by wall delta × `rate`), not `performance.now()`; `seek`
+and slow motion depend on that. The pure parts — `Timeline`, `impactTimeOf` (closest
+approach, sixty samples), `shots`, `cameraAt`, `ringAt` — live in `src/map/playback.ts`,
+which must stay free of value imports of maplibre or three so `test/playback.test.ts` runs
+in plain node. `ease` and `HOLD_MS` have one home there; `record.ts` and `Compare.tsx` import
+them. The shockwave goes through `CarLayer.setDecor()` — placed by `vehicleMatrix`, wound
+once through `reverseWinding` — and is cleared at the end of playback, so no export ever
+holds it. The playback rate is `rate` in code, never "speed": the words fault, liability,
+blame, speed and cost stay out of anything the customer or the desk reads.
+
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
 and friends directly; those are only the defaults `config` starts from. `main.tsx` awaits

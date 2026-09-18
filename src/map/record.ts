@@ -21,12 +21,10 @@ import { plural, translate, type Lang } from '../i18n'
 import { SIZE } from '../vehicles/bodies'
 import type { Vehicle } from '../zones'
 import type { CarLayer, CarPose } from './carLayer'
-import { durationOf, lengthOf, posesAt, routeOf } from './playback'
+import { HOLD_MS, durationOf, ease, lengthOf, posesAt, routeOf } from './playback'
 
 export const REC_WIDTH = 960
 export const REC_HEIGHT = 540
-/** the impact should sit on screen long enough to read; mirrors `usePlayback`'s own HOLD_MS */
-const HOLD_MS = 700
 /** about 1.5 Mbps: plenty for a diagram of flat colour and a moving map tile, not a photo */
 const BITRATE = 1_500_000
 
@@ -156,9 +154,6 @@ const labelsFor = (vehicles: ClaimVehicle[], poses: CarPose[]): OverlayLabel[] =
   }
   return out
 }
-
-/** cars pull away and brake rather than teleport — the same curve `usePlayback` eases through */
-const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2)
 
 const nextFrame = (): Promise<number> => new Promise((resolve) => requestAnimationFrame(resolve))
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))

@@ -7,7 +7,9 @@
  * the body to move it, drag the handle ahead of its nose to turn it. Where it came from is
  * drawn by the drag, or tapped onto the map in tap mode, and those points can be dragged.
  * Given `poses`, the 3D cars follow those instead of the vehicles — playback — and the
- * markers step aside until it is over.
+ * markers step aside until it is over. In `mode="cinematic"` the playback also drives the
+ * camera: the map is allowed to tilt for exactly that long, chases the customer's car and
+ * comes back flat before the markers return, so nothing is ever edited tilted.
  */
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import './worker'
@@ -17,7 +19,8 @@ import { bearing, destination, type LngLat } from '../geo'
 import { translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
 import { SIZE } from '../vehicles/bodies'
-import { CarLayer, type CarPose } from './carLayer'
+import { CarLayer, shockRing, type CarPose } from './carLayer'
+import { cameraAt, ringAt, shotAt, shots, timelineOf, type Camera, type PlaybackMode, type Shot, type Timeline } from './playback'
 import { damageCount, paintOverlay, recordPlayback, type OverlayLabel } from './record'
 import { styleFor, type MapStyle } from './styles'
 
@@ -52,6 +55,14 @@ export type MapSceneProps = {
   /** a playback frame; while it is set the cars follow it and the markers hide */
   poses?: CarPose[] | null
   /**
+   * How a playback is shown. `diagram` (the default) keeps the map exactly as it is drawn:
+   * flat, north-up. `cinematic` opens the camera for as long as `poses` is set — tilted,
+   * behind the customer's car, slowed into the impact with a shockwave — driven by `clock`,
+   * the playback's own time in ms from `usePlayback`.
+   */
+  mode?: PlaybackMode
+  clock?: number
+  /**
    * A second account's vehicles, drawn faintly over the first for the desk's `Compare` view —
    * somebody else's story of the same cars, not something to edit: no markers, no drag or turn
    * handles, no labels, just the body at reduced opacity and its travel path dashed. Absent or
@@ -77,6 +88,11 @@ export type MapSceneProps = {
 
 /** close enough that a sedan is eighty pixels long; the imagery overscales gracefully past 19 */
 const ZOOM = 19.9
+/** the map may tilt this far, and only while a cinematic replay runs */
+const MAX_PITCH = 60
+/** the white flow line along a travel path, and how wide it becomes as a light trail in slow motion */
+const FLOW_WIDTH = 3
+const TRAIL_WIDTH = 7
 /** the label floats this far above the car's footprint, in pixels */
 const LABEL_GAP = 18
 
@@ -159,6 +175,18 @@ const DASH_STEPS: number[][] = [
 
 type Handles = { car: Marker; turn: HTMLElement; tagwrap: HTMLElement; tag: HTMLElement; ways: Marker[] }
 
+/** one cinematic replay, from the moment the camera is let off the leash to the moment it is handed back */
+type Cinematic = {
+  shots: Shot[]
+  timeline: Timeline
+  /** the view the customer left, restored exactly at the end */
+  home: Camera
+  ring: ReturnType<typeof shockRing>
+  /** the light trails: which dash step is showing, and whether they are on */
+  step: number
+  slow: boolean
+}
+
 /** everything created for one map instance, so the cleanup can tear down exactly that */
 type Live = {
   map: MapLibreMap
@@ -168,6 +196,8 @@ type Live = {
   styleReady: boolean
   /** the ground the map was last given, so a re-render does not reload the same style */
   style: MapStyle
+  /** set while a cinematic replay has the camera */
+  cine: Cinematic | null
 }
 
 type Props = Omit<MapSceneProps, 'className' | 'ref'>
@@ -221,7 +251,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     map.keyboard.disableRotation()
     if (init.interactive) map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
     map.addControl(new ScaleControl({ maxWidth: 90, unit: 'metric' }), 'bottom-left')
-    const state: Live = { map, cars: new CarLayer(init.center), handles: new Map(), impact: null, styleReady: false, style: init.style }
+    const state: Live = { map, cars: new CarLayer(init.center), handles: new Map(), impact: null, styleReady: false, style: init.style, cine: null }
     live.current = state
     // a handle for poking at the live map from the console; never in production
     if (import.meta.env.DEV) Object.assign(window, { __map: map })
@@ -310,12 +340,13 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       }
     })
 
-    // direction of travel: the white dashes creep along the line towards the car
+    // direction of travel: the white dashes creep along the line towards the car; the
+    // cinematic replay steps them itself, faster, while its light trails are lit
     let step = 0
     let last = 0
     let raf = 0
     const flow = (t: number) => {
-      if (t - last > 70 && state.styleReady && map.getLayer('paths-flow')) {
+      if (t - last > 70 && state.styleReady && !state.cine?.slow && map.getLayer('paths-flow')) {
         step = (step + 1) % DASH_STEPS.length
         map.setPaintProperty('paths-flow', 'line-dasharray', DASH_STEPS[step])
         last = t
@@ -514,6 +545,60 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     s.map.getContainer().classList.toggle('mk-playing', !!poses)
     s.cars.setPoses(poses ?? posesOf(latest.current.vehicles))
   }, [poses])
+
+  // ── cinematic playback: the camera opens up, chases, slows into the impact, comes back ─
+  // The map is built flat and un-tiltable; it may tilt only between the first cinematic frame
+  // and the last, and whatever happens in between — a stop pressed mid-chase, the run ending
+  // — it is handed back at exactly the view the customer left, before the markers return.
+  const mode = props.mode ?? 'diagram'
+  const clock = props.clock ?? 0
+  useEffect(() => {
+    const s = live.current
+    if (!s) return
+    const { map, cars } = s
+    if (mode !== 'cinematic' || !poses) {
+      if (!s.cine) return
+      map.jumpTo({ center: ll(s.cine.home.center), zoom: s.cine.home.zoom, pitch: 0, bearing: 0 })
+      map.setMaxPitch(0)
+      cars.setDecor([])
+      if (map.getLayer('paths-flow')) map.setPaintProperty('paths-flow', 'line-width', FLOW_WIDTH)
+      s.cine = null
+      return
+    }
+    if (!s.cine) {
+      const vehicles = latest.current.vehicles
+      const timeline = timelineOf(vehicles)
+      s.cine = {
+        shots: shots(vehicles, timeline),
+        timeline,
+        home: { center: fromLL(map.getCenter()), zoom: map.getZoom(), pitch: 0, bearing: 0 },
+        ring: shockRing(),
+        step: 0,
+        slow: false,
+      }
+      map.setMaxPitch(MAX_PITCH)
+    }
+    const c = s.cine
+    const cam = cameraAt(c.shots, clock, poses, c.home)
+    map.jumpTo({ center: ll(cam.center), zoom: cam.zoom, pitch: cam.pitch, bearing: cam.bearing })
+    // slow motion: the travel paths brighten into light trails, their dashes racing
+    const slow = shotAt(c.shots, clock).rate < 1
+    if (map.getLayer('paths-flow')) {
+      if (slow !== c.slow) map.setPaintProperty('paths-flow', 'line-width', slow ? TRAIL_WIDTH : FLOW_WIDTH)
+      if (slow) {
+        c.step = (c.step + 1) % DASH_STEPS.length
+        map.setPaintProperty('paths-flow', 'line-dasharray', DASH_STEPS[c.step])
+      }
+    }
+    c.slow = slow
+    // the shockwave: a ring out from the impact, decoration the document never sees
+    const ring = ringAt(c.timeline, clock)
+    const impact = latest.current.impact
+    if (ring && impact) {
+      c.ring.material.opacity = ring.opacity
+      cars.setDecor([{ object: c.ring, at: impact, metres: ring.metres }])
+    } else cars.setDecor([])
+  }, [mode, clock, poses])
 
   // ── impact ──────────────────────────────────────────────────────────
   const { impact } = props

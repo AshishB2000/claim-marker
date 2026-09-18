@@ -19,6 +19,9 @@ import { eyeFrom, mercator, vehicleMatrix } from './transform'
 
 export type CarPose = { id: string; body: Vehicle; color: string; position: LngLat; heading: number }
 
+/** something the scene holds besides the cars, standing at `at` with one model unit being `metres` */
+export type Decor = { object: THREE.Object3D; at: LngLat; metres: number }
+
 type Car = { root: THREE.Group; body: Vehicle; color: string }
 
 /** a soft dark disc under each car — there is no ground mesh for a real shadow to land on */
@@ -41,6 +44,20 @@ function shadowBlob(width: number, length: number): THREE.Mesh {
   mesh.position.y = 0.012
   mesh.frustumCulled = false
   mesh.renderOrder = -1
+  return mesh
+}
+
+/**
+ * A flat white ring, one unit across, lying on the ground: the shockwave `MapScene` scales out
+ * from the impact during a cinematic replay. Unlit and untone-mapped so it is white, not the
+ * grey the tone mapper makes of white; lifted a hair so it does not fight the ground.
+ */
+export function shockRing(): THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial> {
+  const mesh = new THREE.Mesh(
+    new THREE.RingGeometry(0.5, 1, 48).rotateX(-Math.PI / 2).translate(0, 0.02, 0),
+    new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }),
+  )
+  mesh.frustumCulled = false
   return mesh
 }
 
@@ -127,6 +144,9 @@ export class CarLayer implements CustomLayerInterface {
   private readonly ghostCars = new Map<string, Car>()
   private poses: CarPose[] = []
   private ghostPoses: CarPose[] = []
+  private decor: Decor[] = []
+  /** decor whose geometry has already been rewound — once, or a second pass would wind it back */
+  private readonly wound = new WeakSet<THREE.Object3D>()
   private origin: LngLat
   private readonly shift = new THREE.Matrix4()
   private readonly proj = new THREE.Matrix4()
@@ -168,6 +188,7 @@ export class CarLayer implements CustomLayerInterface {
     this.origin = origin
     this.reposition(this.cars, this.poses)
     this.reposition(this.ghostCars, this.ghostPoses)
+    for (const d of this.decor) vehicleMatrix(d.at, 0, d.metres, this.origin, d.object.matrix)
     this.map?.triggerRepaint()
   }
 
@@ -194,6 +215,30 @@ export class CarLayer implements CustomLayerInterface {
   setGhosts(poses: CarPose[]) {
     this.ghostPoses = poses
     void this.sync(true)
+  }
+
+  /**
+   * Extras the scene holds besides the cars — a shockwave, a building — decoration, never
+   * anything the document records. Replaces the previous set, so a caller animating one hands
+   * it in again every frame. Each object's geometry is wound the other way once, like a body's,
+   * or the map's mirrored projection would cull it.
+   */
+  setDecor(decor: Decor[]) {
+    for (const d of this.decor) this.scene.remove(d.object)
+    this.decor = decor
+    for (const d of decor) {
+      if (!this.wound.has(d.object)) {
+        this.wound.add(d.object)
+        d.object.traverse((o) => {
+          const mesh = o as THREE.Mesh
+          if (mesh.isMesh) mesh.geometry = reverseWinding(mesh.geometry)
+        })
+      }
+      d.object.matrixAutoUpdate = false
+      vehicleMatrix(d.at, 0, d.metres, this.origin, d.object.matrix)
+      this.scene.add(d.object)
+    }
+    this.map?.triggerRepaint()
   }
 
   /**

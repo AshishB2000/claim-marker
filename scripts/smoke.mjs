@@ -79,6 +79,7 @@ const names = (lang) => ({
   tapMap: t('scene.path.tap'),
   done: t('scene.banner.done'),
   playBack: t('scene.play.start'),
+  watch: t('scene.play.watch'),
   lot: t('surface.lot'),
   satellite: t('surface.satellite'),
   describeLabel: t('shell.describe.label'),
@@ -558,6 +559,48 @@ await page.waitForFunction(() => !document.querySelector('.maplibregl-map').clas
 if ((await page.locator('.mk-car').count()) !== 3) fail('the cars did not come back after playback')
 ok('map: playback ran and handed the map back')
 
+// watch it: the camera opens up and chases, the shockwave rings the impact, and the diagram
+// comes back exactly as it was — flat, north-up, every marker where it stood
+const carsBefore = await page.evaluate(() => [...document.querySelectorAll('.mk-car')].map((e) => [e.getBoundingClientRect().left, e.getBoundingClientRect().top]))
+await page.getByRole('button', { name: N.watch }).click()
+await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
+const watched = await page.evaluate(async (impact) => {
+  const map = window.__map
+  const src = map.getCanvas()
+  const size = 160
+  const off = document.createElement('canvas')
+  off.width = off.height = size
+  const ctx = off.getContext('2d', { willReadFrequently: true })
+  // the share of near-white pixels in a box around the impact, wherever the camera has put it
+  const white = () => {
+    const p = map.project(impact)
+    const dpr = src.width / src.clientWidth
+    ctx.clearRect(0, 0, size, size)
+    ctx.drawImage(src, (p.x - size / 2) * dpr, (p.y - size / 2) * dpr, size * dpr, size * dpr, 0, 0, size, size)
+    const px = ctx.getImageData(0, 0, size, size).data
+    let n = 0
+    for (let i = 0; i < px.length; i += 4) if (px[i] > 200 && px[i + 1] > 200 && px[i + 2] > 200) n++
+    return n / (px.length / 4)
+  }
+  let pitch = 0
+  const whites = []
+  const t0 = performance.now()
+  while (document.querySelector('.maplibregl-map').classList.contains('mk-playing') && performance.now() - t0 < 30000) {
+    pitch = Math.max(pitch, map.getPitch())
+    whites.push(white())
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  const sorted = [...whites].sort((a, b) => a - b)
+  return { pitch, frames: whites.length, peak: sorted[sorted.length - 1], median: sorted[sorted.length >> 1], after: map.getPitch(), bearing: map.getBearing() }
+}, (await draft()).impact)
+if (watched.pitch < 40) fail(`watching never tilted the map (pitch peaked at ${watched.pitch.toFixed(0)}°)`)
+if (watched.peak < watched.median + 0.08) fail(`no shockwave: white around the impact peaked at ${(watched.peak * 100).toFixed(0)}% against a median of ${(watched.median * 100).toFixed(0)}% over ${watched.frames} frames`)
+if (watched.after !== 0 || watched.bearing !== 0) fail(`the map came back tilted (pitch ${watched.after}, bearing ${watched.bearing})`)
+const carsAfter = await page.evaluate(() => [...document.querySelectorAll('.mk-car')].map((e) => [e.getBoundingClientRect().left, e.getBoundingClientRect().top]))
+if (carsAfter.length !== carsBefore.length || carsAfter.some(([x, y], i) => Math.abs(x - carsBefore[i][0]) > 1 || Math.abs(y - carsBefore[i][1]) > 1))
+  fail(`the markers came back somewhere else: ${JSON.stringify(carsBefore)} → ${JSON.stringify(carsAfter)}`)
+ok(`map: watched it — the camera tilted to ${watched.pitch.toFixed(0)}°, the shockwave peaked at ${(watched.peak * 100).toFixed(0)}% white around the impact (median ${(watched.median * 100).toFixed(0)}%, ${watched.frames} frames), and the map came back flat with the markers where they were`)
+
 // somewhere the map cannot show — a garage, a covered car park: the same diagram on a
 // drawn parking lot. The ground is saved with the claim, and the cars survive the switch.
 await page.getByRole('radio', { name: N.lot }).click()
@@ -678,6 +721,21 @@ await page.getByRole('button', { name: N.playBack }).click()
 await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
 await page.waitForFunction(() => !document.querySelector('.maplibregl-map').classList.contains('mk-playing'), null, { timeout: 12000 })
 ok('review: playback ran on the review map')
+
+// and watch it there too: the read-only map — the desk's is this same component — tilts and comes back
+await page.getByRole('button', { name: N.watch }).click()
+await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
+const reviewPitch = await page.evaluate(async () => {
+  let pitch = 0
+  const t0 = performance.now()
+  while (document.querySelector('.maplibregl-map').classList.contains('mk-playing') && performance.now() - t0 < 30000) {
+    pitch = Math.max(pitch, window.__map.getPitch())
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return { peak: pitch, after: window.__map.getPitch() }
+})
+if (reviewPitch.peak < 40 || reviewPitch.after !== 0) fail(`the review map did not tilt and come back (peaked at ${reviewPitch.peak.toFixed(0)}°, now ${reviewPitch.after}°)`)
+ok(`review: watched it on the read-only map (tilted to ${reviewPitch.peak.toFixed(0)}°, back to flat)`)
 
 const submitted = page.evaluate(() => new Promise((r) => window.addEventListener('claim:submitted', (e) => r(e.detail), { once: true })))
 await page.getByRole('button', { name: N.send }).click()

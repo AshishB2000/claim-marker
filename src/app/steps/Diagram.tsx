@@ -172,6 +172,8 @@ export function Diagram() {
           interactive
           tapMode={tapMode}
           poses={play.poses}
+          mode={play.mode}
+          clock={play.clock}
           onSelect={select}
           onGrab={(id) => {
             setTouched(true)
@@ -203,9 +205,14 @@ export function Diagram() {
             <span />
           )}
           <div className="pointer-events-auto mr-12 flex gap-1.5">
-            <button className="chip" onClick={play.playing ? play.stop : play.start} disabled={!play.canPlay} aria-pressed={play.playing}>
+            <button className="chip" onClick={play.playing ? play.stop : () => play.start()} disabled={!play.canPlay} aria-pressed={play.playing}>
               {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
             </button>
+            {!play.playing && (
+              <button className="chip" onClick={() => play.start('cinematic')} disabled={!play.canPlay}>
+                <Icon.film /> {t('scene.play.watch')}
+              </button>
+            )}
             <button className="chip" onClick={() => map.current?.recentre()}>
               <Icon.target /> {t('scene.recentre')}
             </button>

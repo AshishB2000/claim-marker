@@ -1025,6 +1025,77 @@ also manages, but that the frame in the middle of the video is a real picture: i
 attachment into a `<video>`, seeks to half way, draws it to a canvas and counts distinct colours
 exactly as it does for the PNGs.
 
+## Watch it: the cinematic replay (v10)
+
+"Play it back" is a diagram in motion: flat, north-up, the cars sliding along their routes.
+It is exact and it is dull, and an adjuster reading it has to work out for themselves which
+car was where when. "Watch it" is the same playback with the camera let off the leash: it
+holds the overhead for a moment, tilts to 55° behind the customer's own car looking the way it
+set off, follows it, slows to a quarter speed into the impact and out of it, rings the impact
+with a shockwave, holds, and comes back to the flat diagram exactly as the customer left it.
+Nothing in the document changes. It is the same routes and the same `posesAt`; only the camera
+and the clock are different.
+
+**The map is never edited tilted.** `MapScene` is built as it always was — `pitch 0, maxPitch
+0`, rotation disabled — and takes a `mode` prop that defaults to `'diagram'`, so every caller
+that does not ask is unchanged. In `'cinematic'` mode, and only while `poses` is set, it raises
+`maxPitch` to 60 on the live map instance, drives the camera with `jumpTo` every frame, and on
+the last frame — or a Stop pressed mid-chase — jumps back to the view it captured at the first
+frame, drops `maxPitch` to 0 and clears its decoration, *before* the markers return. So the
+DOM-marker interaction, whose maths assumes a flat map, never meets a pitch; the desk's
+read-only map (`interactive={false}`) gets the same treatment, which is why `maxPitch` is set at
+playback start rather than at construction.
+
+**One clock, held rather than derived.** `usePlayback` used to compute `t` from
+`performance.now()` each frame. Now it keeps the playback's own time in a ref, in ms, and
+advances it by the wall clock's delta times a `rate`; that is what makes `seek(t)` a one-line
+assignment and slow motion a number. The pure parts are in `src/map/playback.ts`: `Timeline`
+(`ms` from `durationOf`, and the impact as `impactT` and `impactMs`), `frameAt`, `seekTo`,
+`advance`, the shot list and the camera. The record (`src/map/record.ts`) and the desk's "Play
+both" (`Compare.tsx`) import `ease` and `HOLD_MS` from there too, so there is one curve and one
+hold, not three copies.
+
+**The impact time is the closest approach.** `impactTimeOf` samples sixty moments of the drive
+and returns the earliest at which the nearest two vehicles are nearest. A car with no route
+stands at its resting position, so one route into a parked car works the same; two cars that
+drive to rest touching meet at `t = 1`; a T-bone whose routes cross before either stops meets
+where they cross. Nothing else on the page needs to know this yet — the two-account replay and
+the reconstruction scene will — which is why it lives on the `Timeline` rather than inside the
+camera code.
+
+**The shot list is pure and in order by construction.** `shots(vehicles, timeline)` returns
+keyframes on the playback clock: overhead for 0.8 s; the chase (pitch 55°, zoom 20.5, bearing =
+the customer's car's initial heading, centre 4 m behind its pose each frame) blended in over
+0.9 s; the rate dropped to 0.25 from 0.6 s before the impact to 0.3 s after; the hold; then the
+overhead blended back over 0.9 s. The slow-motion's start is clamped to no earlier than the
+chase's, so an impact early in a short drive cannot reorder the list. `cameraAt` interpolates
+between the running shot and the one before it — both evaluated at the *current* poses, so a
+blend out of the chase starts from wherever the car is now, never from a stale frame.
+`shotAt().rate` is what the hook multiplies its rate by, and what `MapScene` reads to light the
+trails; the two never disagree because they read the same list at the same clock.
+
+**The shockwave is decoration.** `CarLayer.setDecor(decor)` lets the scene hold extras besides
+the cars — each an object standing at a `[lng, lat]` with one model unit being so many metres,
+placed through the same `vehicleMatrix` as a body and wound the other way once, like a body,
+or the map's mirrored projection would cull it. The ring is a flat unlit white annulus,
+untone-mapped so it is white and not the tone mapper's grey, scaled from 0 to 8 m and faded
+over 600 ms of *playback* time from the impact (so at a quarter speed it takes 2.4 s of wall
+time, which is the point). During the same window the travel paths' white flow line widens from
+3 px to 7 and its dashes advance every frame instead of every 70 ms — light trails. The ring
+never appears in a PNG export, because exports are taken outside playback and playback ends
+with `setDecor([])`.
+
+**Reduced motion** (`prefers-reduced-motion: reduce`) turns "Watch it" into "Play it back":
+the hook checks it at `start`, so no caller has to.
+
+**What the smoke proves.** It presses "Watch it" on the diagram and polls the live map at
+20 Hz until the markers are back: the pitch must have reached above 40°; the share of
+near-white pixels in a box around the projected impact must have peaked well above its median
+over the run (the ring, not a bright rooftop); the pitch and bearing must be exactly 0 after;
+and every car marker's screen position must be within a pixel of where it was before. Then it
+presses it again on the review's read-only map, which is the component the desk renders, and
+checks the tilt and the return there too.
+
 ## Tell us everything, once (v9)
 
 A form asks forty questions one at a time. A person who has just been in a crash tells you what
@@ -1161,5 +1232,6 @@ panes. All of it is one `git checkout` away, and none of it belongs on a page a 
 
 `npm run lint`, `npm test`, `npm run build`, and `node scripts/smoke.mjs`, which now drives
 the whole flow headlessly: searches an address, picks vehicles, drags a car on the map,
-marks a damage, submits, and checks the document that came out. `node scripts/shoot.mjs`
+watches the cinematic replay and reads the pixels while it runs, marks a damage, submits, and
+checks the document that came out. `node scripts/shoot.mjs`
 regenerates the README images from the real map.
