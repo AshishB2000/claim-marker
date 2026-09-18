@@ -8,10 +8,11 @@
  * this file's business, and it is the adjuster's.
  *
  * Storage is three append-only files under `CLAIM_DIR/index/`: `photos.jsonl`, `vins.jsonl`,
- * `plates.jsonl`, one JSON object per line — `{ key, reference, customer, at }`. `key` is the
- * photograph's perceptual hash or the uppercased VIN/plate; `customer` is the customer id from
- * the session, or null. A line that will not parse is skipped, never fatal — a claim must be
- * filed even when the index is broken.
+ * `plates.jsonl`, one JSON object per line — `{ key, reference, customer, at, incident? }`. `key`
+ * is the photograph's perceptual hash or the uppercased VIN/plate; `customer` is the customer id
+ * from the session, or null; `incident` is there when the report was filed against one. A line
+ * that will not parse is skipped, never fatal — a claim must be filed even when the index is
+ * broken.
  *
  * `signalsFor` reads the indexes as they stood *before* this report — call it before `record`,
  * not after, or a report would find its own entries and signal against itself.
@@ -22,6 +23,12 @@
  * picture sent twice, which is overwhelmingly a mistake or a duplicate submission. Upgrade
  * path when an insurer adopts this for real: hash server-side with an image library and
  * ignore what the page sent.
+ *
+ * ponytail: every POST /claims reads all three index files whole and scans them line by line,
+ * so filing a report costs more with every report kept; and `frequent_reporter` only counts
+ * reports that carried a photo hash, a VIN or a plate, because the indexes are all it reads.
+ * Fine for a demo and a pilot. Upgrade path: a real store (SQLite, or the claims system's own
+ * database) indexed on key and on customer, with the per-customer count kept beside the report.
  *
  * No dependencies: node's own fs, path and crypto.
  */
@@ -53,7 +60,7 @@ export function hamming(a, b) {
 /**
  * The lines a report contributes to each index — ready to append, not yet written. `doc` is a
  * parsed `claim/1` document; `receipt` is what the server filed it under (`reference`,
- * `customer`, `receivedAt`). Vehicles with no VIN or plate, and photos with no computed hash
+ * `customer`, `receivedAt`, and `incident` when it has one). Vehicles with no VIN or plate, and photos with no computed hash
  * (the page could not read the canvas, or this is a document from before hashing existed),
  * contribute nothing to that index.
  */
@@ -61,7 +68,8 @@ export function entriesOf(doc, receipt) {
   const reference = receipt?.reference
   const customer = receipt?.customer?.id ?? null
   const at = receipt?.receivedAt
-  const line = (key) => ({ key, reference, customer, at })
+  const incident = receipt?.incident ?? null
+  const line = (key) => ({ key, reference, customer, at, ...(incident ? { incident } : {}) })
   const photos = Array.isArray(doc?.attachments?.photos) ? doc.attachments.photos : []
   const vehicles = Array.isArray(doc?.vehicles) ? doc.vehicles : []
   return {
@@ -113,9 +121,12 @@ const sameCustomer = (a, b) => a !== null && a === b
 /**
  * What an adjuster should know about this report, given everything filed before it. Reads the
  * indexes as they stood before this report was recorded (see the module comment) and never
- * matches the report against its own entries.
+ * matches the report against its own entries — nor against the other account of the same
+ * accident: both drivers enter both plates, and that is the point, not a signal. `linked` is
+ * the references already filed under the report's incident, whose lines may predate the link
+ * (a report sent first and attached to an invite afterwards).
  */
-export async function signalsFor(dir, doc, receipt) {
+export async function signalsFor(dir, doc, receipt, linked = []) {
   const own = entriesOf(doc, receipt)
   const signals = []
   const seen = new Set()
@@ -125,11 +136,14 @@ export async function signalsFor(dir, doc, receipt) {
     seen.add(k)
     signals.push(signal)
   }
-  const priorTo = async (name) => (await readIndex(dir, name)).filter((e) => e.reference !== receipt?.reference)
+  const incident = receipt?.incident ?? null
+  const related = new Set(linked)
+  const unrelated = (e) => e.reference !== receipt?.reference && !(incident && e.incident === incident) && !related.has(e.reference)
+  const prior = {}
+  for (const name of Object.keys(FILES)) prior[name] = (await readIndex(dir, name)).filter(unrelated)
 
-  const priorPhotos = await priorTo('photos')
   for (const mine of own.photos) {
-    for (const other of priorPhotos) {
+    for (const other of prior.photos) {
       const distance = hamming(mine.key, other.key)
       if (distance !== null && distance <= HASH_DISTANCE) {
         add({ code: 'photo_seen_before', with: other.reference, detail: `${distance} bit${distance === 1 ? '' : 's'} apart` })
@@ -141,9 +155,8 @@ export async function signalsFor(dir, doc, receipt) {
     ['vins', 'vin_seen_before'],
     ['plates', 'plate_seen_before'],
   ]) {
-    const prior = await priorTo(name)
     for (const mine of own[name]) {
-      for (const other of prior) {
+      for (const other of prior[name]) {
         if (other.key === mine.key && !sameCustomer(mine.customer, other.customer)) {
           add({ code, with: other.reference, detail: mine.key })
         }
@@ -155,12 +168,10 @@ export async function signalsFor(dir, doc, receipt) {
   if (customer) {
     const since = Date.parse(receipt.receivedAt) - FREQUENT_DAYS * DAY
     const refs = new Set()
-    for (const name of ['photos', 'vins', 'plates']) {
-      for (const e of await priorTo(name)) {
-        if (e.customer !== customer) continue
-        const at = Date.parse(e.at)
-        if (Number.isFinite(at) && at >= since) refs.add(e.reference)
-      }
+    for (const e of Object.values(prior).flat()) {
+      if (e.customer !== customer) continue
+      const at = Date.parse(e.at)
+      if (Number.isFinite(at) && at >= since) refs.add(e.reference)
     }
     const count = refs.size + 1 // this report, about to be filed, counts too
     if (count >= FREQUENT_COUNT) {

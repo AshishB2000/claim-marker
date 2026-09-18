@@ -203,13 +203,13 @@ const tooMany = (res) => {
   res.end(JSON.stringify({ error: 'too many requests; try again in a minute' }))
 }
 
-function readBody(req) {
+function readBody(req, max = MAX_BODY) {
   return new Promise((resolve, reject) => {
     const chunks = []
     let size = 0
     req.on('data', (c) => {
       size += c.length
-      if (size > MAX_BODY) {
+      if (size > max) {
         reject(Object.assign(new Error('body too large'), { status: 413 }))
         req.destroy()
         return
@@ -517,6 +517,22 @@ async function backfillIncident(id, reference) {
 }
 
 async function store(doc, clientRef, customer, party) {
+  /*
+   * The incident and the side come from who sent this, never from the document: a document is
+   * whatever its sender typed, and the other driver can read their incident id out of their
+   * own token. A party token names its own incident; anyone else may name only an incident
+   * they created themselves. An id with no seed behind it is no incident at all. The
+   * document is corrected to match, so the stored `claim.json` and the receipt agree.
+   */
+  const named = party ? party.incident : String(doc.incident.shared ?? '').trim().toUpperCase()
+  const seed = safeIncident(named) ? await seedOf(named) : null
+  const inc = seed && (party || (customer && seed.invited?.by === customer.id)) ? named : null
+  doc.incident.shared = inc
+  doc.reporter.party = party ? 'other_party' : 'policyholder'
+  // a visitor to the demo portal, or the other driver a demo visitor invited — or one whose
+  // invite is already swept, on an instance that only ever demonstrates
+  const demo = DEMO && (party ? !seed || !!seed.invited?.demo : !!customer?.id?.startsWith('demo-'))
+
   const reference = newReference()
   const dir = folder(reference)
   await mkdir(dir, { recursive: true })
@@ -532,29 +548,29 @@ async function store(doc, clientRef, customer, party) {
   for (const [vehicleId, png] of Object.entries(doc.attachments.damage)) await put(`damage-${vehicleId}`, png)
   for (let i = 0; i < doc.attachments.photos.length; i++) await put(`photo-${String(i + 1).padStart(2, '0')}`, doc.attachments.photos[i].data)
 
-  // the incident this report belongs to: named by the party token that sent it, or — the
-  // policyholder's own report — by the document itself, once they have created the invite
-  const inc = party?.incident ?? (typeof doc.incident.shared === 'string' && doc.incident.shared ? doc.incident.shared : null)
-
-  // asked before this report is recorded, so it never matches itself
-  const signals = await signalsFor(DIR, doc, { reference, customer }).catch(() => [])
+  const receivedAt = new Date().toISOString()
+  // asked before this report is recorded, so it never matches itself; the other account of the
+  // same accident is not "seen before", it is the point. A demonstration is neither checked nor
+  // remembered: one visitor must never be handed another visitor's reference.
+  const linked = inc ? (await incidentReports(inc)).map((r) => r.reference) : []
+  const signals = demo ? [] : await signalsFor(DIR, doc, { reference, customer, receivedAt, incident: inc }, linked).catch(() => [])
   const receipt = {
     reference,
     clientReference: clientRef,
     // who the session said this was, when it came with one: the report is on their policy
     customer,
-    // filed by a visitor to the demo portal, and swept a day later whatever RETAIN_DAYS says
-    ...(DEMO && customer?.id?.startsWith('demo-') ? { demo: true } : {}),
+    // swept a day later whatever RETAIN_DAYS says
+    ...(demo ? { demo: true } : {}),
     // two reports of one accident: which incident, and which side of it this one is
     ...(inc ? { incident: inc, party: doc.reporter.party } : {}),
-    receivedAt: new Date().toISOString(),
+    receivedAt,
     status: 'new',
     files,
     // what an adjuster should know before reading it; the insurer's own record, never `claim/1`
     signals,
     summary: summarise(doc),
   }
-  await recordSignals(DIR, doc, receipt).catch((e) => console.warn(`signals: ${e.message}`))
+  if (!demo) await recordSignals(DIR, doc, receipt).catch((e) => console.warn(`signals: ${e.message}`))
   await writeFile(join(dir, 'claim.json'), JSON.stringify(doc))
   await writeFile(join(dir, 'receipt.json'), JSON.stringify(receipt, null, 2))
   if (clientRef && safeRef(clientRef)) {
@@ -640,7 +656,8 @@ async function sweepIncidents() {
     if (!seed) continue
     const reports = await incidentReports(id)
     const remaining = reports.some(({ reference }) => safeRef(reference) && existsSync(folder(reference)))
-    if (remaining || !expired(seed.invited?.at, RETAIN_DAYS)) continue
+    // a demo visitor's invite goes when their reports do, whatever RETAIN_DAYS says
+    if (remaining || !expired(seed.invited?.at, seed.invited?.demo ? DEMO_DAYS : RETAIN_DAYS)) continue
     await rm(incidentDir(id), { recursive: true, force: true })
     console.log(`swept incident ${id}, invited ${seed.invited?.at}`)
   }
@@ -701,15 +718,19 @@ async function mintSession(req, res) {
   const customer = typeof body?.customer === 'object' && body.customer !== null ? body.customer : {}
   const id = typeof customer.id === 'string' ? customer.id.trim() : ''
   if (!id || id.length > MAX_ID) return json(res, 400, { error: 'customer.id is required and must be at most 80 characters' })
-  json(res, 200, createSession({ ...customer, id }, body.vehicles, body.ttlSeconds ?? 3600))
+  const session = createSession({ ...customer, id }, body.vehicles, body.ttlSeconds ?? 3600)
+  if (!session) return json(res, 400, { error: 'customer.id must not start with "party:"' })
+  json(res, 200, session)
 }
 
 /**
  * A token for one customer and the prefill to hand the page along with it. Whoever calls this
  * has already established who the customer is — with an API key from their backend, or, in the
- * demo portal, by being a demonstration.
+ * demo portal, by being a demonstration. Null for an id that would read as a party token.
  */
 function createSession(customer, vehicles, ttlSeconds) {
+  // `party:<incident>` is the other driver's token; a customer by that name would be read as one
+  if (partySub(customer.id) !== null) return null
   const policy = typeof customer.policy === 'string' ? customer.policy.trim().slice(0, MAX_ID) : ''
   const token = signSession({ sub: customer.id, policy }, SESSION_SECRET, ttlSeconds)
   const session = verifySession(token, SESSION_SECRET)
@@ -744,7 +765,9 @@ async function demoLogin(req, res) {
   const who = Object.hasOwn(CUSTOMERS, key) ? CUSTOMERS[key] : null
   if (!who) return json(res, 404, { error: `no such demo customer; they are ${Object.keys(CUSTOMERS).join(', ')}` })
   const id = `demo-${key}-${randomBytes(6).toString('hex')}`
-  json(res, 200, createSession({ ...who.customer, id }, who.vehicles, DEMO_TTL))
+  const session = createSession({ ...who.customer, id }, who.vehicles, DEMO_TTL)
+  if (!session) return json(res, 400, { error: 'customer.id must not start with "party:"' })
+  json(res, 200, session)
 }
 
 // ── incidents: inviting the other driver ────────────────────────────
@@ -753,6 +776,11 @@ const HEX_COLOR = /^#[0-9a-f]{6}$/i
 const LOCAL_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/
 const MAX_PARTY_VEHICLES = 6
 const MAX_VEHICLE_FIELD = 60
+const MAX_ADDRESS = 200
+/** a seed is a few hundred bytes; this is far above any real one, and far below MAX_BODY */
+const MAX_SEED_BODY = 16 * 1024
+/** the body shapes the page draws — `BODY_ORDER` in src/vehicles/bodies.ts, copied because this server has no build step */
+const BODIES = new Set(['sedan', 'hatchback', 'coupe', 'suv', 'truck', 'van', 'box_truck'])
 
 /**
  * The seed the other driver's page starts from: only these keys, from only these shapes —
@@ -775,18 +803,19 @@ function validSeed(body) {
   for (const v of Array.isArray(body.vehicles) ? body.vehicles.slice(0, MAX_PARTY_VEHICLES) : []) {
     if (typeof v !== 'object' || v === null) continue
     const { body: vbody, color, make, model } = v
-    if (typeof vbody !== 'string' || !vbody) continue
+    if (!BODIES.has(vbody)) continue
     if (typeof color !== 'string' || !HEX_COLOR.test(color)) continue
     if (typeof make !== 'string' || make.length > MAX_VEHICLE_FIELD) continue
     if (typeof model !== 'string' || model.length > MAX_VEHICLE_FIELD) continue
     vehicles.push({ body: vbody, color, make, model })
   }
-  return { location: { lng, lat, address: typeof address === 'string' ? address : '' }, at: body.at, utcOffset, surface: body.surface, vehicles }
+  return { location: { lng, lat, address: typeof address === 'string' ? address.slice(0, MAX_ADDRESS) : '' }, at: body.at, utcOffset, surface: body.surface, vehicles }
 }
 
 /**
  * The customer, having just placed the vehicles and the impact, invites the other driver to
- * add their own side from a QR code at the scene. Bearer: exactly what POST /claims accepts.
+ * add their own side from a QR code at the scene. Bearer: what POST /claims accepts, except a
+ * party token — the other driver was invited, and does not invite anyone.
  */
 async function createIncident(req, res) {
   // without a secret to sign the party token with, this endpoint has nothing to offer,
@@ -794,9 +823,10 @@ async function createIncident(req, res) {
   if (!SESSION_SECRET) return json(res, 503, { error: 'incidents are not configured: set SESSION_SECRET' })
   const sender = whoSent(req)
   if (!sender) return json(res, 401, { error: 'a bearer token is required' })
+  if (sender.party) return json(res, 403, { error: 'a party token cannot create an invite' })
   let body
   try {
-    body = JSON.parse(await readBody(req))
+    body = JSON.parse(await readBody(req, MAX_SEED_BODY))
   } catch (e) {
     return json(res, e.status ?? 400, { error: e.status ? e.message : 'the body is not JSON' })
   }
@@ -808,21 +838,23 @@ async function createIncident(req, res) {
    * The customer may invite the other driver *after* sending their own report — the page
    * offers it again on the done page, which is often the first moment they have a free hand.
    * That report was filed with no `incident.shared` in it, so nothing else will ever connect
-   * the two; naming it here is the only chance. Only their own report: a reference belonging
-   * to another customer is not theirs to attach an incident to.
+   * the two; naming it here is the only chance. Only their own report, which only a session
+   * can prove: the shared CLAIM_TOKEN names nobody, so it can invite but never attach.
    */
   const mine = typeof body?.reference === 'string' ? body.reference.trim().toUpperCase() : ''
-  if (safeRef(mine) && existsSync(folder(mine))) {
+  if (sender.customer && safeRef(mine) && existsSync(folder(mine))) {
     const receipt = await receiptOf(mine).catch(() => null)
-    const ours = !sender.customer || receipt?.customer?.id === sender.customer.id
-    if (receipt && ours && !receipt.incident) {
+    if (receipt && receipt.customer?.id === sender.customer.id && !receipt.incident) {
       await writeFile(join(folder(mine), 'receipt.json'), JSON.stringify({ ...receipt, incident: id, party: 'policyholder' }, null, 2))
       await addIncidentReport(id, mine, false)
     }
   }
   // who invited travels beside the seed, never inside it — the other driver is handed the
   // seed alone by GET /incidents/:id/seed, and must never learn the customer's id this way
-  await writeFile(seedFile(id), JSON.stringify({ ...seed, invited: { by: sender.customer?.id ?? null, at: new Date().toISOString() } }, null, 2))
+  // a demo visitor's invite, like their report, is swept after DEMO_DAYS — and so is what it brings in
+  const by = sender.customer?.id ?? null
+  const demo = DEMO && !!by?.startsWith('demo-')
+  await writeFile(seedFile(id), JSON.stringify({ ...seed, invited: { by, at: new Date().toISOString(), ...(demo ? { demo: true } : {}) } }, null, 2))
   const token = signSession({ sub: `party:${id}`, policy: '' }, SESSION_SECRET, PARTY_TTL, Date.now(), PARTY_TTL)
   const session = verifySession(token, SESSION_SECRET)
   const base = `${req.headers['x-forwarded-proto'] ?? 'http'}://${req.headers.host}`

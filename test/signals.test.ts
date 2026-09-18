@@ -123,6 +123,35 @@ describe('a VIN or plate seen before', () => {
   })
 })
 
+describe('two accounts of one accident', () => {
+  const INC = 'INC-AAAAAA'
+  const mine = { reference: 'INS-2026-MINE', customer: { id: 'alice' }, receivedAt: AT }
+  const theirs = { reference: 'INS-2026-THEIRS', customer: null, receivedAt: AT }
+
+  it('records the incident on each index line, and nothing when there is none', () => {
+    expect(entriesOf(docWithVehicle('', 'ABC123'), { ...mine, incident: INC }).plates[0].incident).toBe(INC)
+    expect(entriesOf(docWithVehicle('', 'ABC123'), mine).plates[0]).not.toHaveProperty('incident')
+  })
+
+  it('do not flag each other, though both carry the same plate and VIN', async () => {
+    await record(dir, docWithVehicle('1HGCM82633A004352', 'ABC123'), { ...mine, incident: INC })
+    expect(await signalsFor(dir, docWithVehicle('1HGCM82633A004352', 'ABC123'), { ...theirs, incident: INC })).toEqual([])
+  })
+
+  it('do not flag a report attached to the incident after it was indexed', async () => {
+    // sent first, with no incident on its lines; the invite named it afterwards
+    await record(dir, docWithVehicle('', 'ABC123'), mine)
+    expect(await signalsFor(dir, docWithVehicle('', 'ABC123'), { ...theirs, incident: INC }, [mine.reference])).toEqual([])
+  })
+
+  it('still flag the same plate from another incident', async () => {
+    await record(dir, docWithVehicle('', 'ABC123'), { ...mine, incident: 'INC-BBBBBB' })
+    expect(await signalsFor(dir, docWithVehicle('', 'ABC123'), { ...theirs, incident: INC })).toEqual([
+      { code: 'plate_seen_before', with: mine.reference, detail: 'ABC123' },
+    ])
+  })
+})
+
 describe('frequent_reporter', () => {
   const cust = { id: 'cust-9' }
   const NOW = Date.parse('2026-09-17T00:00:00.000Z')
