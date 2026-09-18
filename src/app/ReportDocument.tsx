@@ -574,6 +574,9 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                     paint={v.color}
                     lang={lang}
                     lighting={lighting}
+                    // the desk may blend the damage away and back; the review page exports this
+                    // canvas as evidence at send, so it always shows the marks in full
+                    tools={voice !== 'customer'}
                     value={{ schema: SCHEMA, vehicle: v.body, damages: v.damages }}
                   />
                 </div>

@@ -68,7 +68,8 @@ export function posesAt(vehicles: ClaimVehicle[], t: number): CarPose[] {
     const { position, bearing: b } = along(route, lengthOf(route) * clamp01(t))
     // the nose follows the road, then settles to how the car came to rest over the last stretch
     const heading = b === null ? v.heading : lerpAngle(b, v.heading, clamp01((t - 0.8) / 0.2))
-    out.push({ id: v.id, body: v.body, color: v.color, position, heading })
+    // the marks ride along: a replay of a dented car is a dented car
+    out.push({ id: v.id, body: v.body, color: v.color, position, heading, damages: v.damages })
   }
   return out
 }

@@ -672,7 +672,7 @@ function removeHandles(h: Handles) {
 const posesOf = (vehicles: ClaimVehicle[]): CarPose[] =>
   vehicles
     .filter((v) => v.position)
-    .map((v) => ({ id: v.id, body: v.body, color: v.color, position: v.position!, heading: v.heading }))
+    .map((v) => ({ id: v.id, body: v.body, color: v.color, position: v.position!, heading: v.heading, damages: v.damages }))
 
 /** the travel paths and their arrowheads, as GeoJSON the style layers draw */
 function pushGeometry(map: MapLibreMap, vehicles: ClaimVehicle[]) {

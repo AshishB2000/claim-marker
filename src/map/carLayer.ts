@@ -13,12 +13,16 @@ import type { CustomLayerInterface, CustomRenderMethodInput, Map as MapLibreMap 
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { LngLat } from '../geo'
 import type { Vehicle } from '../zones'
-import { instanceBody, loadBody, repaint } from '../vehicles/load'
+import type { Damage } from '../schema'
+import { instanceBody, loadBody, repaint, roles } from '../vehicles/load'
 import { PROPORTION, SIZE } from '../vehicles/bodies'
 import { DEFAULT_LIGHTING, type Lighting } from '../scene/lighting'
+import { applyDamage, createDamageUniforms, nodeOffset, patchDamage, type DamageUniforms } from '../marker/damageShader'
+import { damageUniforms } from '../marker/damageUniforms'
 import { eyeFrom, mercator, metresToMercator, vehicleMatrix } from './transform'
 
-export type CarPose = { id: string; body: Vehicle; color: string; position: LngLat; heading: number }
+/** `damages` are drawn on the body by the same shader as the studio's; absent is an unmarked car */
+export type CarPose = { id: string; body: Vehicle; color: string; position: LngLat; heading: number; damages?: Damage[] }
 
 /** something the scene holds besides the cars, standing at `at` with one model unit being `metres` */
 export type Decor = { object: THREE.Object3D; at: LngLat; metres: number }
@@ -32,6 +36,10 @@ type Car = {
   /** the headlights, on after dark; a ghost has none */
   lamps: THREE.SpotLight[]
   ghost: boolean
+  /** the damage shader's uniforms, shared by every material of this body */
+  damage: DamageUniforms
+  /** the marks last packed, by reference: the store hands back the same array until they change */
+  damages: Damage[] | undefined
 }
 
 /** a soft disc of `rgba` fading to nothing at the edge, `metres` across, lying on the ground */
@@ -149,22 +157,34 @@ export function shockRing(): THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMater
 const GHOST_OPACITY = 0.45
 
 /**
- * A ghost's own materials, cloned rather than faded in place. `instanceBody` gives every car a
- * fresh paint material, but its other roles (glass, plastic, rim, …) come straight from the
- * cached template and are shared by every instance of that body — mutating them would fade the
- * policyholder's solid car too, the moment it shares a body with a ghost.
+ * A car's own materials, every one of them. `instanceBody` gives every car a fresh paint
+ * material, but its other roles (glass, plastic, rim, …) come straight from the cached template
+ * and are shared by every instance of that body — fading them for a ghost, or patching the
+ * damage shader's uniforms into them, would change the policyholder's solid car too, the
+ * moment it shares a body with a ghost. So each is cloned once here, then dressed for the map,
+ * faded if it is a ghost's, and patched with this car's damage.
  */
-function fadeForGhost(root: THREE.Object3D) {
-  const fade = (m: THREE.Material) => {
-    const clone = m.clone()
-    clone.transparent = true
-    clone.opacity = GHOST_OPACITY
-    return clone
-  }
+function ownMaterials(root: THREE.Object3D, damage: DamageUniforms, ghost: boolean) {
   root.traverse((o) => {
     const mesh = o as THREE.Mesh
     if (!mesh.isMesh) return
-    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(fade) : fade(mesh.material)
+    const r = roles(mesh)
+    const offset = nodeOffset(mesh, root)
+    const own = (mats: THREE.Material[]) =>
+      mats.map((m, i) => {
+        const c = m.clone()
+        if ((c as THREE.MeshPhysicalMaterial).isMeshPhysicalMaterial) (c as THREE.MeshPhysicalMaterial).envMapIntensity = 0.4
+        // the shadow pass draws back faces by default, and the kit's bodies are open shells
+        // with no floor: from a high sun that is a sliver of door lining and no shadow at all
+        c.shadowSide = THREE.DoubleSide
+        if (ghost) {
+          c.transparent = true
+          c.opacity = GHOST_OPACITY
+        }
+        patchDamage(c, damage, r[i] ?? 'trim', offset)
+        return c
+      })
+    mesh.material = Array.isArray(mesh.material) ? own(mesh.material) : own([mesh.material])[0]
   })
 }
 
@@ -445,18 +465,14 @@ export class CarLayer implements CustomLayerInterface {
         // the world may have moved on during the load
         if (cars.has(pose.id) || !poses().some((p) => p.id === pose.id && p.body === pose.body)) continue
         const inner = instanceBody(template, pose.color)
+        const damage = createDamageUniforms(PROPORTION[pose.body])
+        ownMaterials(inner, damage, ghost)
         inner.traverse((o) => {
           const mesh = o as THREE.Mesh
           if (!mesh.isMesh) return
           mesh.geometry = reverseWinding(mesh.geometry)
           // a real car throws a real shadow on the ground plane; a ghost at half opacity does not
           mesh.castShadow = !ghost
-          for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-            if ((m as THREE.MeshPhysicalMaterial).isMeshPhysicalMaterial) (m as THREE.MeshPhysicalMaterial).envMapIntensity = 0.4
-            // the shadow pass draws back faces by default, and the kit's bodies are open shells
-            // with no floor: from a high sun that is a sliver of door lining and no shadow at all
-            m.shadowSide = THREE.DoubleSide
-          }
         })
         // the body is stretched to the real dimensions of its class, so from here on one
         // scene unit is one metre and the placement matrix carries no scale of its own
@@ -466,15 +482,18 @@ export class CarLayer implements CustomLayerInterface {
         const blob = shadowBlob(size.width, size.length)
         const lamps = ghost ? [] : headlamps(size)
         root.add(inner, blob, ...lamps, ...lamps.map((lamp) => lamp.target))
-        if (ghost) fadeForGhost(root)
         root.matrixAutoUpdate = false
         this.scene.add(root)
-        car = { root, body: pose.body, color: pose.color, blob, lamps, ghost }
+        car = { root, body: pose.body, color: pose.color, blob, lamps, ghost, damage, damages: undefined }
         cars.set(pose.id, car)
         this.dress(car)
       } else if (car.color !== pose.color) {
         repaint(car.root, pose.color)
         car.color = pose.color
+      }
+      if (car.damages !== pose.damages) {
+        applyDamage(car.damage, damageUniforms(pose.damages ?? [], pose.body))
+        car.damages = pose.damages
       }
       vehicleMatrix(pose.position, pose.heading, 1, this.origin, car.root.matrix)
     }

@@ -14,6 +14,7 @@ import { STUDIO } from '../vehicles/BodyPreview'
 import { toWorld } from '../vehicles/bodies'
 import { studioLight, type Lighting } from '../scene/lighting'
 import type { V3 } from '../zones'
+import { MAX_MARKS } from './damageUniforms'
 
 /**
  * A digit drawn into a texture, one per label, shared by every pin and every instance.
@@ -42,23 +43,27 @@ function digitTexture(text: string) {
  * Camera-facing pin at the exact hit point. polygonOffset lifts it off the bodywork, and the
  * wide white halo is what keeps a severity colour legible on paint of the same hue — an
  * orange dent marker on an orange car is otherwise invisible. The number matches the row in
- * the host's list.
+ * the host's list. A `dot` is the same pin at a third the size and without its number, for a
+ * mark whose damage the paint itself now shows.
  */
 function Pin({
   at,
   color,
   label,
   ring,
+  dot = false,
   onPick,
 }: {
   at: V3
   color: string
   label?: string
   ring?: string
+  dot?: boolean
   onPick?: (e: ThreeEvent<PointerEvent>) => void
 }) {
   const lift = { polygonOffset: true, polygonOffsetFactor: -4 }
-  const tex = useMemo(() => (label ? digitTexture(label) : null), [label])
+  const tex = useMemo(() => (label && !dot ? digitTexture(label) : null), [label, dot])
+  const size = dot ? 0.4 : 1
   return (
     <Billboard position={at}>
       {/* generous invisible tap target — the visible pin is small on a phone */}
@@ -67,11 +72,11 @@ function Pin({
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <mesh onPointerDown={onPick}>
-        <circleGeometry args={[0.125, 32]} />
+        <circleGeometry args={[0.125 * size, 32]} />
         <meshBasicMaterial color="#ffffff" toneMapped={false} {...lift} polygonOffsetUnits={-40} />
       </mesh>
       <mesh position-z={0.0005} onPointerDown={onPick}>
-        <circleGeometry args={[0.093, 32]} />
+        <circleGeometry args={[0.093 * size, 32]} />
         <meshBasicMaterial color={color} toneMapped={false} {...lift} polygonOffsetUnits={-44} />
       </mesh>
       {tex && (
@@ -90,7 +95,8 @@ function Pin({
   )
 }
 
-function Markers({ store, accent }: { store: MarkerStore; accent: string }) {
+/** `dots`: a mark the shader renders shrinks to a dot; past `MAX_MARKS` the pin keeps its number */
+function Markers({ store, accent, dots }: { store: MarkerStore; accent: string; dots: boolean }) {
   const vehicle = useStore(store, (s) => s.vehicle)
   const damages = useStore(store, (s) => s.damages)
   const selected = useStore(store, (s) => s.selected)
@@ -103,6 +109,7 @@ function Markers({ store, accent }: { store: MarkerStore; accent: string }) {
           at={toWorld(vehicle, d.point)}
           color={SEVERITY_COLOR[d.severity]}
           label={String(i + 1)}
+          dot={dots && i < MAX_MARKS}
           ring={i === selected ? accent : undefined}
           onPick={(e) => {
             e.stopPropagation()
@@ -193,6 +200,7 @@ export function Scene({
   idle,
   lang,
   lighting = null,
+  dots = false,
   onCanvas,
 }: {
   store: MarkerStore
@@ -202,6 +210,8 @@ export function Scene({
   /** turntable until the first touch */
   idle: boolean
   lang: Lang
+  /** pins shrink to dots where the paint shows the damage itself; off, they keep their numbers */
+  dots?: boolean
   /**
    * The moment's light, the same `Lighting` the map layer takes, so the marked-up car on the
    * review page is lit like the map above it: the sun's direction and colour, the sky's tint,
@@ -227,7 +237,11 @@ export function Scene({
         toneMapping: THREE.ACESFilmicToneMapping,
         outputColorSpace: THREE.SRGBColorSpace,
       }}
-      onCreated={({ gl }) => onCanvas(gl.domElement)}
+      onCreated={({ gl, camera }) => {
+        onCanvas(gl.domElement)
+        // for the smoke: where a body point lands on this canvas, and the store behind it
+        if (import.meta.env.DEV) Object.assign(gl.domElement, { __probe: { camera, store } })
+      }}
       onPointerMissed={() => store.getState().select(null)}
     >
       <color attach="background" args={[t.bg]} />
@@ -274,7 +288,7 @@ export function Scene({
       />
       <ContactShadows position={[0, 0.001, 0]} opacity={0.5} scale={16} blur={2.6} far={4} resolution={1024} color={t.shadow} />
 
-      <Markers store={store} accent={t.accent} />
+      <Markers store={store} accent={t.accent} dots={dots} />
       <HoverLabel store={store} lang={lang} />
       <Picker store={store} lang={lang} />
       <CameraRig store={store} />

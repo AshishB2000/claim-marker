@@ -211,6 +211,8 @@ export const en = {
   'scene.marker.hint': 'Tap the car where the damage is',
   'scene.marker.note': 'Note (optional)',
   'scene.marker.remove': 'Remove this damage',
+  'scene.marker.strength': 'Before / after',
+  'scene.marker.heatmap': 'Severity map',
   /** the other driver is not on this policy: it is their own insurer they are naming */
   'scene.contact.policy.party': 'Your own insurer and policy number',
   'scene.contact.policyAria.party': 'Your own insurer and policy number',
@@ -414,6 +416,8 @@ export const es: Record<keyof typeof en, string> = {
   'scene.marker.hint': 'Toca el auto donde están los daños',
   'scene.marker.note': 'Nota (opcional)',
   'scene.marker.remove': 'Quitar este daño',
+  'scene.marker.strength': 'Antes / después',
+  'scene.marker.heatmap': 'Mapa de gravedad',
   'scene.contact.policy.party': 'Tu propia aseguradora y número de póliza',
   'scene.contact.policyAria.party': 'Tu propia aseguradora y número de póliza',
 
