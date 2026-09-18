@@ -1,31 +1,51 @@
 /**
  * The contract between this page and whatever the insurer runs in front of Claude.
  *
- * One endpoint, `VITE_ASSIST_URL`, four tasks: `diagram` turns the customer's words into a
+ * One endpoint, `VITE_ASSIST_URL`, five tasks: `diagram` turns the customer's words into a
  * scene, `describe` turns the scene back into words, `check` reads the finished report back
- * and says what an adjuster would ring up about, and `damage` reads the photographs and says
- * which panels look hit. JSON in, JSON out, versioned, so an insurer implements one route and
- * can move from the Anthropic API to Bedrock, Vertex or their own gateway without this page
- * changing. The API key lives there and never here: anything in this bundle is public. With
- * the variable unset the page has no AI in it.
+ * and says what an adjuster would ring up about, `damage` reads the photographs and says
+ * which panels look hit, and `intake` turns one spoken or typed account of the whole accident
+ * into a draft of the report. JSON in, JSON out, versioned, so an insurer implements one route
+ * and can move from the Anthropic API to Bedrock, Vertex or their own gateway without this
+ * page changing. The API key lives there and never here: anything in this bundle is public.
+ * With the variable unset the page has no AI in it.
  *
  * None of it decides anything. A check is a question the customer may ignore and never blocks
- * sending; a damage suggestion is a row with an "Add" button beside it. Fault, liability,
- * speeds and cost are out of scope of the contract, not just of the prompts.
+ * sending; a damage suggestion is a row with an "Add" button beside it; an intake draft is a
+ * **proposal, never an entry** — the customer confirms it piece by piece, on the same steps
+ * they would have gone through anyway, and nothing from it lands in the document unconfirmed.
+ * Fault, liability, speeds and cost are out of scope of the contract, not just of the prompts.
  *
  * Positions are **metres east and north of the incident**, not longitude and latitude: a
  * model reasons about "six metres back from the junction" and cannot do spherical arithmetic,
- * so the conversion is this page's job (`frame.ts`). Headings are compass bearings.
+ * so the conversion is this page's job (`frame.ts`). Headings are compass bearings. An intake
+ * draft's `place` is the same rule from the other side: it comes back as words to search for,
+ * never coordinates, because the model still cannot do that arithmetic and the customer is the
+ * one who has to pick the actual match off the map.
  */
 import { normalizeBearing } from '../geo'
 import type { Lang } from '../i18n'
-import { isStep, type Conditions, type Kind, type PersonRole, type Role, type Step, type Surface } from '../claim/schema'
+import {
+  isStep,
+  KINDS,
+  LIGHT,
+  PERSON_ROLES,
+  ROAD,
+  ROLES,
+  WEATHER,
+  type Conditions,
+  type Kind,
+  type PersonRole,
+  type Role,
+  type Step,
+  type Surface,
+} from '../claim/schema'
 import { SEVERITIES, type Damage, type Severity } from '../schema'
-import { zoneById, type Vehicle } from '../zones'
+import { VEHICLE_IDS, zoneById, type Vehicle } from '../zones'
 
 export const ASSIST_SCHEMA = 'claim-assist/1'
 
-export type AssistTask = 'diagram' | 'describe' | 'check' | 'damage'
+export type AssistTask = 'diagram' | 'describe' | 'check' | 'damage' | 'intake'
 
 /** metres [east, north] of the incident */
 export type Metres = [number, number]
@@ -92,7 +112,7 @@ export type DescribeRequest = Spoken & {
   impact: Metres | null
 }
 
-export type AssistRequest = DiagramRequest | DescribeRequest | CheckRequest | DamageRequest
+export type AssistRequest = DiagramRequest | DescribeRequest | CheckRequest | DamageRequest | IntakeRequest
 
 export type DiagramResponse = { schema: typeof ASSIST_SCHEMA; task: 'diagram'; scene: Scene }
 export type DescribeResponse = { schema: typeof ASSIST_SCHEMA; task: 'describe'; text: string }
@@ -252,4 +272,189 @@ export function parseSuggestions(input: unknown, body: Vehicle): Damage[] {
     if (out.length === MAX_SUGGESTIONS) break
   }
   return out
+}
+
+// ── the whole report from one telling ────────────────────────────────
+
+/** the caps a spoken account is trimmed to; generous enough for a real account, not an essay */
+const MAX_PLACE = 200
+const MAX_DESCRIPTION = 1000
+const MAX_NAME_FIELD = 60
+const MAX_INJURY = 200
+const MAX_REPORT = 60
+const MAX_PROPERTY = 300
+/** a claim with more vehicles or people than this is not one accident any more */
+const MAX_INTAKE_VEHICLES = 6
+const MAX_INTAKE_PEOPLE = 12
+
+export type IntakeRequest = Spoken & {
+  schema: typeof ASSIST_SCHEMA
+  task: 'intake'
+  /** the customer's own words, spoken or typed */
+  transcript: string
+  /** the page's current local minute, `YYYY-MM-DDTHH:mm`, so "this morning" and "an hour ago" can be resolved */
+  now: string
+  /** the enums the draft must use, so the endpoint never has to guess spellings */
+  kinds: readonly Kind[]
+  bodies: readonly Vehicle[]
+  colours: readonly string[]
+}
+
+export type IntakeDraft = {
+  kind?: Kind
+  /** local `YYYY-MM-DDTHH:mm`; never in the future */
+  when?: string
+  /** a place **as words to search for** — never coordinates; the customer picks the match */
+  place?: string
+  conditions?: Partial<Conditions>
+  vehicles?: { role: Role; make?: string; model?: string; year?: number; color?: string; body?: Vehicle }[]
+  people?: { role: PersonRole; vehicle?: Role; injured: boolean; injury?: string }[]
+  police?: { called: boolean; report?: string }
+  property?: string
+  /** the model's short summary of what happened — shown to the customer only as a proposal */
+  description?: string
+}
+
+export type IntakeResponse = { schema: typeof ASSIST_SCHEMA; task: 'intake'; draft: unknown }
+
+/** the value when it is one of `list`, otherwise absent — never a substituted default */
+const enumOf = <T extends string>(list: readonly T[], v: unknown): T | undefined =>
+  (list as readonly string[]).includes(v as string) ? (v as T) : undefined
+
+/** trimmed and capped; an empty string is absent, not `''`, same as the rest of the draft */
+const capped = (v: unknown, max: number): string | undefined => {
+  if (typeof v !== 'string') return undefined
+  const s = v.trim().slice(0, max)
+  return s || undefined
+}
+
+/** `now` is `YYYY-MM-DDTHH:mm`, which sorts the same as it reads, so a plain string
+ * comparison is enough to tell a future time from one at or before it. */
+const whenOf = (v: unknown, now: string): string | undefined =>
+  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v) && v <= now ? v : undefined
+
+/** an integer year, 1900 up to the year after `now`'s — a dealer sells next year's model early */
+const yearOf = (v: unknown, now: string): number | undefined => {
+  const max = Number(now.slice(0, 4)) + 1
+  return Number.isInteger(v) && (v as number) >= 1900 && (v as number) <= max ? (v as number) : undefined
+}
+
+type IntakeVehicleDraft = NonNullable<IntakeDraft['vehicles']>[number]
+
+const intakeVehicle = (entry: unknown, now: string, colours: readonly string[]): IntakeVehicleDraft | undefined => {
+  if (typeof entry !== 'object' || entry === null) return undefined
+  const v = entry as Record<string, unknown>
+  const role = enumOf(ROLES, v.role)
+  if (!role) return undefined
+  const out: IntakeVehicleDraft = { role }
+  const make = capped(v.make, MAX_NAME_FIELD)
+  if (make) out.make = make
+  const model = capped(v.model, MAX_NAME_FIELD)
+  if (model) out.model = model
+  const year = yearOf(v.year, now)
+  if (year !== undefined) out.year = year
+  const color = typeof v.color === 'string' && colours.includes(v.color) ? v.color : undefined
+  if (color) out.color = color
+  const body = enumOf(VEHICLE_IDS, v.body)
+  if (body) out.body = body
+  return out
+}
+
+type IntakePersonDraft = NonNullable<IntakeDraft['people']>[number]
+
+const intakePerson = (entry: unknown): IntakePersonDraft | undefined => {
+  if (typeof entry !== 'object' || entry === null) return undefined
+  const p = entry as Record<string, unknown>
+  const role = enumOf(PERSON_ROLES, p.role)
+  if (!role) return undefined
+  const out: IntakePersonDraft = { role, injured: p.injured === true }
+  const vehicle = enumOf(ROLES, p.vehicle)
+  if (vehicle) out.vehicle = vehicle
+  const injury = capped(p.injury, MAX_INJURY)
+  if (injury) out.injury = injury
+  return out
+}
+
+const intakePolice = (v: unknown): IntakeDraft['police'] | undefined => {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined
+  const p = v as Record<string, unknown>
+  const out: NonNullable<IntakeDraft['police']> = { called: p.called === true }
+  const report = capped(p.report, MAX_REPORT)
+  if (report) out.report = report
+  return out
+}
+
+const intakeConditions = (v: unknown): Partial<Conditions> | undefined => {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined
+  const c = v as Record<string, unknown>
+  const out: Partial<Conditions> = {}
+  const weather = enumOf(WEATHER, c.weather)
+  if (weather) out.weather = weather
+  const road = enumOf(ROAD, c.road)
+  if (road) out.road = road
+  const light = enumOf(LIGHT, c.light)
+  if (light) out.light = light
+  return Object.keys(out).length ? out : undefined
+}
+
+/**
+ * Validate a draft that came back over the wire. Built entirely from an allow-list — never by
+ * spreading the endpoint's answer — so a name, phone number, licence, plate or VIN the model
+ * invents has nowhere to land; those are not part of this shape at all. An enum outside its
+ * list drops only that field; a vehicle or person missing its (required) role drops the whole
+ * entry, the way `parseScene` drops a whole vehicle rather than guess at a role for it.
+ * Garbage of any other shape — not an object, an array, `null` — is an empty draft, itself a
+ * valid answer, and nothing here throws.
+ *
+ * `colours` is the request's own `colours` list, passed back in by the caller: a customer's
+ * page only offers a fixed palette (`src/vehicles/paint.ts`), and this file does not import it
+ * so the assist contract and the paint list stay free to change independently.
+ */
+export function parseIntake(input: unknown, now: string, colours: readonly string[] = []): IntakeDraft {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return {}
+  const raw = input as Record<string, unknown>
+  const draft: IntakeDraft = {}
+
+  const kind = enumOf(KINDS, raw.kind)
+  if (kind) draft.kind = kind
+
+  const when = whenOf(raw.when, now)
+  if (when) draft.when = when
+
+  const place = capped(raw.place, MAX_PLACE)
+  if (place) draft.place = place
+
+  const conditions = intakeConditions(raw.conditions)
+  if (conditions) draft.conditions = conditions
+
+  if (Array.isArray(raw.vehicles)) {
+    const vehicles: IntakeVehicleDraft[] = []
+    for (const entry of raw.vehicles) {
+      const v = intakeVehicle(entry, now, colours)
+      if (v) vehicles.push(v)
+      if (vehicles.length === MAX_INTAKE_VEHICLES) break
+    }
+    if (vehicles.length) draft.vehicles = vehicles
+  }
+
+  if (Array.isArray(raw.people)) {
+    const people: IntakePersonDraft[] = []
+    for (const entry of raw.people) {
+      const p = intakePerson(entry)
+      if (p) people.push(p)
+      if (people.length === MAX_INTAKE_PEOPLE) break
+    }
+    if (people.length) draft.people = people
+  }
+
+  const police = intakePolice(raw.police)
+  if (police) draft.police = police
+
+  const property = capped(raw.property, MAX_PROPERTY)
+  if (property) draft.property = property
+
+  const description = capped(raw.description, MAX_DESCRIPTION)
+  if (description) draft.description = description
+
+  return draft
 }
