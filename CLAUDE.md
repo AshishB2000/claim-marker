@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 518 tests across 32 files
+npm test               # vitest, 553 tests across 34 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -247,7 +247,13 @@ nothing else; `test/seed.test.ts` fails on any trace of the first report. In the
 their own car keeps role `insured` (schema-wise "the reporter's vehicle"), so every step and
 every sentence works unchanged; the copy differences are keyed off `reporter.party`.
 `src/claim/compare.ts` pairs the two accounts' vehicles by **mirrored role**, confirmed by
-body and colour, and never says who is right.
+body and colour, and never says who is right. Four rules that are easy to undo: the party page
+keeps its draft in its own slot, `claim-marker/draft/<INC-…>` (`draftName`, from the URL at
+import), so a link never overwrites or re-sides the report already on that phone; a party link
+whose seed will not load shows `LinkGone`, not a form, and a refused party token is `Rejected`
+at send, never queued; the invite `{incident, url, expiresAt}` is kept in the draft beside
+`shared` and shown again, never re-minted; and the desk orders and voices the two accounts by
+the **receipt's** `party` (set by the server from the token), never the document's.
 
 **The replay is recorded at send time and never holds a report up** (`src/map/record.ts`,
 `MapSceneHandle.record()`). It shares the PNG export's hand-painting of the DOM-only pills and
@@ -358,11 +364,16 @@ The attestation's `at` is stamped only at send. Send is disabled until agreed an
 Every sentence that names a person, a vehicle or a condition comes from `src/claim/describe.ts`
 (`personLine`, `vehicleName`, `conditionLabels`, `gaps`); do not compose those inline in a step.
 
-**Those sentences have two voices.** `describe.ts` takes a `Voice`, defaulting to `'customer'`
-everywhere, so the steps and the review are second person as they were; `ReportDocument
-voice="desk"` — which only `src/adjuster/Desk.tsx` passes — turns "your Camry" into "the
-policyholder's Camry" and "You, driving" into "The policyholder, driving". `gaps()` has no
+**Those sentences have two voices** — three on the desk. `describe.ts` takes a `Voice`,
+defaulting to `'customer'` everywhere, so the steps and the review are second person as they
+were; `ReportDocument voice="desk"` — which only `src/adjuster/` passes — turns "your Camry" into
+"the policyholder's Camry" and "You, driving" into "The policyholder, driving", and
+`voice="desk-other"` reads the other driver's own account from their side: "the other driver's
+Ford", "The other driver, driving". Pick it with `deskVoice(receipt.party)`. `gaps()` has no
 voice on purpose: it only runs on the customer's own review page.
+
+**"From public records" is the record alone.** `lookedUpLines(ctx)` takes no conditions: the
+customer's selects sit beside it in the document and must never be shown under that heading.
 
 **Schemas are versioned and frozen.** `claim/1` embeds the `claim-marker/1` damage shape. Both
 guarantee `export → load → export` is byte-identical, which is why coordinates round on the way

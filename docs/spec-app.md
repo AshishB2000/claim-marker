@@ -370,6 +370,13 @@ policyholder's"/"the other party's", "You, driving" becomes "The policyholder, d
 the tag beside a vehicle becomes "Policyholder's vehicle". `gaps()` stays second person: it
 only ever runs on the customer's own review page.
 
+A third voice, `'desk-other'`, reads **the other driver's own account from their side**. In
+their document their own car is `insured`, so the desk voice would call it "the policyholder's"
+— the one confusion a side-by-side view must not have. In `'desk-other'` it is "the other
+driver's Ford", they are "The other driver, driving …", and anyone else's car is "another
+party's". `deskVoice(receipt.party)` picks it, from the side the server filed the report as —
+never from the document's own `reporter.party`.
+
 It stayed in `describe.ts` rather than becoming a prop drilled through the document because
 that is the rule the project already had — every sentence naming a person, a vehicle or a
 condition comes from one file — and the voice is exactly the kind of thing that would
@@ -794,6 +801,16 @@ simply absent — which is why every field is nullable and the card prints only 
 Neither is evidence; both are context, and the report labels them "from public records" so
 nobody mistakes them for the customer's answer.
 
+**That block reads the record and nothing else.** `lookedUpLines(ctx)` takes no conditions: the
+weather from its code (`weatherOfCode`, or the archive's own label for a code it does not
+list), the road from that hour's precipitation (`roadOfRecord` — the two hours before it that
+`toConditions` used are not kept, so a dry hour says "no rain or snow that hour", not "dry
+road"), the light from `lightFrom(sun, road.lit)` — "after dark" when the street's lighting is
+unknown. Earlier it followed the customer's selects, which put their account under "public
+records" exactly when the two disagreed. A lookup for a new place that has no answer for a
+select the old lookup filled clears it, rather than leaving the old place's weather marked as
+ours.
+
 ## Photos that report for you (v9)
 
 A photograph taken at the scene already knows where and when it was taken. The page reads
@@ -820,8 +837,11 @@ still holding its metadata is re-measured. A draft reopened tomorrow keeps the n
 given and simply stops following, because the metadata is not on disk to re-read.
 
 **A third way in.** On the Where step, beside search and "use my location": start from a photo
-you took. If it carries a position, it is reverse-geocoded and offered — "that photo was taken
-at 5th Ave & 42nd St, 17:42" — and accepting fills the place and the time. Offered, never
+you took. If it carries a position it is offered **rounded to three decimals** — "that photo was
+taken near 40.757, -73.986, 17:42" — and only once the customer taps "use that" is the position
+sent to the geocoder for its address and put on the claim. A gallery photo may have been taken
+at home; until they agree, its coordinates go nowhere. The offline shell never caches Photon's
+`/reverse`, whose query is a raw position, so no position outlives the report in Cache Storage. Offered, never
 relied on: **iOS strips the location out of a picked photo unless the customer has granted full
 library access**, and a camera-capture input frequently carries none at all. When it says
 nothing, the page says so plainly and keeps the photograph anyway, because a photograph of the
@@ -924,16 +944,35 @@ work unchanged. The differences are copy, selected by `reporter.party`: the head
 your side", the policy field becomes "Your own insurer and policy number". The attestation is
 word for word the same, because it is the same promise.
 
-The page seeds **once per incident**, so a reload or coming back to finish it on the bus home
-keeps what they have typed, and a link to a different accident starts clean instead of
-inheriting a half-written report about another one.
+**Their draft is their own.** The party page keeps its draft in a slot of its own,
+`claim-marker/draft/<INC-…>` (`draftName`, read from the URL before any config loads), so opening
+a link never touches the report already on that phone — the other driver's own unsent claim, or
+the inviting customer's, tapping their own link to check it. It seeds **once per incident**: a
+reload or the bus home picks up a stored draft only when it is the other driver's for this
+incident (`partyDraftFor`); anything else in that slot starts again from the seed.
+
+**A link that cannot be opened says so.** Expired after its 72 hours, forged, or the server out
+of reach: the page shows "this link has expired or cannot be opened — ask the other driver for
+a new one" instead of a form that could never be sent. And a party token refused at send is
+`Rejected`, with the same words, rather than queued: nobody can renew it, so retrying it for
+ever would lose the report quietly, which is the one thing the outbox exists not to do.
+
+**The invite is kept.** `{ incident, url, expiresAt }` lives in the draft beside
+`incident.shared`, so the scene step after a reload, and the done page, show *that* code again;
+nothing offers to mint a second incident the other driver never saw. The done page offers no
+invite for a report still in the outbox — its reference is the page's own, which the server has
+never heard of.
 
 **The two accounts meet on the desk.** `GET /incidents/:id` hands the adjuster both, and
 `src/claim/compare.ts` lays them side by side: where, when, where each car came to rest, which
 way each was facing, the direction each came from, the point of impact, the panel each account
-says was hit, the police, who was hurt, the conditions. Rows land in *agree* or *differ*
-against named thresholds, and anything one account speaks to and the other does not is listed
-separately rather than counted as a disagreement.
+says was hit, who was in each car, the police, who was hurt, the conditions. Rows land in
+*agree* or *differ* against named thresholds, and anything one account speaks to and the other
+does not is listed separately rather than counted as a disagreement. The place and the time
+are marked **seeded** when the other driver's answer is still exactly the one their page opened
+with: "agree" there only means they left it. The columns are ordered by the **receipt's**
+`party`, which the server sets from the token; the inbox shows the accounts of one incident as
+one row, "2 accounts".
 
 Matching the two accounts' vehicles is a **mirror**: the customer's car is `insured` in their
 document and `other` in the other driver's. The pairing is confirmed by body and colour before
@@ -1008,8 +1047,11 @@ the customer types identity themselves, on the steps where they can see what the
 
 **"Here is what we understood"** is a row per proposal, each with its own tick, all ticked, every
 label from `describe.ts` and the dictionaries: the kind by name, the time formatted, each
-vehicle as the page would name it, "1 person hurt" rather than the model's words about an
-injury, "the police were called", the conditions as the review page reads them. "Use these"
+vehicle as the page would name it, "1 person hurt", "the police were called", the conditions as
+the review page reads them. The few words of the model's that would land in the claim as
+written — an injury, the property, a report number — are shown under their row, quoted, so
+nothing lands unseen. A police answer is proposed only when the account said yes or no, and
+people are added only to a claim that has none yet. "Use these"
 fills through the store's existing actions under the **prefill rule** — only what is empty,
 never what the customer already typed — and an unticked row changes nothing.
 
