@@ -237,6 +237,14 @@ every sentence works unchanged; the copy differences are keyed off `reporter.par
 `src/claim/compare.ts` pairs the two accounts' vehicles by **mirrored role**, confirmed by
 body and colour, and never says who is right.
 
+**The replay is recorded at send time and never holds a report up** (`src/map/record.ts`,
+`MapSceneHandle.record()`). It shares the PNG export's hand-painting of the DOM-only pills and
+impact cross, drives the cars through the same `poses` as the on-screen playback, picks VP9 →
+VP8 → WebM → MP4 by `isTypeSupported`, and races an 8-second ceiling in `Review.tsx`; any
+failure sends without it. `attachments.replay` is capped by `isReplay` (4 MB of data URL) and
+not persisted in the draft. The smoke decodes it and counts colours on the **middle frame**,
+because a valid video of a black rectangle is the failure that matters.
+
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
 and friends directly; those are only the defaults `config` starts from. `main.tsx` awaits

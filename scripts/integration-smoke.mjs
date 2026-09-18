@@ -330,6 +330,12 @@ if (one.claim.incident.language !== 'es') fail(`the stored document says ${one.c
 const files = await readdir(join(dir, shown))
 // no damage was marked on this walk (scripts/smoke.mjs covers that), so there is a diagram but no marked-up car
 for (const f of ['claim.json', 'receipt.json', 'scene.png']) if (!files.includes(f)) fail(`${f} was not unpacked; have ${files.join(', ')}`)
+// the replay is unpacked as a real video file, and served as one
+const replayFile = files.find((f) => /^replay\.(webm|mp4)$/.test(f))
+if (!replayFile) fail(`the replay was not unpacked; have ${files.join(', ')}`)
+const replayRes = await fetch(`http://localhost:${API_PORT}/claims/${shown}/files/${replayFile}`, desk)
+if (replayRes.status !== 200 || !/^video\/(webm|mp4)$/.test(replayRes.headers.get('content-type') ?? '')) fail(`the replay is served as ${replayRes.status} ${replayRes.headers.get('content-type')}`)
+if ((await replayRes.arrayBuffer()).byteLength < 20_000) fail('the replay file is suspiciously small')
 const png = await fetch(`http://localhost:${API_PORT}/claims/${shown}/files/scene.png`, desk)
 if (png.headers.get('content-type') !== 'image/png' || (await png.arrayBuffer()).byteLength < 10000) fail('the scene PNG is not served as a real image')
 ok(`server: filed as ${shown} with ${files.length} files, the diagram served as image/png`)

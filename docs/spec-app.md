@@ -950,6 +950,42 @@ so an insurer running their own stack can link two accounts themselves from the 
 alone, whether or not they use the endpoints here. That is written down in
 [docs/integration.md](integration.md).
 
+## The replay as evidence (v9)
+
+The diagram's still PNG says where the cars ended up. The playback says the order it happened
+in — who was moving, who was already in the junction, which way each came from, and when they
+met. That is the part of an account an adjuster most often has to ring up and ask about, and
+the page already draws it; it only needed keeping.
+
+**Recorded at send time** (`src/map/record.ts`). The cars are drawn into MapLibre's own canvas,
+but the ID pills and the impact cross are DOM markers, which is why the PNG export has always
+painted them by hand. The recorder shares that painting rather than copying it: a 960×540 2-D
+canvas, and every animation frame is the map's canvas, the pills and the cross at their
+*projected positions for the current poses*, a thin progress bar and a caption. It drives the
+car layer through the same `poses` the on-screen playback uses — there is one animation, not
+two — then `captureStream(30)` into `MediaRecorder`, one run of `durationOf(vehicles)` plus a
+700 ms hold so the impact is on screen long enough to see.
+
+The codec is the first the browser offers of VP9, VP8, plain WebM, then MP4: Chrome and Firefox
+record WebM, Safari records only MP4, and whichever it is the server files it by its own type.
+
+**Never at the report's expense.** Recording races an 8-second ceiling; losing the race, a
+browser with no `MediaRecorder`, nothing to play, or a file over the 4 MB cap all send the
+report without it, silently. The customer never sees an error about a video. It is not
+persisted in the draft — like the PNGs it is made fresh at send time — and the server unpacks
+it beside the diagram as `replay.webm` or `replay.mp4`, served with that type and listed in the
+webhook's files.
+
+**On the desk** the adjuster gets the recorded video under the live playback, with a
+frame-by-frame step, because "was the red car already moving when the van pulled out" is
+answered by stepping, not by watching. With two accounts of one accident, "Play both" drives
+both sets of cars from one clock so the two versions move together on one map.
+
+**What the smoke proves.** Not that a file came back, which a recorder of a black rectangle
+also manages, but that the frame in the middle of the video is a real picture: it decodes the
+attachment into a `<video>`, seeks to half way, draws it to a canvas and counts distinct colours
+exactly as it does for the PNGs.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:
