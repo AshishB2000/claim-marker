@@ -49,7 +49,7 @@ never cached. `dist/lib/` is not served: it is the parser this server validates 
 | `DESK_TOKEN` | what the claims desk sends to read and re-file reports |
 | `ALLOWED_HOSTS` | origins allowed to embed the page; sets `frame-ancestors` and the page's own trust list |
 | `BRAND` · `ASSIST_URL` | injected into the page |
-| `CONNECT_SRC` | extra origins the page may reach — your own tiles, geocoder, weather or road data — added to the CSP. The page already reaches Esri (tiles), Photon (addresses), vPIC (makes and models), Wikipedia (vehicle photographs), Open-Meteo (`api.open-meteo.com`, `archive-api.open-meteo.com` — the weather at the hour of the accident) and Overpass (`overpass-api.de` — the road it happened on); all keyless. Point `VITE_WEATHER_URL`, `VITE_WEATHER_ARCHIVE_URL` or `VITE_ROADS_URL` at your own provider at build time and add its origin here. |
+| `CONNECT_SRC` | extra origins the page may reach — your own tiles, geocoder, weather or road data — added to the CSP. The page already reaches Esri (tiles), Photon (addresses), vPIC (makes and models), Wikipedia (vehicle photographs), Open-Meteo (`api.open-meteo.com`, `archive-api.open-meteo.com` — the weather at the hour of the accident) and Overpass (`overpass.kumi.systems` — the road it happened on); all keyless. Point `VITE_WEATHER_URL`, `VITE_WEATHER_ARCHIVE_URL` or `VITE_ROADS_URL` at your own provider at build time and add its origin here. |
 | `RATE_LIMIT` · `TRUST_PROXY` | POSTs per minute per IP (default 30), and whether to believe `Fly-Client-IP` or `X-Forwarded-For` |
 | `WEBHOOK_URL` · `WEBHOOK_SECRET` | where new reports are announced, and the key for the signature |
 | `CLAIM_ORIGIN` | an extra origin for CORS. Leave it unset in production: a page served from here needs none. |

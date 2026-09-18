@@ -10,9 +10,18 @@
 import type { FeatureCollection, LineString } from 'geojson'
 import { bearing, distance, normalizeBearing, toRad, type LngLat } from '../geo'
 import type { Junction, SceneRoad } from '../claim/schema'
+import { withDeadline } from './timeout'
 
-/** a build-time provider setting, like the tile and geocoder URLs — not a runtime `config` one */
-const OVERPASS_URL: string = import.meta.env.VITE_ROADS_URL ?? 'https://overpass-api.de/api/interpreter'
+/**
+ * A build-time provider setting, like the tile and geocoder URLs — not a runtime `config` one.
+ *
+ * The Kumi Systems mirror rather than `overpass-api.de`: the main instance answers 406 Not
+ * Acceptable to every request from some networks — `/api/status` included, so it is the
+ * instance refusing the client, not the query — and rate-limits the rest hard. Kumi is a
+ * long-standing public mirror of the same database, answers `Access-Control-Allow-Origin: *`,
+ * and needs no key. An insurer running their own instance points `VITE_ROADS_URL` at it.
+ */
+const OVERPASS_URL: string = import.meta.env.VITE_ROADS_URL ?? 'https://overpass.kumi.systems/api/interpreter'
 
 /** metres around the incident that the Overpass query asks for */
 export const ROAD_RADIUS = 60
@@ -249,7 +258,7 @@ export async function fetchRoad(at: LngLat, signal?: AbortSignal): Promise<RoadR
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: `data=${encodeURIComponent(roadQuery(at))}`,
-      signal,
+      signal: withDeadline(signal),
     })
     if (!res.ok) return null
     const result = parseRoad(await res.json(), at)

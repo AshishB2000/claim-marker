@@ -13,6 +13,7 @@
 import type { SceneWeather } from '../claim/schema'
 import { ROAD, WEATHER } from '../claim/schema'
 import type { LngLat } from '../geo'
+import { withDeadline } from './timeout'
 
 type Weather = (typeof WEATHER)[number]
 type Road = (typeof ROAD)[number]
@@ -188,7 +189,7 @@ export async function fetchWeather(at: LngLat, when: string, signal?: AbortSigna
   }
 
   try {
-    const res = await fetch(url, { signal })
+    const res = await fetch(url, { signal: withDeadline(signal) })
     if (!res.ok) return null
     const json: unknown = await res.json()
     return parseWeather(json, when)

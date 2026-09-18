@@ -187,7 +187,8 @@ how the portal's same-origin iframe is configured at all.
 **The scene fills itself in from the place and the time** (`src/scene/`). `weather.ts`
 (Open-Meteo: the archive past five days, the forecast endpoint with `past_days` otherwise,
 `timezone=auto` so the hourly stamps are local and the hour matches `at` by string),
-`sun.ts` (the NOAA approximation, no dependency) and `road.ts` (Overpass inside 60 m; also
+`sun.ts` (the NOAA approximation, no dependency) and `road.ts` (Overpass inside 60 m, the Kumi Systems mirror because `overpass-api.de` answers
+406 to whole networks; also
 returns the ways as GeoJSON for the diagram to draw). All three are pure apart from one
 `fetch` each, all three resolve `null` on any failure, and nothing on the page depends on
 any of them. `incident.utcOffset` is what makes `at` an instant — `instantOf(at, utcOffset)`

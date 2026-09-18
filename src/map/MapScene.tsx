@@ -83,12 +83,20 @@ const roadMetres: ExpressionSpecification = ['*', ['coalesce', ['get', 'lanes'],
  * A road drawn in real metres, not screen pixels. A constant pixel width would read as a
  * hairline at street zoom and swallow the cars zoomed in on them, because the ground one
  * pixel covers halves with every zoom level the map goes up. `interpolate`/`exponential` base
- * 2 on `['zoom']` doubles the same way, so two stops a zoom level apart — in pixels-per-metre
- * at the incident's own latitude — reproduce that exact curve at every zoom in between.
+ * 2 on `['zoom']` doubles the same way, so two stops — in pixels-per-metre at the incident's
+ * own latitude — reproduce that exact curve at every zoom in between.
+ *
+ * The `interpolate` has to be the **outermost** expression. MapLibre allows `['zoom']` only as
+ * the direct input of a top-level `interpolate` or `step`; wrapping one in an `['*', …]` —
+ * which reads more naturally, "the lane width times the scale" — validates as "zoom
+ * expressions not supported", and a layer whose paint fails validation is **dropped with an
+ * error on the map's event bus and nothing else**. The map then looks exactly as it did, with
+ * the source sitting there and no layer drawing it, which is a long afternoon. So the lane
+ * count multiplies each stop instead.
  */
 function roadLineWidth(lat: number, metres: ExpressionSpecification): ExpressionSpecification {
-  const pxPerMetre = (zoom: number) => 1 / metresPerPixel(lat, zoom)
-  return ['*', metres, ['interpolate', ['exponential', 2], ['zoom'], ROAD_ZOOM_MIN, pxPerMetre(ROAD_ZOOM_MIN), ROAD_ZOOM_MAX, pxPerMetre(ROAD_ZOOM_MAX)]]
+  const px = (zoom: number) => ['*', metres, 1 / metresPerPixel(lat, zoom)] as ExpressionSpecification
+  return ['interpolate', ['exponential', 2], ['zoom'], ROAD_ZOOM_MIN, px(ROAD_ZOOM_MIN), ROAD_ZOOM_MAX, px(ROAD_ZOOM_MAX)]
 }
 
 /** the road is a real thing, so it belongs only on the two real-map grounds, never a drawn one */

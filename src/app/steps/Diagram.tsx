@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FeatureCollection, LineString } from 'geojson'
 import { useClaim } from '../../claim/store'
 import { assistOn, buildDiagram, writeStatement } from '../../assist/client'
 import type { LngLat } from '../../geo'
@@ -121,10 +120,7 @@ export function Diagram() {
   const onDrop = (id: string) => {
     dropVehicle(id)
     const v = useClaim.getState().claim.vehicles.find((x) => x.id === id)
-    // the store keeps `roadWays` untyped past "GeoJSON" since it only ever draws it; every way
-    // in it is a LineString, straight off `RoadResult.ways` in src/scene/road.ts
-    const ways = roadWays as FeatureCollection<LineString> | null
-    const bearing = v?.position ? alignToRoad(ways, v.position, v.heading) : null
+    const bearing = v?.position ? alignToRoad(roadWays, v.position, v.heading) : null
     setAlign(bearing !== null && v && angleDiff(bearing, v.heading) > ALIGN_OFFER_DEGREES ? { id, bearing } : null)
   }
 

@@ -34,7 +34,7 @@ const RUNTIME_HOSTS = [
   // offline too, because both are asked about a place and a time that do not change
   'api.open-meteo.com',
   'archive-api.open-meteo.com',
-  'overpass-api.de',
+  'overpass.kumi.systems',
 ]
 
 const paths = new Set(PRECACHE)

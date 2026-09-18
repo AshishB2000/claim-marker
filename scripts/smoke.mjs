@@ -40,6 +40,8 @@ const names = (lang) => ({
   no: t('common.no'),
 
   where: t('start.where.label'),
+  lookedUp: t('start.where.looked.title'),
+  when: t('start.where.when'),
   weatherSel: t('start.where.weather'),
   roadSel: t('start.where.road'),
   lightSel: t('start.where.light'),
@@ -122,18 +124,39 @@ const ENGLISH = Object.keys(DICT.en).flatMap((key) =>
 
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
+
+/**
+ * Overpass answers from a recorded fixture, not from the internet.
+ *
+ * The weather stays live — Open-Meteo is reliable and generous — but every public Overpass
+ * mirror throttles by IP, and under load it does not answer with an error, it simply does not
+ * answer: measured from here, one request in three hangs past thirty seconds. A build gate
+ * that depends on somebody else's spare capacity is not a gate. The fixture below is a real
+ * answer, recorded from the live mirror for the coordinates this walk uses, so everything the
+ * page does with it — the parse, the store, the layer, the words in the document — is proved
+ * against real data. The live endpoint itself is proved by the page and by live-check.
+ */
+const OVERPASS_FIXTURE = readFileSync(new URL('./fixtures/overpass-times-square.json', import.meta.url), 'utf8')
+let overpassHits = 0
+await page.route('**://overpass.kumi.systems/**', (route) => {
+  overpassHits++
+  return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: OVERPASS_FIXTURE })
+})
 const errors = []
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 page.on('pageerror', (e) => errors.push(String(e)))
 
 const fail = (msg) => {
   console.error(`FAIL: ${msg}`)
+  if (errors.length) console.error(`console said:\n  ${errors.join('\n  ')}`)
   process.exit(1)
 }
 const ok = (msg) => console.log(`ok — ${msg}`)
 
 /** the claim as the page has saved it */
 const draft = () => page.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim)
+/** the persisted state around the claim: which selects the lookup owns, where the flow is */
+const state = () => page.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state)
 
 /** distinct colours in a data URL or canvas, sampled sparsely — a blank frame has one or two */
 const colours = (sel) =>
@@ -221,11 +244,40 @@ if (!d1.incident.location || !/Times Square/.test(d1.incident.location.address))
 await settled('.maplibregl-canvas')
 const streetColours = await colours('.maplibregl-canvas')
 if (streetColours < 60) fail(`the street map looks blank (${streetColours} distinct colours)`)
+// ── the scene fills itself in ─────────────────────────────────────────
+// a date far enough back that the weather comes from the archive rather than the forecast
+// endpoint, which is the path an insurer's real claims take
+const past = new Date(Date.now() - 10 * 86400000)
+const pastLocal = new Date(past.getTime() - past.getTimezoneOffset() * 60000).toISOString().slice(0, 11) + '08:00'
+await page.locator('input[type=datetime-local]').fill(pastLocal)
+await page.waitForSelector(`[data-looked] [data-looked-lines] li`, { timeout: 30000 })
+const lookedLines = await page.locator('[data-looked-lines] li').allInnerTexts()
+if (lookedLines.length < 2) fail(`the looked-up card says almost nothing: ${JSON.stringify(lookedLines)}`)
+if (!(await page.locator(`text=${N.lookedUp}`).count())) fail('the looked-up card has no title')
+
+const looked = await state()
+const ctx = looked.claim.incident.context
+if (!ctx) fail('nothing was looked up')
+if (!ctx.weather || typeof ctx.weather.code !== 'number') fail(`no weather in the context: ${JSON.stringify(ctx)}`)
+if (!ctx.sun || !Number.isFinite(ctx.sun.altitude)) fail(`no sun in the context: ${JSON.stringify(ctx.sun)}`)
+if (!ctx.road || !ctx.road.class) fail(`no road in the context (overpass answered ${overpassHits} time(s)): ${JSON.stringify(ctx)}`)
+if (looked.claim.incident.utcOffset === null) fail('the lookup did not resolve the zone, so `at` is still a wall clock')
+// the three selects were filled by the lookup and are still following it
+const condsOwned = looked.autoConditions ?? {}
+for (const k of ['weather', 'road', 'light']) {
+  if (condsOwned[k] !== 'auto') fail(`${k} was not filled by the lookup (${JSON.stringify(condsOwned)})`)
+  if (!looked.claim.incident.conditions[k]) fail(`${k} is marked auto but empty`)
+}
+// a photograph of a wet road is not what the customer remembers: touching a select takes it
 await page.getByRole('combobox', { name: N.weatherSel }).selectOption('rain')
 await page.getByRole('combobox', { name: N.roadSel }).selectOption('wet')
 await page.getByRole('combobox', { name: N.lightSel }).selectOption('daylight')
+const condsTaken = (await state()).autoConditions ?? {}
+for (const k of ['weather', 'road', 'light']) if (condsTaken[k] !== 'user') fail(`${k} should be the customer's after they picked it (${JSON.stringify(condsTaken)})`)
+// and it stops following: moving the pin re-runs the lookup and must not take them back
+const pinned = (await draft()).incident.conditions
 await noEnglish('where')
-ok(`where: ${d1.incident.location.address}, street tiles painted (${streetColours} colours), conditions set`)
+ok(`where: ${d1.incident.location.address}, street tiles painted (${streetColours} colours); looked up "${lookedLines.join(' · ')}", then the customer took the three selects (${JSON.stringify(pinned)})`)
 
 // ── 2 · vehicles ───────────────────────────────────────────────────────
 await next()
@@ -311,6 +363,24 @@ await page.waitForTimeout(6000)
 if ((await page.locator('.mk-car').count()) !== 3) fail(`expected 3 cars on the map, got ${await page.locator('.mk-car').count()}`)
 const before = (await draft()).vehicles[0].position
 if (!before) fail('vehicle A was not placed on the map')
+
+// the road the cars are standing on, drawn from the same Overpass answer the document quotes.
+// Asserted on the source rather than by sampling pixels: a thin white line over satellite
+// imagery is exactly the kind of check that passes on one machine's GPU and fails on another
+const ways = await page.evaluate(() => {
+  const map = window.__map
+  if (!map) return 'no __map handle on the diagram'
+  if (!map.getSource('roads')) return `no roads source; sources: ${Object.keys(map.getStyle().sources).join(',')}`
+  const data = map.getSource('roads').serialize().data
+  return { drawn: data?.features?.length ?? 0, rendered: map.querySourceFeatures('roads').length }
+})
+if (typeof ways === 'string' || !ways.drawn) fail(`the roads layer has no ways to draw (${JSON.stringify(ways)})`)
+const roadsVisible = await page.evaluate(() => ({
+  ids: window.__map.getStyle().layers.map((l) => l.id),
+  vis: ['roads-casing', 'roads-core'].map((id) => (window.__map.getLayer(id) ? (window.__map.getLayoutProperty(id, 'visibility') ?? 'visible') : 'missing')),
+}))
+if (roadsVisible.vis.some((v) => v !== 'visible')) fail(`the roads layers are not visible on the satellite ground: ${JSON.stringify(roadsVisible)}`)
+ok(`the map: ${ways.drawn} ways of real road under the cars, ${ways.rendered} of them in view`)
 
 // drag the customer's car east; the drag itself is the route, so the car follows the
 // pointer, leaves a trail behind it and turns to face the way it is going
@@ -588,6 +658,10 @@ if (!(await page.locator(`text=${doc.reference}`).count())) fail('confirmation d
 // the whole report, not just the reconstruction
 if (doc.incident.kind !== 'collision') fail(`kind ${doc.incident.kind}`)
 if (doc.incident.conditions.weather !== 'rain' || doc.incident.conditions.road !== 'wet' || doc.incident.conditions.light !== 'daylight') fail(`conditions ${JSON.stringify(doc.incident.conditions)}`)
+if (!doc.incident.context?.road?.class) fail(`the document lost what the record said about the road: ${JSON.stringify(doc.incident.context)}`)
+if (!doc.incident.context?.weather || !doc.incident.context?.sun) fail('the document lost the looked-up weather or sun')
+if (doc.incident.utcOffset === null) fail('the document lost the zone, so `at` is not an instant')
+if (doc.incident.context.source !== 'open-meteo+osm') fail(`the document does not name its source: ${doc.incident.context.source}`)
 if (doc.vehicles[0].vin !== '1HGCM82633A004352' || doc.vehicles[0].plateState !== 'NY') fail(`VIN/state ${doc.vehicles[0].vin} ${doc.vehicles[0].plateState}`)
 if (doc.vehicles[1].insurer !== 'Acme Mutual' || doc.vehicles[1].policy !== 'AM-77') fail(`other insurer ${doc.vehicles[1].insurer} ${doc.vehicles[1].policy}`)
 const dana = doc.people.find((p) => p.role === 'driver' && p.vehicle === 'b')
@@ -602,6 +676,7 @@ if (cond.drivable !== false || cond.airbags !== true || cond.towed !== true || !
 if (doc.property.description !== 'Traffic light pole') fail(`property ${JSON.stringify(doc.property)}`)
 if (doc.reporter.name !== 'Ashish B' || doc.reporter.email !== 'me@example.com' || doc.reporter.policyholder !== true) fail(`reporter ${JSON.stringify(doc.reporter)}`)
 if (!doc.attestation.agreed || doc.attestation.name !== 'Ashish B' || doc.attestation.at !== doc.submittedAt) fail(`attestation ${JSON.stringify(doc.attestation)}`)
+ok(`sent: what the record said — ${doc.incident.context.weather.label}, ${doc.incident.context.road.class}${doc.incident.context.road.name ? ` "${doc.incident.context.road.name}"` : ''}, sun ${doc.incident.context.sun.altitude}° — beside what the customer answered`)
 ok('sent: the whole report — kind, conditions, VIN, the other driver and their insurer, an injured passenger, the police report, a witness, a photo, the car now, the pole, who to call, signed')
 ok(`sent: ${doc.reference}, scene ${sceneKb} kB, damage PNG ${Math.round(doc.attachments.damage.a.length / 1024)} kB`)
 
@@ -610,6 +685,29 @@ await page.reload({ waitUntil: 'networkidle' })
 await page.waitForSelector(`text=${N.reportIn}`, { timeout: 10000 })
 await noEnglish('the confirmation')
 ok('refresh keeps the confirmation')
+
+// ── nothing depends on the lookups ────────────────────────────────────
+// With all three hosts refused, the Where step must be exactly what it was before any of this
+// existed: no card, no filled selects, no error shown to a customer who did not ask for any
+// of it. A page that only works when a third party answers is not a claim form.
+const blocked = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
+for (const host of ['**://api.open-meteo.com/**', '**://archive-api.open-meteo.com/**', '**://overpass.kumi.systems/**']) {
+  await blocked.route(host, (route) => route.abort())
+}
+if (lang === 'es') await blocked.addInitScript(() => void (window.CLAIM_MARKER = { lang: 'es' }))
+await blocked.goto(`${origin}/`, { waitUntil: 'networkidle' })
+await blocked.getByRole('button', { name: starts(N.continue) }).click()
+await blocked.getByRole('combobox', { name: N.where }).fill('Times Square New York')
+await blocked.waitForSelector('[role=option]', { timeout: 20000 })
+await blocked.locator('[role=option]').first().click()
+await blocked.waitForTimeout(4000)
+if (await blocked.locator('[data-looked]').count()) fail('the looked-up card appeared with every lookup host blocked')
+const blind = await blocked.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.incident)
+if (blind.context !== null) fail(`a blocked lookup still wrote a context: ${JSON.stringify(blind.context)}`)
+if (blind.conditions.weather || blind.conditions.road || blind.conditions.light) fail(`a blocked lookup still filled the selects: ${JSON.stringify(blind.conditions)}`)
+if (!blind.location) fail('the place was not saved with the lookup hosts blocked')
+await blocked.close()
+ok('with all three lookup hosts blocked, the Where step is exactly what it was')
 
 await browser.close()
 if (errors.length) fail(`console errors:\n${errors.join('\n')}`)

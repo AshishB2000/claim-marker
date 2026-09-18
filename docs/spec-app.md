@@ -753,7 +753,8 @@ recorded fixtures with no network in the test:
   and azimuth, then `lightFrom(altitude, lit)` (above 6° daylight, −6°…6° dusk, below that
   dark — lit or unlit according to the road's own `lit` tag) and `glare(sun, heading)`, true
   when the sun was under 25° up and within 25° of straight ahead.
-- `road.ts` — Overpass, one query inside 60 m. The nearest way gives the name, class, lanes,
+- `road.ts` — Overpass, one query inside 60 m, against the Kumi Systems mirror because
+  `overpass-api.de` answers 406 to whole networks, `/api/status` included. The nearest way gives the name, class, lanes,
   direction, posted limit and whether it is lit; the ways meeting within 25 m give the
   junction (`none`, `T`, `cross`, `roundabout`) and the nodes give what controls it. It also
   returns the ways as GeoJSON, which is what the diagram draws.

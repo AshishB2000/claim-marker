@@ -8,7 +8,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { parseDamages, type Damage } from '../schema'
 import type { Vehicle } from '../zones'
-import type { FeatureCollection } from 'geojson'
+import type { FeatureCollection, LineString } from 'geojson'
 import { bearing, destination, distance, type LngLat } from '../geo'
 import {
   KIND_INFO,
@@ -123,9 +123,9 @@ export type ClaimState = {
    * standing on. Not part of `claim/1` and not persisted: it is 60 m of public map, cheap to
    * ask for again, and the document records the road in words instead.
    */
-  roadWays: FeatureCollection | null
+  roadWays: FeatureCollection<LineString> | null
   /** what the public record answered for `key`, the conditions to fill from it, and the ways to draw */
-  sceneLookedUp: (key: string, context: SceneContext | null, utcOffset: number | null, fill: Partial<Conditions>, ways?: FeatureCollection | null) => void
+  sceneLookedUp: (key: string, context: SceneContext | null, utcOffset: number | null, fill: Partial<Conditions>, ways?: FeatureCollection<LineString> | null) => void
   /**
    * the kind decides who else is expected: a kind with no other party drops the other vehicles
    * and everyone in them; a collision with none listed gets one to fill in
