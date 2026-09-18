@@ -199,6 +199,23 @@ export const en = {
   'scene.marker.hint': 'Tap the car where the damage is',
   'scene.marker.note': 'Note (optional)',
   'scene.marker.remove': 'Remove this damage',
+  /** the other driver is not on this policy: it is their own insurer they are naming */
+  'scene.contact.policy.party': 'Your own insurer and policy number',
+  'scene.contact.policyAria.party': 'Your own insurer and policy number',
+
+  // ── the other driver, invited at the scene with a QR code
+  'scene.invite.title': 'The other driver',
+  'scene.invite.lead': 'They can add their own side of it now, on their own phone. No app, no account.',
+  'scene.invite.ask': 'Ask the other driver to add their side',
+  'scene.invite.making': 'Making a link…',
+  'scene.invite.failed': 'We could not make a link just now. You can carry on without it.',
+  'scene.invite.show': 'Show them this',
+  'scene.invite.showLead': 'They point their camera at it. It works for three days.',
+  'scene.invite.share': 'Share the link',
+  'scene.invite.shareTitle': 'Add your side of the accident',
+  'scene.invite.copy': 'Copy the link',
+  'scene.invite.copied': 'Copied',
+  'scene.invite.note': 'They will see where and when it happened and what the cars look like. They will not see your name, your details or anything else you have written.',
 } as const
 
 export const es: Record<keyof typeof en, string> = {
@@ -375,4 +392,19 @@ export const es: Record<keyof typeof en, string> = {
   'scene.marker.hint': 'Toca el auto donde están los daños',
   'scene.marker.note': 'Nota (opcional)',
   'scene.marker.remove': 'Quitar este daño',
+  'scene.contact.policy.party': 'Tu propia aseguradora y número de póliza',
+  'scene.contact.policyAria.party': 'Tu propia aseguradora y número de póliza',
+
+  'scene.invite.title': 'El otro conductor',
+  'scene.invite.lead': 'Puede agregar su versión ahora mismo, desde su propio teléfono. Sin app y sin cuenta.',
+  'scene.invite.ask': 'Pídele al otro conductor que agregue su versión',
+  'scene.invite.making': 'Creando el enlace…',
+  'scene.invite.failed': 'No pudimos crear el enlace en este momento. Puedes seguir sin él.',
+  'scene.invite.show': 'Muéstrale esto',
+  'scene.invite.showLead': 'Que apunte su cámara. Funciona por tres días.',
+  'scene.invite.share': 'Compartir el enlace',
+  'scene.invite.shareTitle': 'Agrega tu versión del accidente',
+  'scene.invite.copy': 'Copiar el enlace',
+  'scene.invite.copied': 'Copiado',
+  'scene.invite.note': 'Verá dónde y cuándo pasó y cómo son los vehículos. No verá tu nombre, tus datos ni nada más de lo que escribiste.',
 }

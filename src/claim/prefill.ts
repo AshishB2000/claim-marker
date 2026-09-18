@@ -118,6 +118,8 @@ export function applyPrefill(claim: Claim, p: Prefill): Claim {
     email: claim.reporter.email || r.email || '',
     policy: claim.reporter.policy || r.policy || '',
     policyholder: claim.reporter.policyholder ?? r.policyholder ?? null,
+    // which side of the accident this is comes from the URL, never from a host page's prefill
+    party: claim.reporter.party,
   }
   const only = p.vehicles?.length === 1 ? p.vehicles[0] : null
   const vehicles = only ? claim.vehicles.map((v) => (v.role === 'insured' ? vehicleFromPolicy(v, only) : v)) : claim.vehicles

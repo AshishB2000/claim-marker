@@ -95,6 +95,9 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // the other driver is naming their own insurer, not the policy this page was built for
+  const party = claim.reporter.party === 'other_party'
+
   const canSend = !busy && claim.attestation.agreed && claim.attestation.name.trim().length > 1
 
   const send = async () => {
@@ -164,10 +167,10 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
               autoComplete="email"
             />
           </Field>
-          <Field label={t('scene.contact.policy')}>
+          <Field label={t(party ? 'scene.contact.policy.party' : 'scene.contact.policy')}>
             <input
               className="input uppercase"
-              aria-label={t('scene.contact.policyAria')}
+              aria-label={t(party ? 'scene.contact.policyAria.party' : 'scene.contact.policyAria')}
               value={claim.reporter.policy}
               onChange={(e) => setReporter({ policy: e.target.value })}
               autoComplete="off"

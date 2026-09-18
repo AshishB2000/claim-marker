@@ -36,6 +36,7 @@ import {
 } from './schema'
 import { photoDistances, shrink } from './photos'
 import { applyPrefill, vehicleFromPolicy, type Prefill, type PrefillVehicle } from './prefill'
+import { type IncidentSeed } from './seed'
 import { readExif, type PhotoExif } from './exif'
 import { fromFrame } from '../assist/frame'
 import type { Scene } from '../assist/schema'
@@ -100,6 +101,16 @@ export type ClaimState = {
   prefill: (p: Prefill) => void
   /** the customer chose which of the policy's vehicles it was */
   pickPolicyVehicle: (index: number) => void
+
+  /**
+   * The other driver's page, starting from the invite. Their own vehicle is the one to fill in
+   * — role `insured`, which in their document means "the reporter's vehicle" — and the
+   * inviting customer's vehicles arrive as the *other* ones, as shapes and colours only. They
+   * never see the first report; the seed simply does not contain it.
+   */
+  seedFromIncident: (incident: string, seed: IncidentSeed) => void
+  /** the customer invited the other driver: both accounts will name this incident */
+  shareIncident: (incident: string) => void
 
   goto: (step: Step) => void
   next: () => void
@@ -305,6 +316,28 @@ export const useClaim = create<ClaimState>()(
           const p = get().policy[index]
           if (p) mapVehicle(insuredOf(get().claim).id, (v) => vehicleFromPolicy(v, p, true))
         },
+
+        seedFromIncident: (incident, seed) => {
+          const mine = newVehicle('a', 'insured', 'sedan', '#b9bec6')
+          const theirs = seed.vehicles.map((v, i) => ({
+            ...newVehicle(String.fromCharCode(98 + i), 'other', v.body, v.color),
+            make: v.make,
+            model: v.model,
+          }))
+          set((s) => ({
+            contextKey: null,
+            roadWays: null,
+            photoExif: [],
+            claim: {
+              ...s.claim,
+              reporter: { ...s.claim.reporter, party: 'other_party' },
+              incident: { ...s.claim.incident, shared: incident, location: seed.location, at: seed.at, utcOffset: seed.utcOffset, surface: seed.surface, context: null },
+              vehicles: [mine, ...theirs],
+              people: [],
+            },
+          }))
+        },
+        shareIncident: (incident) => patchClaim((c) => ({ incident: { ...c.incident, shared: incident } })),
 
         goto: (step) => set({ step }),
         next: () =>

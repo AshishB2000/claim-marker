@@ -39,6 +39,13 @@ export type Config = {
   prefill: Prefill | null
   /** include the whole document in the `submitted` event to the host, not just the reference */
   returnDocument: boolean
+  /**
+   * The other driver's way in: `?party=<token>` off the QR code the customer showed at the
+   * scene. **From the URL only** — never from `window.CLAIM_MARKER` and never from a host
+   * page's config message, because a host that could name a party token could read an
+   * accident that is not theirs.
+   */
+  party: { token: string; incident: string } | null
   /** true inside an iframe whose host page has claimed it */
   embedded: boolean
   /** the origin events are posted to; null when not embedded */
@@ -67,6 +74,7 @@ export const config: Config = {
   assistUrl: (env.VITE_ASSIST_URL as string | undefined) || null,
   lang: null,
   prefill: null,
+  party: null,
   returnDocument: false,
   embedded: false,
   hostOrigin: null,
@@ -90,6 +98,34 @@ const allowedHosts = (): string[] => {
   if (ENV_ALLOWED.length) return ENV_ALLOWED
   const injected = (window as { CLAIM_MARKER?: { allowedHosts?: unknown } }).CLAIM_MARKER?.allowedHosts
   return Array.isArray(injected) ? injected.filter((h): h is string => typeof h === 'string' && !!h.trim()) : []
+}
+
+/**
+ * The incident id inside a party token, or null. The token is `base64url(payload).base64url(mac)`
+ * and the payload's `sub` is `party:<INC-…>`; this reads it without checking the signature,
+ * because the page has no secret and the server checks it on every call anyway. All it is used
+ * for is knowing which incident to ask about.
+ */
+function partyIncident(token: string): string | null {
+  const body = token.split('.')[0]
+  if (!body) return null
+  try {
+    const sub = (JSON.parse(atob(body.replace(/-/g, '+').replace(/_/g, '/'))) as { sub?: unknown }).sub
+    const m = typeof sub === 'string' ? /^party:(INC-[A-Z0-9-]{4,32})$/.exec(sub) : null
+    return m ? m[1] : null
+  } catch {
+    return null
+  }
+}
+
+/** the incidents endpoints, wherever the reports are posted; null when nothing takes reports */
+export const incidentUrl = (path: string): string | null => {
+  if (!config.submitUrl) return null
+  try {
+    return new URL(path.replace(/^\//, ''), new URL('./', config.submitUrl)).href
+  } catch {
+    return null
+  }
 }
 
 /** the tag on every message in either direction, so unrelated messages on the page are ignored */
@@ -150,8 +186,17 @@ const originAllowed = (origin: string) => {
  */
 export function loadConfig(): Promise<Config> {
   applyConfig((window as { CLAIM_MARKER?: unknown }).CLAIM_MARKER)
-  const token = new URLSearchParams(window.location.search).get('token')
+  const params = new URLSearchParams(window.location.search)
+  const token = params.get('token')
   if (token) config.token = token
+  // the other driver arrives with one of these and nothing else; it is both who they are and
+  // which accident they are answering about
+  const party = params.get('party')
+  const incident = party && partyIncident(party)
+  if (party && incident) {
+    config.party = { token: party, incident }
+    config.token = party
+  }
   if (window.parent === window) return Promise.resolve(config)
 
   return new Promise((resolve) => {

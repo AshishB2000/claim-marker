@@ -162,6 +162,17 @@ export type Police = {
 export type Property = { description: string; owner: string }
 
 /** who is filling this in; on an insurer's own site this comes from the login */
+/**
+ * Which side of the accident this report is. `policyholder` is the customer the page was built
+ * for; `other_party` is the other driver, who scanned a QR code at the scene and gave their own
+ * account on their own phone, with no account and no app. Their own vehicle still carries role
+ * `insured` inside their document — schema-wise that means "the reporter's vehicle" — so every
+ * step, the marker and `describe.ts` work unchanged on either side.
+ */
+export const PARTIES = ['policyholder', 'other_party'] as const
+export type Party = (typeof PARTIES)[number]
+export const isParty = (v: unknown): v is Party => (PARTIES as readonly string[]).includes(v as string)
+
 export type Reporter = {
   name: string
   phone: string
@@ -170,6 +181,8 @@ export type Reporter = {
   policy: string
   /** null until answered */
   policyholder: boolean | null
+  /** whose side of it this is; `policyholder` for every document written before there were two */
+  party: Party
 }
 
 /**
@@ -281,6 +294,12 @@ export type Incident = {
   /** local date and time, `YYYY-MM-DDTHH:mm`, as the form field holds it */
   at: string
   /**
+   * The id two reports of one accident share, `INC-…`, when the other driver was invited to add
+   * their side. Null on a report with only one account. A backend that keeps its own records
+   * needs only this and `reporter.party` to link them itself.
+   */
+  shared: string | null
+  /**
    * minutes east of UTC at the place and moment above, so `at` names an instant rather than a
    * wall clock. Filled by the weather lookup, which has to resolve the zone anyway; null when
    * nothing looked it up, which is how every document written before this existed reads.
@@ -359,6 +378,9 @@ const roundTo = (v: unknown, places: number): number | null => {
   const f = 10 ** places
   return Math.round(v * f) / f
 }
+
+/** `INC-` and up to thirty-two unambiguous characters; anything else is not one of ours */
+const sharedId = (v: unknown): string | null => (typeof v === 'string' && /^INC-[A-Z0-9-]{4,32}$/.test(v.trim().toUpperCase()) ? v.trim().toUpperCase() : null)
 
 /** enough of a junction's furniture to read at a glance, not a survey of it */
 const MAX_CONTROLS = 6
@@ -498,8 +520,8 @@ export const emptyClaim = (): Claim => ({
   schema: CLAIM_SCHEMA,
   reference: null,
   submittedAt: null,
-  reporter: { name: '', phone: '', email: '', policy: '', policyholder: null },
-  incident: { kind: 'collision', at: nowLocal(), utcOffset: null, location: null, context: null, surface: 'satellite', conditions: { weather: '', road: '', light: '' }, description: '', language: 'en' },
+  reporter: { name: '', phone: '', email: '', policy: '', policyholder: null, party: 'policyholder' },
+  incident: { kind: 'collision', at: nowLocal(), shared: null, utcOffset: null, location: null, context: null, surface: 'satellite', conditions: { weather: '', road: '', light: '' }, description: '', language: 'en' },
   vehicles: [newVehicle('a', 'insured', 'sedan', '#b9bec6'), newVehicle('b', 'other', 'suv', '#1c1f26')],
   people: [],
   impact: null,
@@ -535,10 +557,12 @@ export const toDocument = (claim: Claim): Claim => {
       email: str(claim.reporter.email).toLowerCase(),
       policy: str(claim.reporter.policy).toUpperCase(),
       policyholder: bool3(claim.reporter.policyholder),
+      party: isParty(claim.reporter.party) ? claim.reporter.party : 'policyholder',
     },
     incident: {
       kind: claim.incident.kind,
       at: claim.incident.at,
+      shared: sharedId(claim.incident.shared),
       utcOffset: offsetMinutes(claim.incident.utcOffset),
       location: claim.incident.location
         ? {
@@ -705,10 +729,11 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
     schema: CLAIM_SCHEMA,
     reference: typeof raw.reference === 'string' ? raw.reference : null,
     submittedAt: typeof raw.submittedAt === 'string' ? raw.submittedAt : null,
-    reporter: { name: str(rep.name), phone: str(rep.phone), email: str(rep.email), policy: str(rep.policy), policyholder: bool3(rep.policyholder) },
+    reporter: { name: str(rep.name), phone: str(rep.phone), email: str(rep.email), policy: str(rep.policy), policyholder: bool3(rep.policyholder), party: isParty(rep.party) ? rep.party : 'policyholder' },
     incident: {
       kind: isKind(inc.kind) ? inc.kind : base.incident.kind,
       at: typeof inc.at === 'string' ? inc.at : nowLocal(),
+      shared: typeof inc.shared === 'string' ? inc.shared : null,
       utcOffset: typeof inc.utcOffset === 'number' ? inc.utcOffset : null,
       location,
       context: sceneContext(inc.context),

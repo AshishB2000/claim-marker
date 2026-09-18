@@ -51,6 +51,8 @@ export function App() {
   const setLang = useClaim((s) => s.setLang)
   const lang = useLang()
   const t = useT()
+  // the other driver is answering about someone else's accident, and is told so once
+  const party = claim.reporter.party === 'other_party'
   // the damage step puts the camera first on a phone with the assistant on, and says so
   const narrow = useNarrow()
   const photoFirst = narrow && assistOn()
@@ -85,7 +87,7 @@ export function App() {
               <Icon.car />
             </span>
             <div className="leading-tight">
-              <div className="text-[15px] font-semibold">{t('shell.title')}</div>
+              <div className="text-[15px] font-semibold">{t(party ? 'shell.title.party' : 'shell.title')}</div>
               <div className="text-xs text-slate-500">{config.brand}</div>
             </div>
           </div>

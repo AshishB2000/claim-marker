@@ -8,6 +8,7 @@ const sample = (): Claim => ({
   incident: {
     kind: 'collision',
     at: '2026-09-06T17:30',
+    shared: null,
     utcOffset: -240,
     location: { lng: -73.9859, lat: 40.7573, address: 'Times Square, New York' },
     context: null,
@@ -79,7 +80,7 @@ describe('claim round-trip', () => {
   it('round-trips the whole report: people, police, property, photos, the reporter and the attestation', () => {
     const c: Claim = {
       ...sample(),
-      reporter: { name: ' Ashish B ', phone: '555 0100', email: 'ME@Example.com ', policy: 'pol-9', policyholder: true },
+      reporter: { name: ' Ashish B ', phone: '555 0100', email: 'ME@Example.com ', policy: 'pol-9', policyholder: true, party: 'policyholder' as const },
       people: [
         { ...newPerson('driver', 'a'), self: true },
         { ...newPerson('driver', 'b'), name: 'Dana Q', phone: '555 0199', licence: 'd1234 ', injured: true, injury: 'Sore neck, went to A&E' },
@@ -96,7 +97,7 @@ describe('claim round-trip', () => {
     c.attachments.photos = [{ data: 'data:image/jpeg;base64,/9j/4AAQ', of: 'a', caption: ' front bumper ' }]
     const first = toDocument(c)
     expect(JSON.stringify(toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value))).toBe(JSON.stringify(first))
-    expect(first.reporter).toEqual({ name: 'Ashish B', phone: '555 0100', email: 'me@example.com', policy: 'POL-9', policyholder: true })
+    expect(first.reporter).toEqual({ name: 'Ashish B', phone: '555 0100', email: 'me@example.com', policy: 'POL-9', policyholder: true, party: 'policyholder' })
     expect(first.vehicles[0].vin).toBe('1HGCM82633A004352')
     expect(first.vehicles[0].plateState).toBe('NY')
     expect(first.vehicles[0].condition).toEqual({ drivable: false, airbags: true, towed: true, location: "Mike's Towing" })
@@ -203,6 +204,28 @@ describe('claim round-trip', () => {
     expect(JSON.stringify(first.attachments.photos)).not.toMatch(/lng|lat|gps/i)
     const again = toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value)
     expect(JSON.stringify(again)).toBe(JSON.stringify(first))
+  })
+
+  it('links two accounts of one accident, and says which side it is', () => {
+    const c = sample()
+    c.incident.shared = ' inc-7f3k2q '
+    c.reporter.party = 'other_party'
+    const first = toDocument(c)
+    // one shape for the id whichever side wrote it, so two documents name the same string
+    expect(first.incident.shared).toBe('INC-7F3K2Q')
+    expect(first.reporter.party).toBe('other_party')
+    const again = toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value)
+    expect(JSON.stringify(again)).toBe(JSON.stringify(first))
+  })
+
+  it('is one account by default, and drops an id that is not one of ours', () => {
+    const c = sample()
+    expect(toDocument(c).incident.shared).toBeNull()
+    expect(toDocument(c).reporter.party).toBe('policyholder')
+    c.incident.shared = 'https://evil.example/INC-1'
+    expect(toDocument(c).incident.shared).toBeNull()
+    c.reporter.party = 'the insurer' as never
+    expect(toDocument(c).reporter.party).toBe('policyholder')
   })
 
   it('defaults the kind and the conditions, and rejects values off the lists', () => {

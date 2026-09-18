@@ -18,10 +18,11 @@ const full = () =>
     ...emptyClaim(),
     reference: 'CM-7F3K2Q',
     submittedAt: '2026-09-07T22:14:03.000Z',
-    reporter: { name: 'Ashish B', phone: '555 0100', email: 'me@example.com', policy: 'pol-9', policyholder: true },
+    reporter: { name: 'Ashish B', phone: '555 0100', email: 'me@example.com', policy: 'pol-9', policyholder: true, party: 'policyholder' },
     incident: {
       kind: 'collision',
       at: '2026-09-06T17:30',
+      shared: 'INC-7F3K2Q',
       utcOffset: -240,
       location: { lng: -73.9859, lat: 40.7573, address: 'Times Square' },
       context: {

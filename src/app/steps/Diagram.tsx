@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { useClaim } from '../../claim/store'
+import { useClaim, othersOf } from '../../claim/store'
 import { assistOn, buildDiagram, writeStatement } from '../../assist/client'
+import { config } from '../../config'
+import { Invite } from '../Invite'
 import type { LngLat } from '../../geo'
 import { ROLE_COLOR, SURFACES, type ClaimVehicle } from '../../claim/schema'
 import { cap, compassKey, vehicleOf } from '../../claim/describe'
@@ -30,6 +32,9 @@ export function Diagram() {
   const claim = useClaim((s) => s.claim)
   const autoDamage = useClaim((s) => s.autoDamage)
   const roadWays = useClaim((s) => s.roadWays)
+  // only the policyholder invites, only when there is somebody to invite, and only when there
+  // is a server to make the link: the other driver's own page must never offer this
+  const canInvite = !!config.submitUrl && claim.reporter.party === 'policyholder' && othersOf(claim).length > 0
   const placeVehicles = useClaim((s) => s.placeVehicles)
   const grabVehicle = useClaim((s) => s.grabVehicle)
   const dragVehicle = useClaim((s) => s.dragVehicle)
@@ -367,6 +372,9 @@ export function Diagram() {
             </>
           )}
         </div>
+
+        {/* the moment to ask is while both drivers are still standing in the road */}
+        {canInvite && <Invite />}
       </aside>
     </div>
   )

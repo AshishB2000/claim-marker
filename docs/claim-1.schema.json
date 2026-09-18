@@ -17,7 +17,8 @@
         "phone": { "type": "string" },
         "email": { "type": "string" },
         "policy": { "type": "string" },
-        "policyholder": { "type": ["boolean", "null"] }
+        "policyholder": { "type": ["boolean", "null"] },
+        "party": { "enum": ["policyholder", "other_party"], "description": "which side of the accident this account is. `other_party` is the other driver, who was invited at the scene and reported on their own phone; their own vehicle still carries role `insured`, which schema-wise means \"the reporter's vehicle\". Absent in documents from before there were two, which means policyholder." }
       }
     },
     "incident": {
@@ -26,6 +27,7 @@
       "properties": {
         "kind": { "enum": ["collision", "single", "parked", "theft", "vandalism", "weather", "glass", "fire"] },
         "at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$", "description": "local date and time, no zone" },
+        "shared": { "type": ["string", "null"], "pattern": "^INC-[A-Z0-9-]{4,32}$", "description": "the id two accounts of one accident share; null on a report with only one. A backend needs only this and `reporter.party` to link them itself." },
         "utcOffset": { "type": ["integer", "null"], "minimum": -960, "maximum": 960, "description": "minutes east of UTC at that place and time, so `at` names an instant; null when nothing looked it up" },
         "location": {
           "oneOf": [
