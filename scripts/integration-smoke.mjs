@@ -471,7 +471,10 @@ const otherErrors = []
 other.on('pageerror', (e) => otherErrors.push(String(e)))
 await other.goto(`${API}/?party=${partyToken}`, { waitUntil: 'networkidle' })
 await other.locator(`text=${enT('shell.title.party')}`).waitFor({ timeout: 20000 }).catch(() => fail('the party link did not open the other driver\'s page'))
-const otherState = () => other.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim)
+// the other driver's page keeps its own draft, keyed by the incident, so it can never
+// overwrite a report the same browser was already writing
+const partyKey = `claim-marker/draft/${incidentId}`
+const otherState = () => other.evaluate((key) => JSON.parse(localStorage.getItem(key)).state.claim, partyKey)
 const seeded = await otherState()
 if (seeded.reporter.party !== 'other_party') fail(`the other driver's page is not in party mode: ${seeded.reporter.party}`)
 if (seeded.incident.shared !== incidentId) fail(`the other driver's report does not name the incident: ${seeded.incident.shared}`)
@@ -487,8 +490,8 @@ ok('invite: the other driver lands on a seeded report in party mode, and sees no
 // they fill in the little that is needed and send — describing their own car as the shape and
 // colour it really is, which is how the desk pairs it with the customer's account of it
 const theirCar = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles.find((v) => v.role === 'other')
-await other.evaluate((car) => {
-  const raw = JSON.parse(localStorage.getItem('claim-marker/draft'))
+await other.evaluate(({ car, key }) => {
+  const raw = JSON.parse(localStorage.getItem(key))
   raw.state.step = 'review'
   raw.state.claim.reporter = { ...raw.state.claim.reporter, name: 'Dana Q', phone: '555 0199', email: 'dana@example.com', policy: 'OTHER-1' }
   raw.state.claim.incident = { ...raw.state.claim.incident, description: 'I was already in the junction.' }
@@ -502,8 +505,8 @@ await other.evaluate((car) => {
     heading: i === 0 ? 10 : 190,
     path: [],
   }))
-  localStorage.setItem('claim-marker/draft', JSON.stringify(raw))
-}, theirCar)
+  localStorage.setItem(key, JSON.stringify(raw))
+}, { car: theirCar, key: partyKey })
 await other.reload({ waitUntil: 'networkidle' })
 await other.getByRole('checkbox', { name: enT('scene.send.agreeAria') }).check()
 await other.getByRole('textbox', { name: enT('scene.send.signAria') }).fill('Dana Q')
