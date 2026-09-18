@@ -581,7 +581,44 @@ const city = await page.evaluate(async () => {
 if (!city) fail('the map has no building-extrusion layer')
 if (city.length <= 20) fail(`Times Square should be full of buildings; the layer holds ${city.length}`)
 if (!city.every((b) => b.height > 0)) fail(`a building has no height to extrude to: ${JSON.stringify(city.filter((b) => !(b.height > 0)))}`)
-ok(`map: ${city.length} building footprints on the map, the tallest ${Math.max(...city.map((b) => b.height))} m`)
+// and they paint, flat, on the map the customer is actually editing on — which is also what
+// `compose()` puts in `attachments.scene`. Zoomed out to see a block at all: at the diagram's
+// own zoom the nearest frontage is past the edge of a 700 px canvas.
+const diagramZoom = await page.evaluate(() => {
+  const z = window.__map.getZoom()
+  window.__map.setZoom(17)
+  return z
+})
+await page.waitForTimeout(2500)
+const flat = await page.evaluate(() => {
+  const map = window.__map
+  const src = map.getCanvas()
+  const off = document.createElement('canvas')
+  off.width = off.height = 1
+  const ctx = off.getContext('2d', { willReadFrequently: true })
+  const dpr = src.width / src.clientWidth
+  const mid = [src.clientWidth / 2, src.clientHeight / 2]
+  const sampled = []
+  for (let gx = 0.1; gx < 1; gx += 0.2) {
+    for (let gy = 0.1; gy < 1; gy += 0.2) {
+      const x = Math.round(gx * src.clientWidth)
+      const y = Math.round(gy * src.clientHeight)
+      // the middle of the frame is the cars, their paths, the impact cross and the road
+      if (Math.hypot(x - mid[0], y - mid[1]) < 150) continue
+      if (!map.queryRenderedFeatures([x, y], { layers: ['buildings'] }).length) continue
+      ctx.drawImage(src, x * dpr, y * dpr, 1, 1, 0, 0, 1, 1)
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+      sampled.push({ grey: Math.max(r, g, b) - Math.min(r, g, b) <= 18 && (r + g + b) / 3 > 100, rgb: [r, g, b] })
+    }
+  }
+  return sampled
+})
+await page.evaluate((z) => window.__map.setZoom(z), diagramZoom)
+await page.waitForTimeout(1500)
+const flatGrey = flat.filter((p) => p.grey).length
+if (flat.length < 3) fail(`the flat map draws no building footprints to sample (${flat.length} points on the layer)`)
+if (flatGrey / flat.length < 0.75) fail(`the flat footprints are not the extrusion's grey: ${JSON.stringify(flat)}`)
+ok(`map: ${city.length} building footprints on the map, the tallest ${Math.max(...city.map((b) => b.height))} m; flat, they paint over the imagery (${flatGrey}/${flat.length} sampled points the extrusion's grey, e.g. rgb(${flat.find((p) => p.grey).rgb}))`)
 
 // watch it: the camera opens up and chases, the shockwave rings the impact, and the diagram
 // comes back exactly as it was — flat, north-up, every marker where it stood
@@ -647,9 +684,11 @@ const watched = await page.evaluate(async (impact) => {
   while (document.querySelector('.maplibregl-map').classList.contains('mk-playing') && performance.now() - t0 < 30000) {
     pitch = Math.max(pitch, map.getPitch())
     whites.push(white())
-    // the wall sampling is the expensive part of this loop and a dozen frames of it is plenty;
-    // the shockwave below is measured every frame and must not be sampled past
-    if (map.getPitch() > 40 && walls.length < 12) {
+    // The wall sampling is by far the most expensive thing in this loop — a grid of
+    // queryRenderedFeatures and a canvas read — and it runs in exactly the window the
+    // shockwave peaks in. Three measurements prove the city; any more and this check would be
+    // buying its own evidence with the frame rate of the one next to it.
+    if (map.getPitch() > 40 && walls.length < 3) {
       const w = wall()
       if (w) walls.push(w)
     }
@@ -677,7 +716,7 @@ const carsAfter = await page.evaluate(() => [...document.querySelectorAll('.mk-c
 if (carsAfter.length !== carsBefore.length || carsAfter.some(([x, y], i) => Math.abs(x - carsBefore[i][0]) > 1 || Math.abs(y - carsBefore[i][1]) > 1))
   fail(`the markers came back somewhere else: ${JSON.stringify(carsBefore)} → ${JSON.stringify(carsAfter)}`)
 ok(
-  `map: watched it — the camera tilted to ${watched.pitch.toFixed(0)}°, the shockwave peaked at ${(watched.peak * 100).toFixed(0)}% white around the impact (median ${(watched.median * 100).toFixed(0)}%, ${watched.frames} frames), buildings stood in front of it on ${watched.walls} of them (a ${watched.wall.height} m wall read ${(watched.wall.grey * 100).toFixed(0)}% flat grey, rgb(${watched.wall.mean})), and the map came back flat with the markers where they were`,
+  `map: watched it — the camera tilted to ${watched.pitch.toFixed(0)}°, the shockwave peaked at ${(watched.peak * 100).toFixed(0)}% white around the impact (median ${(watched.median * 100).toFixed(0)}%, ${watched.frames} frames), buildings stood in front of it on ${watched.walls} sampled frames (a ${watched.wall.height} m wall read ${(watched.wall.grey * 100).toFixed(0)}% flat grey, rgb(${watched.wall.mean})), and the map came back flat with the markers where they were`,
 )
 
 // somewhere the map cannot show — a garage, a covered car park: the same diagram on a

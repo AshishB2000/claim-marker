@@ -123,6 +123,10 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
   const submitted = useClaim((s) => s.submitted)
   const setReporter = useClaim((s) => s.setReporter)
   const setAttestation = useClaim((s) => s.setAttestation)
+  // the same ground the diagram step drew on, so the replay recorded off this map — and the
+  // page the customer reads before signing — is the scene they built, not a bare basemap
+  const roadWays = useClaim((s) => s.roadWays)
+  const buildings = useClaim((s) => s.buildings)
   const map = useRef<MapSceneHandle>(null)
   const markers = useRef(new Map<string, DamageMarkerHandle>())
   const [busy, setBusy] = useState(false)
@@ -170,7 +174,7 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
 
   return (
     <div className="space-y-5">
-      <ReportDocument claim={claim} edit lang={lang} mapRef={map} markers={markers} />
+      <ReportDocument claim={claim} edit lang={lang} mapRef={map} markers={markers} roads={roadWays} buildings={buildings} />
 
       {/* ── who to contact ───────────────────────────────────────── */}
       <div className="card p-6">

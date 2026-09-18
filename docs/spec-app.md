@@ -1106,15 +1106,20 @@ A camera tilted to 55° behind a car looks out at the horizon, and until now the
 satellite imagery lying flat on the ground — which reads as a photograph of a city, not a
 city. The accident happened between buildings, and the buildings are already a matter of
 public record on the same map the road came from. So the lookup brings them back too, and the
-replay flies through them.
+replay flies through them — on the diagram step and on the review page, which is the map the
+replay is recorded off.
 
 **One query, not two.** `roadQuery` grew a third clause: `way[building]` within
 `BUILDING_RADIUS` (150 m — wider than the road's 60, because a tilted camera sees a street's
-worth of frontage where a flat one sees a junction). `parseBuildings` is pure and separate, so
-a fixture can be held against it directly: every closed `building` way becomes a polygon
-carrying the height to extrude it to — `height` in metres when the building has one, unit and
-all, else `building:levels` at 3.2 m a storey, else 8 m, and absurd values (a negative height,
-a thousand storeys) count as no answer rather than as geometry. Open ways are left out: an
+worth of frontage where a flat one sees a junction). The clause asks for **every** building,
+not only the ones tagged with a height: the tags are read where they exist and a default
+stands in where they do not, because a city with its untagged blocks missing is a city with
+holes in it, and a hole reads as a mistake where a plinth reads as a building nobody has
+measured. `parseBuildings` is pure and separate, so a fixture can be held against it directly:
+every closed `building` way becomes a polygon carrying the height to extrude it to — the
+`height` tag in metres when the building has one, unit and all, else `building:levels` at
+3.2 m a storey, else 8 m, and absurd values (a negative height, a thousand storeys) count as
+no answer rather than as geometry. Open ways are left out: an
 open `building` way is a mapping error or one wall of a multipolygon whose other parts are not
 in the answer, and half a building drawn as a solid is worse than none. `parseRoad` hands the
 collection out beside `ways`, and the store keeps it beside `roadWays` — not in `claim/1`, not
@@ -1124,26 +1129,42 @@ for again, and a cache of it can only go stale.
 **On the map it is one `fill-extrusion` layer**, added first of everything `style.load` adds,
 so the road, the travel paths, the cars and the shockwave are all drawn over it, and — like the
 road — visible on `satellite` and `streets` only, because there is no real city around a drawn
-parking lot. While the map is flat, which is every view the customer edits in, an extrusion is
-just its own flat footprint under the satellite's own rooftops: harmless. It becomes a city
-only when the replay tilts the camera. The grey is light but deliberately short of white: the
+parking lot. While the map is flat, which is every view the customer edits in, an extrusion
+draws as its own flat footprint — painted **over** the satellite's picture of that same block,
+at 0.85, so the blocks read as pale shapes and the streets between them stay as they were.
+That is the editing surface and it is what `compose()` puts in `attachments.scene`, so it is
+asserted flat as well as tilted. It becomes a city only when the replay tilts the camera.
+
+**Who gets the city.** The diagram step and the review page, both from the store — the review
+page's map is the one the replay is recorded off, so the video an adjuster watches is the scene
+the customer built rather than a bare basemap. `ReportDocument` takes the road and the
+buildings as props for exactly that reason: the claims desk renders the same component and must
+have neither, because `claim/1` carries the road in words and the buildings not at all. A
+report read on the desk is therefore flat ground with cars on it, as it always was. The grey is light but deliberately short of white: the
 shockwave, the flow line along each travel path and the labels are all white, and at 0.85 over
 the brightest imagery there is, no channel of this colour reaches 200, so a wall never passes
 for one of them.
 
 **The honest limits.** Coverage is whatever OpenStreetMap has for that corner: dense in cities,
-often nothing at all on a rural road, and heights are the exception rather than the rule —
-which is what the 8 m default is for, and why a building with no height is still drawn rather
-than dropped. Where nothing comes back the scene is exactly what it was before any of this,
+often nothing at all on a rural road, and heights are the exception rather than the rule — in
+the recorded Times Square answer, 32 of 44 buildings carry one and twelve are plinths at the
+default. That is what the 8 m default is for, and why a building with no height is still drawn
+rather than dropped; a block-sized footprint 8 m tall is wrong about that building and right
+about the street having a building there. Where nothing comes back the scene is exactly what it was before any of this,
 like every other thing the place and the time look up. The Overpass cost is unchanged in
 shape: one query per incident, cached in `sessionStorage` per rounded location, against the
 same mirror the road already used.
 
 **What the smoke proves.** The recorded Times Square answer gained the real building ways, so
 Overpass stays offline in the build gate: the layer must hold more than twenty footprints, each
-with a height. Then, during the cinematic replay, it asks the map itself where it is drawing a
-building — a block's centroid at that zoom is usually off the top of the frame while the
-building fills it — and reads a column of pixels back off the canvas there. That column has to
+with a height. On the flat map it samples points the layer
+reports it is drawing on, away from the middle where the cars and the road are, and they have
+to be the extrusion's grey and not the imagery's. Then, during the cinematic replay, it asks
+the map itself where it is drawing a building — a block's centroid at that zoom is usually off
+the top of the frame while the building fills it — and reads a column of pixels back off the
+canvas there. Three frames of that is the cap: the sampling is expensive and it runs in the
+window the shockwave is measured in, and a check that buys its evidence with its neighbour's
+frame rate is not evidence. That column has to
 be the extrusion's own flat grey and not the satellite's picture of the same block, because a
 layer that validates, queries and paints nothing is exactly the failure this page has had
 before.

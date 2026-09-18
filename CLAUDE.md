@@ -282,16 +282,24 @@ blame, speed and cost stay out of anything the customer or the desk reads.
 `way[building]` within `BUILDING_RADIUS` (150 m) alongside the road's 60, and `parseBuildings`
 — pure, tested against the recorded fixture — turns every **closed** building way into a
 polygon with a `height`: the `height` tag in metres, else `building:levels` × 3.2, else 8 m,
-with absurd values treated as no answer. `parseRoad` hands them out beside `ways`, so a place
-with no road has no result to hang them on. The store keeps `buildings` beside `roadWays` and
+with absurd values treated as no answer — the query asks for **every** building, not only the
+tagged ones, which is what the default is for. `parseRoad` hands them out beside `ways`, so a
+place with no road has no result to hang them on. The store keeps `buildings` beside `roadWays` and
 **persists neither**. `MapScene` draws them as one `fill-extrusion` layer added **first** of
 everything `style.load` adds — so the road, the paths, the cars and the shockwave are over it —
 and visible on `satellite` and `streets` only, like the road (`onRealGround` governs both). The
 grey stops short of white on purpose: at 0.85 over the brightest imagery no channel reaches
 200, so a wall never reads as the shockwave, the flow line or a label. Flat map, flat
-footprints; it is a city only while a cinematic replay is tilting the camera. The smoke's pixel
-check asks the map **where** it is drawing a building rather than projecting a footprint — at
-that zoom a block's centroid is usually off the top of the frame while the building fills it.
+footprints **over** the satellite's own rooftops — which is the editing surface and what
+`compose()` puts in `attachments.scene`, so the smoke asserts it flat as well as tilted; it is
+a city only while a cinematic replay is tilting the camera. The diagram step and the review
+page both pass it from the store — the review page's map is the one the replay is recorded
+off — and `ReportDocument` takes `roads`/`buildings` as **props** because the desk renders it
+too and must have neither (`claim/1` carries the road in words and the buildings not at all).
+The smoke's pixel check asks the map **where** it is drawing a building rather than projecting
+a footprint — at that zoom a block's centroid is usually off the top of the frame while the
+building fills it — and is capped at three frames, because it runs inside the window the
+shockwave statistic is sampled in and must not cost it its frame rate.
 
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`

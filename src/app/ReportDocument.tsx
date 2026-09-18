@@ -17,6 +17,7 @@ import {
   yesNo,
   type Voice,
 } from '../claim/describe'
+import type { FeatureCollection } from 'geojson'
 import type { LngLat } from '../geo'
 import { plural, translate, type Key, type Lang, type Vars } from '../i18n'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
@@ -194,6 +195,14 @@ export type ReportDocumentProps = {
   edit?: boolean
   /** the live scenes, for the review page to export at send time */
   mapRef?: RefObject<MapSceneHandle | null>
+  /**
+   * The road and the buildings around the incident, so the review page — and the replay it
+   * records off this very map — shows the customer the ground they drew the diagram on. Props
+   * rather than the store, because the claims desk renders this component too and has neither:
+   * `claim/1` carries the road in words and the buildings not at all.
+   */
+  roads?: FeatureCollection | null
+  buildings?: FeatureCollection | null
   markers?: RefObject<Map<string, DamageMarkerHandle>>
   /** what an adjuster sees instead of the draft badge */
   badge?: ReactNode
@@ -208,7 +217,7 @@ export type ReportDocumentProps = {
  * customer reads it on the review step with a way back into every section; the insurer
  * reads the same component on the claims desk with none.
  */
-export function ReportDocument({ claim, edit = false, mapRef, markers, badge, voice = 'customer', lang = 'en' }: ReportDocumentProps) {
+export function ReportDocument({ claim, edit = false, mapRef, markers, badge, voice = 'customer', lang = 'en', roads = null, buildings = null }: ReportDocumentProps) {
   const t = (key: Key, vars?: Vars) => translate(lang, key, vars)
   const ownMarkers = useRef(new Map<string, DamageMarkerHandle>())
   const marks = markers ?? ownMarkers
@@ -500,6 +509,8 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                 center={center}
                 style={claim.incident.surface}
                 vehicles={claim.vehicles}
+                roads={roads}
+                buildings={buildings}
                 impact={claim.impact}
                 selected={null}
                 lang={lang}
