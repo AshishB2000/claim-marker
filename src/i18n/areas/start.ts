@@ -40,6 +40,18 @@ export const en = {
   'start.where.looked.glare': 'The sun was low and ahead of this vehicle',
   'start.where.looked.source': 'from public records',
 
+  // ── the third way in: a photograph that knows where and when it was taken
+  'start.where.photo.start': 'Start from a photo you took',
+  'start.where.photo.reading': 'Reading the photo…',
+  'start.where.photo.hint': 'Many phones strip the place out of a photo before an app sees it. If yours did, search above instead — nothing is lost either way, the photo is kept with your report.',
+  'start.where.photo.both': 'That photo was taken at {place}, {when}.',
+  'start.where.photo.place': 'That photo was taken at {place}.',
+  'start.where.photo.time': 'That photo was taken {when}. It does not say where.',
+  'start.where.photo.none': "That photo does not say where or when it was taken — your phone removed it. We've kept it with your report.",
+  'start.where.photo.use': 'Use that',
+  'start.where.photo.ignore': 'No, I’ll enter it',
+  'start.where.photo.kept': 'Kept with your report as a photo of the scene.',
+
   // ── the vehicles
   'start.vehicles.onPolicy': 'The one on your policy',
   'start.vehicles.asYouCanTell': 'As best you can tell',
@@ -177,6 +189,17 @@ export const es: Record<keyof typeof en, string> = {
   'start.where.looked.unnamedRoad': 'Una vía sin nombre',
   'start.where.looked.glare': 'El sol estaba bajo y de frente a este vehículo',
   'start.where.looked.source': 'de registros públicos',
+
+  'start.where.photo.start': 'Empieza con una foto que tomaste',
+  'start.where.photo.reading': 'Leyendo la foto…',
+  'start.where.photo.hint': 'Muchos teléfonos le quitan el lugar a la foto antes de que una app la vea. Si el tuyo lo hizo, mejor busca arriba: no se pierde nada, la foto queda igual con tu reporte.',
+  'start.where.photo.both': 'Esa foto se tomó en {place}, {when}.',
+  'start.where.photo.place': 'Esa foto se tomó en {place}.',
+  'start.where.photo.time': 'Esa foto se tomó {when}. No dice dónde.',
+  'start.where.photo.none': 'Esa foto no dice dónde ni cuándo se tomó — tu teléfono lo quitó. La guardamos con tu reporte.',
+  'start.where.photo.use': 'Usar eso',
+  'start.where.photo.ignore': 'No, yo lo escribo',
+  'start.where.photo.kept': 'Guardada con tu reporte como foto del lugar.',
 
   'start.vehicles.onPolicy': 'El que está en tu póliza',
   'start.vehicles.asYouCanTell': 'Lo que puedas saber de él',

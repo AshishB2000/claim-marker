@@ -360,6 +360,12 @@ const sendHtml = (req, res, html) => {
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
     'content-security-policy': CSP,
+    // Said out loud rather than left to the default, which is the same thing: the page takes
+    // photographs of the damage, reads the customer's position at the roadside and dictates a
+    // statement, and a deployment behind a proxy that sets a blanket `camera=()` would break
+    // all three silently. `self` is this page's own origin; an embedding host still has to
+    // delegate with the iframe's `allow` attribute, which `public/embed.js` does.
+    'permissions-policy': 'camera=(self), microphone=(self), geolocation=(self)',
   })
   res.end(req.method === 'HEAD' ? undefined : body)
 }

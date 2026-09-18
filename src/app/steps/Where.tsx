@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { sceneKey, useClaim } from '../../claim/store'
 import { LIGHT, ROAD, WEATHER, instantOf, nowLocal, sceneContext, type Conditions } from '../../claim/schema'
 import { lookedUpLines } from '../../claim/describe'
+import { readExif } from '../../claim/exif'
 import { reversePlace, searchPlaces, type Place } from '../../geocode'
 import type { LngLat } from '../../geo'
-import type { Key } from '../../i18n'
+import type { Key, Lang } from '../../i18n'
 import { useLang, useT } from '../../i18n/useT'
 import { LocationMap } from '../../map/LocationMap'
 import { fetchWeather, toConditions, toSceneWeather } from '../../scene/weather'
@@ -15,6 +16,14 @@ import { Icon } from '../icons'
 
 /** who the lookup names as its source in the document; the two keyless providers it asks */
 const SOURCE = 'open-meteo+osm'
+
+/** what a photograph turned out to know: either half may be missing, and usually is */
+type FromPhoto = { at: LngLat | null; address: string; takenAt: string | null }
+
+const spoken = (at: string, lang: Lang) => {
+  const d = new Date(at)
+  return Number.isNaN(d.getTime()) ? at : d.toLocaleString(lang === 'es' ? 'es' : undefined, { dateStyle: 'long', timeStyle: 'short' })
+}
 
 export function Where() {
   const incident = useClaim((s) => s.claim.incident)
@@ -30,12 +39,16 @@ export function Where() {
   // changes nothing in the document, because the values are already in the selects below it.
   // Held as the place-and-hour it was said about, so a new place asks again.
   const [acknowledged, setAcknowledged] = useState<string | null>(null)
+  const addPhotos = useClaim((s) => s.addPhotos)
+  const photoInput = useRef<HTMLInputElement>(null)
+  // what the last photograph said, waiting to be accepted; `false` means it said nothing
+  const [fromPhoto, setFromPhoto] = useState<FromPhoto | false | null>(null)
 
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Place[]>([])
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
-  const [busy, setBusy] = useState<'search' | 'locate' | null>(null)
+  const [busy, setBusy] = useState<'search' | 'locate' | 'photo' | null>(null)
   const [error, setError] = useState<Key | null>(null)
   const abort = useRef<AbortController | null>(null)
   // the address a result put into the box; searching it again would only reopen the list
@@ -163,6 +176,52 @@ export function Where() {
     }
   }
 
+  /**
+   * The third way in. A photograph taken at the scene often carries the place and the minute
+   * in its EXIF, and reading it beats typing an address on a phone at the roadside.
+   *
+   * Offered, never relied on: iOS strips the location out of a picked photo unless the
+   * customer has granted full library access, and a camera-capture input frequently carries
+   * none at all. When it says nothing we say so plainly and keep the photograph anyway — it
+   * is a photograph of the scene either way, which is worth having.
+   */
+  const startFromPhoto = async (list: FileList | null) => {
+    const file = list?.[0]
+    if (!file) return
+    setBusy('photo')
+    setFromPhoto(null)
+    const exif = await file
+      .arrayBuffer()
+      .then(readExif)
+      .catch(() => null)
+    // kept whatever it turned out to know; the store reads the same EXIF for the distances
+    await addPhotos([file], null)
+    if (!exif || (!exif.at && !exif.takenAt)) {
+      setFromPhoto(false)
+      setBusy(null)
+      return
+    }
+    const place = exif.at ? await reversePlace(exif.at).catch(() => null) : null
+    setFromPhoto({
+      at: exif.at,
+      address: place?.address ?? (exif.at ? `${exif.at[1].toFixed(5)}, ${exif.at[0].toFixed(5)}` : ''),
+      // a time in the future is a camera with a wrong clock, not an accident that has not happened
+      takenAt: exif.takenAt && exif.takenAt <= nowLocal() ? exif.takenAt : null,
+    })
+    setBusy(null)
+  }
+
+  const usePhoto = () => {
+    if (!fromPhoto) return
+    if (fromPhoto.at) {
+      setLocation({ lng: fromPhoto.at[0], lat: fromPhoto.at[1], address: fromPhoto.address })
+      picked.current = fromPhoto.address
+      setQuery(fromPhoto.address)
+    }
+    if (fromPhoto.takenAt) setIncident({ at: fromPhoto.takenAt })
+    setFromPhoto(null)
+  }
+
   const onKey = (e: React.KeyboardEvent) => {
     if (!open || results.length === 0) return
     if (e.key === 'ArrowDown') {
@@ -237,6 +296,48 @@ export function Where() {
           {busy === 'locate' ? <Icon.spinner /> : <Icon.locate />}
           {busy === 'locate' ? t('start.where.finding') : t('start.where.useLocation')}
         </button>
+
+        <input
+          ref={photoInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          aria-label={t('start.where.photo.start')}
+          onChange={(e) => {
+            void startFromPhoto(e.target.files)
+            e.target.value = ''
+          }}
+        />
+        <button className="btn btn-secondary w-full" onClick={() => photoInput.current?.click()} disabled={busy === 'photo'} data-from-photo>
+          {busy === 'photo' ? <Icon.spinner /> : <Icon.camera />}
+          {busy === 'photo' ? t('start.where.photo.reading') : t('start.where.photo.start')}
+        </button>
+
+        {fromPhoto === false && (
+          <p data-photo-none className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200">
+            {t('start.where.photo.none')} <span className="text-slate-400">{t('start.where.photo.hint')}</span>
+          </p>
+        )}
+        {fromPhoto && (
+          <div data-photo-found className="rounded-xl bg-brand-50 px-4 py-3 text-sm ring-1 ring-brand-100">
+            <p>
+              {fromPhoto.at && fromPhoto.takenAt
+                ? t('start.where.photo.both', { place: fromPhoto.address, when: spoken(fromPhoto.takenAt, lang) })
+                : fromPhoto.at
+                  ? t('start.where.photo.place', { place: fromPhoto.address })
+                  : t('start.where.photo.time', { when: spoken(fromPhoto.takenAt!, lang) })}
+            </p>
+            <div className="mt-2.5 flex gap-2">
+              <button className="btn btn-primary btn-sm" onClick={usePhoto}>
+                {t('start.where.photo.use')}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setFromPhoto(null)}>
+                {t('start.where.photo.ignore')}
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">{t('start.where.photo.kept')}</p>
+          </div>
+        )}
 
         {error && <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">{t(error)}</p>}
 

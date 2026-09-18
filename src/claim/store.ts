@@ -27,14 +27,16 @@ import {
   type Location,
   type Person,
   type PersonRole,
+  type Photo,
   type Police,
   type Property,
   type Reporter,
   type SceneContext,
   type Step,
 } from './schema'
-import { shrink } from './photos'
+import { photoDistances, shrink } from './photos'
 import { applyPrefill, vehicleFromPolicy, type Prefill, type PrefillVehicle } from './prefill'
+import { readExif, type PhotoExif } from './exif'
 import { fromFrame } from '../assist/frame'
 import type { Scene } from '../assist/schema'
 import { SIZE } from '../vehicles/bodies'
@@ -69,6 +71,9 @@ const TRAIL_STEP = 2.5
 const TRAIL_MAX = 40
 /** the drag has to cover this much before it says anything about which way the car faces */
 const TURN_MIN = 1.5
+/** a photograph that said nothing about itself */
+const NO_EXIF: PhotoExif = { takenAt: null, utcOffset: null, at: null }
+
 /** bumpers this close, or overlapping, is a collision */
 const TOUCHING = 1.2
 
@@ -149,6 +154,13 @@ export type ClaimState = {
 
   /** downscale and keep photographs; resolves to how many were kept */
   addPhotos: (files: Iterable<File>, of: string | null) => Promise<number>
+  /**
+   * What each kept photograph said about itself, index for index with `attachments.photos`.
+   * In memory only: it holds the raw position the document deliberately never sees, and a
+   * reload is not a reason to write coordinates to disk. A reopened draft keeps the distances
+   * already worked out; they simply stop following the place and the time.
+   */
+  photoExif: (PhotoExif | null)[]
   captionPhoto: (index: number, caption: string) => void
   removePhoto: (index: number) => void
   /** the panel a photo shows, set when a mark read off it is added; the caption stays the customer's */
@@ -240,6 +252,32 @@ export const useClaim = create<ClaimState>()(
         if (changed) set({ autoDamage: next, claim: { ...claim, vehicles } })
       }
 
+      /**
+       * The place or the time changed, so every photograph is now a different distance from the
+       * incident. Only the ones whose metadata is still in memory move; the rest keep the
+       * numbers they were given, which is what a draft reopened tomorrow has.
+       */
+      const rePlacePhotos = () => {
+        const { claim, photoExif } = get()
+        if (photoExif.every((e) => !e)) return
+        const { incident } = claim
+        let changed = false
+        const photos = claim.attachments.photos.map((p, i) => {
+          const exif = photoExif[i]
+          if (!exif) return p
+          const next: Photo = {
+            data: p.data,
+            of: p.of,
+            caption: p.caption,
+            ...('shows' in p ? { shows: p.shows } : {}),
+            ...photoDistances(exif, incident),
+          }
+          if (JSON.stringify(next) !== JSON.stringify(p)) changed = true
+          return next
+        })
+        if (changed) patchClaim((c) => ({ attachments: { ...c.attachments, photos } }))
+      }
+
       /** the geometry moved: find the impact again, then the damage that follows from it */
       const settle = () => {
         autoImpact()
@@ -254,6 +292,7 @@ export const useClaim = create<ClaimState>()(
         autoConditions: {},
         contextKey: null,
         roadWays: null,
+        photoExif: [],
         policy: [],
         delivery: null,
         lang: null,
@@ -282,6 +321,7 @@ export const useClaim = create<ClaimState>()(
           // a new time is a new hour to ask about, and the old answer was about the old one
           if (patch.at !== undefined && patch.at !== get().claim.incident.at) set({ contextKey: null, roadWays: null })
           patchClaim((c) => ({ incident: { ...c.incident, ...patch, ...(patch.at !== undefined && patch.at !== c.incident.at ? { context: null, utcOffset: null } : {}) } }))
+          if (patch.at !== undefined) rePlacePhotos()
         },
         setConditions: (patch) => {
           set((s) => ({ autoConditions: { ...s.autoConditions, ...Object.fromEntries(Object.keys(patch).map((k) => [k, 'user' as const])) } }))
@@ -305,6 +345,8 @@ export const useClaim = create<ClaimState>()(
           take('light')
           set({ contextKey: key, autoConditions: next, roadWays: ways })
           patchClaim((c) => ({ incident: { ...c.incident, context, utcOffset, conditions } }))
+          // the zone the lookup resolved can move every photograph's clock relative to the crash
+          rePlacePhotos()
         },
         setKind: (kind) => {
           const { others } = KIND_INFO[kind]
@@ -331,6 +373,7 @@ export const useClaim = create<ClaimState>()(
             vehicles: c.vehicles.map((v) => ({ ...v, position: null, path: [] })),
             impact: null,
           }))
+          rePlacePhotos()
           suggestDamages()
         },
 
@@ -368,19 +411,41 @@ export const useClaim = create<ClaimState>()(
         addPhotos: async (files, of) => {
           const room = MAX_PHOTOS - get().claim.attachments.photos.length
           const picked = Array.from(files).slice(0, Math.max(0, room))
-          // a file the browser cannot decode is skipped, not fatal: the rest still land
-          const shrunk = (await Promise.all(picked.map((f) => shrink(f).catch(() => null)))).filter((d): d is string => !!d)
+          // the EXIF comes off the original bytes first: `shrink` re-encodes through a canvas
+          // and everything the photograph knew about itself goes with it
+          const read = await Promise.all(
+            picked.map(async (f) => {
+              const exif = await f
+                .arrayBuffer()
+                .then(readExif)
+                .catch(() => NO_EXIF)
+              // a file the browser cannot decode is skipped, not fatal: the rest still land
+              const data = await shrink(f).catch(() => null)
+              return data ? { data, exif } : null
+            }),
+          )
+          const kept = read.filter((x): x is { data: string; exif: PhotoExif } => !!x)
+          const { incident } = get().claim
+          set((s) => {
+            // a draft reopened from storage has photos and no EXIF beside them; pad rather
+            // than let every later photograph read the wrong one's metadata
+            const pad: (PhotoExif | null)[] = Array(Math.max(0, s.claim.attachments.photos.length - s.photoExif.length)).fill(null)
+            return { photoExif: [...s.photoExif, ...pad, ...kept.map((k) => k.exif)].slice(0, MAX_PHOTOS) }
+          })
           patchClaim((c) => ({
             attachments: {
               ...c.attachments,
-              photos: [...c.attachments.photos, ...shrunk.map((data) => ({ data, of, caption: '' }))].slice(0, MAX_PHOTOS),
+              photos: [...c.attachments.photos, ...kept.map((k) => ({ data: k.data, of, caption: '', ...photoDistances(k.exif, incident) }))].slice(0, MAX_PHOTOS),
             },
           }))
-          return shrunk.length
+          return kept.length
         },
         captionPhoto: (index, caption) =>
           patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.map((p, i) => (i === index ? { ...p, caption } : p)) } })),
-        removePhoto: (index) => patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.filter((_, i) => i !== index) } })),
+        removePhoto: (index) => {
+          set((s) => ({ photoExif: s.photoExif.filter((_, i) => i !== index) }))
+          patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.filter((_, i) => i !== index) } }))
+        },
         tagPhoto: (index, zone) =>
           patchClaim((c) => ({ attachments: { ...c.attachments, photos: c.attachments.photos.map((p, i) => (i === index ? { ...p, shows: zone } : p)) } })),
 
@@ -483,7 +548,7 @@ export const useClaim = create<ClaimState>()(
           set((s) => {
             const claim = emptyClaim()
             claim.incident.language = s.lang ?? 'en'
-            return { claim, step: 'kind', impactManual: false, autoDamage: {}, autoConditions: {}, contextKey: null, roadWays: null, delivery: null }
+            return { claim, step: 'kind', impactManual: false, autoDamage: {}, autoConditions: {}, contextKey: null, roadWays: null, photoExif: [], delivery: null }
           }),
       }
     },
