@@ -212,6 +212,19 @@ the guided tiles when `getUserMedia` exists, samples 160-px greyscale frames thr
 `photoQuality.ts` every 300 ms, and its hints are **hints, never gates** — the shutter is
 always enabled, and every exit path stops the tracks.
 
+**Plausibility and reuse signals are the desk's, and only the desk's.**
+`src/claim/plausibility.ts` is pure geometry over a finished document (panel vs impact, a
+route arriving backwards, marks out of reach of the impact, overlapping bodies, a rear-end
+whose panels disagree, the story against `incident.context`, a photograph's own time and
+distance). `server/signals.mjs` is the server's side: three append-only JSONL indexes under
+`CLAIM_DIR/index/` for photo hashes, VINs and plates, compared **before** the new report is
+recorded, pruned by the retention sweep. Neither ever reaches the customer —
+`test/desk-only.test.ts` fails if anything but `src/adjuster/Desk.tsx` imports
+`plausibility.ts` — nothing in either blocks a report, and the words fraud, fault, liability,
+blame and suspicious appear in neither, which is also a test. `Photo.hash` is a dHash
+computed in the page (`ponytail:` — the server has no image decoder; a forged hash is the
+stated ceiling).
+
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
 and friends directly; those are only the defaults `config` starts from. `main.tsx` awaits
@@ -364,7 +377,7 @@ src/vehicles/     model loading + paint re-authoring, body previews, the paint p
 src/marker/       the 3D damage marker
 src/assist/       the optional assistant: the wire contract and its parsers, the metric frame, the client
 src/zones.ts models.ts schema.ts geo.ts geocode.ts   shared
-server/           the reference claim server, its session tokens and retention (no dependencies)
+server/           the reference claim server, its session tokens, retention and reuse signals (no dependencies)
 server/demo/      the demo insurer portal at /demo/ with DEMO=1: plain HTML, no build step
 fly.toml render.yaml .env.example   the public deployment, unverified — no account, no Docker here
 Dockerfile docker-compose.yml   the same thing as one image, page included

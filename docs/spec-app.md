@@ -849,6 +849,54 @@ Where `getUserMedia` does not exist the old hidden `<input capture>` path runs, 
 a camera that refuses to open falls back to it for that tap. The desktop card never opens the
 guide: a laptop webcam pointed at a bumper is not a thing that happens.
 
+## What the desk sees, and the customer never does (v9)
+
+An adjuster opening a report wants one thing before they read it: is there anything here worth
+a second look? Two independent things can answer that without an AI and without an accusation.
+
+**Three rules hold over all of it.** The customer never sees any of it — `test/desk-only.test.ts`
+walks every file under `src/` and fails if anything outside `src/adjuster/Desk.tsx` imports
+`plausibility.ts`. The words *fraud*, *fault*, *liability*, *blame* and *suspicious* appear
+nowhere, in no code, no message and no comment; a test greps the module's own source for them.
+And nothing here blocks or delays a report: it is computed after the fact, on the desk's side.
+
+**The diagram checked against itself** (`src/claim/plausibility.ts`, pure geometry). The panel
+marked as damaged against the side the point of impact is on, in the car's own frame. A route
+whose last leg arrives from behind the car's nose. Marks on a vehicle standing further from the
+impact than its own bodywork reaches. Two bodies drawn a metre into each other. A rear-end
+where the panels say the opposite. The customer's stated conditions against what the public
+record said. A photograph taken before the stated time, or half a kilometre away.
+
+Each is a `look` or a `note`, each carries its own evidence in numbers, and the phrasing is
+what an adjuster could read aloud to the customer without embarrassment — because the usual
+explanation for every one of these is somebody mis-remembering a bad afternoon. A car really
+can end up facing the way it came after a spin; a memory of the weather is the least reliable
+line on any claim form, which is why that one is only ever a `note`.
+
+**The same thing seen before** (`server/signals.mjs`). The claim server keeps three
+append-only indexes under `CLAIM_DIR/index/`: photograph fingerprints, VINs, plates, each line
+`{ key, reference, customer, at }`. A new report is compared against them *before* it is
+recorded: a photograph within six bits of one on a different report, a VIN or plate filed under
+a **different** customer id, or three or more reports from one customer inside ninety days. The
+result rides on the receipt as `signals`, which is the insurer's own record and never part of
+`claim/1`.
+
+Two VINs under the same customer are just that customer's car and say nothing. A null customer
+id does not match another null. The retention sweep prunes index lines with the folders they
+name, so forgetting a report forgets it here too.
+
+**The fingerprint's ceiling, stated.** It is a difference hash computed **in the page**, at
+downscale time, because a server with no dependencies has no image decoder. A determined sender
+can put any sixteen characters there. It is marked `ponytail:` in `src/claim/photos.ts` with
+the upgrade path — hash server-side with an image library and ignore what the page sent — and
+it is worth having as it stands, because the case it actually catches is the same picture sent
+twice, which is nearly always a duplicate submission rather than anything else.
+
+**On the desk**, all of it is one "Worth a look" card above the document, with a quiet "Nothing
+stands out in the diagram or the photographs" when there is nothing, and a small count on the
+inbox row. `ReportDocument` gains nothing: it is the one rendering both screens share, and the
+customer renders it too.
+
 ## Document
 
 `claim/1` wraps the v1 damage shape rather than redefining it:

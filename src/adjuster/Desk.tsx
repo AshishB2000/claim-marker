@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { KIND_INFO, parseClaim, toDocument, type Claim } from '../claim/schema'
+import { findings, type Finding } from '../claim/plausibility'
 import { config } from '../config'
 import { Icon } from '../app/icons'
 import { ReportDocument } from '../app/ReportDocument'
@@ -31,12 +32,20 @@ const STATUS_STYLE: Record<Status, string> = {
   closed: 'bg-slate-100 text-slate-600 ring-slate-200',
 }
 
+/**
+ * Something the server noticed about this report against everything filed before it: the same
+ * photograph, the same VIN or plate under another customer, a great many reports from one
+ * person. The insurer's own record — it rides on the receipt and is not part of `claim/1`.
+ */
+type Signal = { code: string; with: string | null; detail: string }
+
 type Receipt = {
   reference: string
   clientReference: string | null
   receivedAt: string
   status: Status
   files: Record<string, string>
+  signals?: Signal[]
   summary: {
     kind: Claim['incident']['kind']
     at: string
@@ -59,6 +68,63 @@ const ago = (iso: string) => {
   const h = Math.round(mins / 60)
   if (h < 36) return `${h} h ago`
   return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' })
+}
+
+/** what the server's codes mean, in the words an adjuster would use */
+const SIGNAL_LABEL: Record<string, string> = {
+  photo_seen_before: 'A photograph on this report has been filed before',
+  vin_seen_before: 'This VIN has been filed under a different customer',
+  plate_seen_before: 'This plate has been filed under a different customer',
+  frequent_reporter: 'This customer has filed several reports recently',
+}
+
+/**
+ * What an adjuster should know before they start reading — the geometry of the diagram checked
+ * against itself, and what the server has seen before. **Desk only.** None of it is shown to
+ * the customer, none of it blocks anything, and none of it says what any of it means: a panel
+ * on the wrong side is very often somebody mis-remembering a bad afternoon.
+ */
+function WorthALook({ claim, signals, onOpen }: { claim: Claim; signals: Signal[]; onOpen: (reference: string) => void }) {
+  const found: Finding[] = findings(claim)
+  if (found.length === 0 && signals.length === 0) {
+    return (
+      <div className="card mb-4 flex items-center gap-2 px-6 py-3 text-sm text-slate-500">
+        <Icon.check /> Nothing stands out in the diagram or the photographs.
+      </div>
+    )
+  }
+  return (
+    <div data-worth-a-look className="card mb-4 px-6 py-5">
+      <h3 className="eyebrow">Worth a look</h3>
+      <ul className="mt-3 space-y-3 text-sm">
+        {found.map((f) => (
+          <li key={`${f.code}:${f.text}`} className="flex items-start gap-2.5">
+            <span className={`mt-1.5 size-2 shrink-0 rounded-full ${f.level === 'look' ? 'bg-amber-500' : 'bg-slate-300'}`} />
+            <span>
+              {f.text} <span className="text-slate-500">{f.evidence}</span>
+            </span>
+          </li>
+        ))}
+        {signals.map((sig) => (
+          <li key={`${sig.code}:${sig.with}`} className="flex items-start gap-2.5">
+            <span className="mt-1.5 size-2 shrink-0 rounded-full bg-brand-500" />
+            <span>
+              {SIGNAL_LABEL[sig.code] ?? sig.code}
+              {sig.with && (
+                <>
+                  {' — '}
+                  <button className="font-mono underline underline-offset-2" onClick={() => onOpen(sig.with!)}>
+                    {sig.with}
+                  </button>
+                </>
+              )}{' '}
+              <span className="text-slate-500">{sig.detail}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 const StatusPill = ({ status }: { status: Status }) => (
@@ -252,6 +318,11 @@ export function Desk() {
                         {c.summary.hurt > 0 && <span className="font-semibold text-red-700">· {c.summary.hurt} hurt</span>}
                         {c.summary.drivable === false && <span className="font-semibold text-amber-700">· not drivable</span>}
                         {c.summary.photos > 0 && <span>· {c.summary.photos} photos</span>}
+                        {(c.signals?.length ?? 0) > 0 && (
+                          <span className="font-semibold text-brand-700">
+                            · {c.signals!.length} seen before
+                          </span>
+                        )}
                       </div>
                     </button>
                   </li>
@@ -286,6 +357,7 @@ export function Desk() {
                   </button>
                 </div>
               </div>
+              <WorthALook claim={showing.claim} signals={showing.receipt.signals ?? []} onOpen={show} />
               <ReportDocument claim={showing.claim} voice="desk" badge={<StatusPill status={showing.receipt.status} />} />
             </section>
           )}

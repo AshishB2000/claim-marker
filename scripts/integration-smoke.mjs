@@ -374,7 +374,7 @@ const again = await fetch(`http://localhost:${API_PORT}/claims`, {
 })
 const dup = await again.json()
 if (again.status !== 200 || !dup.duplicate || dup.reference !== shown) fail(`a resend was answered ${again.status} ${JSON.stringify(dup)}`)
-if ((await readdir(dir)).filter((n) => n !== 'by-client').length !== 1) fail('a resend was filed twice')
+if ((await readdir(dir)).filter((n) => n !== 'by-client' && n !== 'index').length !== 1) fail('a resend was filed twice')
 ok('server: the same report sent twice is filed once and answered with the same reference')
 
 const nonsense = await fetch(`http://localhost:${API_PORT}/claims`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${CLAIM_TOKEN}` }, body: '{"schema":"claim/9"}' })
@@ -425,6 +425,58 @@ await deskPage.screenshot({ path: 'docs/desk.png' })
 const after = await (await fetch(`http://localhost:${API_PORT}/claims/${shown}`, desk)).json()
 if (after.status !== 'reviewing') fail(`the desk's status change did not reach the server: ${after.status}`)
 ok('desk: lists the report, opens the document, moves it to "in review"')
+
+// ── the same photograph, the same VIN, seen before ────────────────────
+// Two reports from two different customers carrying the same picture and the same VIN. The
+// server notices, on the receipt, for the adjuster — and the customer's own page, which has
+// been open this whole walk, says none of it.
+const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
+const SHARED_HASH = 'f0e1d2c3b4a59687'
+const SHARED_VIN = '1HGCM82633A004352'
+const reused = (id) => ({
+  schema: 'claim/1',
+  vehicles: [{ id: 'a', role: 'insured', body: 'sedan', color: '#b91c1c', vin: SHARED_VIN, plate: 'ZZZ 999' }],
+  incident: { kind: 'collision', at: '2026-09-06T17:30', location: { lng: -73.9859, lat: 40.7573, address: 'Times Square' } },
+  attachments: { photos: [{ data: JPEG, of: 'a', caption: id, hash: SHARED_HASH }] },
+})
+const fileAs = async (customerId, body) => {
+  const s = await (await mint({ 'x-api-key': API_KEY }, { customer: { id: customerId, policy: 'POL-X' }, ttlSeconds: 600 })).json()
+  const res = await fetch(`${API}/claims`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${s.token}`, 'idempotency-key': `CM-${customerId.toUpperCase().replace(/[^A-Z0-9]/g, '')}` },
+    body: JSON.stringify(body),
+  })
+  return (await res.json()).reference
+}
+const firstRef = await fileAs('reuse-one', reused('one'))
+const secondRef = await fileAs('reuse-two', reused('two'))
+if (!firstRef || !secondRef) fail(`the two reports were not filed: ${firstRef} ${secondRef}`)
+const firstReceipt = await (await fetch(`${API}/claims/${firstRef}`, desk)).json()
+const secondReceipt = await (await fetch(`${API}/claims/${secondRef}`, desk)).json()
+if (firstReceipt.signals?.length) fail(`the first report of its kind signalled against nothing: ${JSON.stringify(firstReceipt.signals)}`)
+const seenCodes = (secondReceipt.signals ?? []).map((x) => x.code).sort()
+if (!seenCodes.includes('photo_seen_before')) fail(`the reused photograph was not noticed: ${JSON.stringify(secondReceipt.signals)}`)
+if (!seenCodes.includes('vin_seen_before')) fail(`the reused VIN was not noticed: ${JSON.stringify(secondReceipt.signals)}`)
+if (!secondReceipt.signals.some((x) => x.with === firstRef)) fail('a signal does not name the report it saw before')
+ok(`server: the second report carries ${seenCodes.join(', ')}, naming ${firstRef}`)
+
+// the desk shows them, with a link to the other report
+await deskPage.goto(`${PAGE}/adjuster.html?api=http://localhost:${API_PORT}#/${secondRef}`)
+await deskPage.locator('[data-worth-a-look]').waitFor({ timeout: 15000 }).catch(() => fail('the desk does not show what was seen before'))
+const worth = await deskPage.locator('[data-worth-a-look]').innerText()
+if (!worth.includes(firstRef)) fail(`the "Worth a look" card does not link to the other report: ${worth}`)
+if (!/photograph/i.test(worth) || !/VIN/i.test(worth)) fail(`the card does not say what was seen: ${worth}`)
+// the same report is named by each signal, so any one of the links will do
+await deskPage.locator('[data-worth-a-look]').getByRole('button', { name: firstRef }).first().click()
+await deskPage.waitForFunction((r) => window.location.hash.includes(r), firstRef, { timeout: 5000 }).catch(() => fail('the link did not open the other report'))
+ok('desk: "Worth a look" names both, and the link opens the report it saw before')
+
+// and none of it is anywhere the customer has been
+const customerSaw = await frame.locator('body').innerText()
+for (const word of ['Worth a look', 'seen before', 'photo_seen_before', 'vin_seen_before', 'fraud', 'Fraud']) {
+  if (customerSaw.includes(word)) fail(`the customer's page says "${word}"`)
+}
+ok("desk: none of it is on the customer's page")
 
 // ── the demo portal, on the same server, embedding the built page ─────
 

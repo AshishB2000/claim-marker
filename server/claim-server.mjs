@@ -61,6 +61,7 @@ import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verify as verifySession, sign as signSession } from './session.mjs'
 import { expired } from './retention.mjs'
+import { record as recordSignals, prune as pruneSignals, signalsFor } from './signals.mjs'
 import { CUSTOMERS } from './demo/customers.mjs'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
@@ -445,6 +446,8 @@ async function store(doc, clientRef, customer) {
   for (const [id, png] of Object.entries(doc.attachments.damage)) await put(`damage-${id}`, png)
   for (let i = 0; i < doc.attachments.photos.length; i++) await put(`photo-${String(i + 1).padStart(2, '0')}`, doc.attachments.photos[i].data)
 
+  // asked before this report is recorded, so it never matches itself
+  const signals = await signalsFor(DIR, doc, { reference, customer }).catch(() => [])
   const receipt = {
     reference,
     clientReference: clientRef,
@@ -455,8 +458,11 @@ async function store(doc, clientRef, customer) {
     receivedAt: new Date().toISOString(),
     status: 'new',
     files,
+    // what an adjuster should know before reading it; the insurer's own record, never `claim/1`
+    signals,
     summary: summarise(doc),
   }
+  await recordSignals(DIR, doc, receipt).catch((e) => console.warn(`signals: ${e.message}`))
   await writeFile(join(dir, 'claim.json'), JSON.stringify(doc))
   await writeFile(join(dir, 'receipt.json'), JSON.stringify(receipt, null, 2))
   if (clientRef && safeRef(clientRef)) {
@@ -483,7 +489,8 @@ const summarise = (doc) => ({
 async function list() {
   let names = []
   try {
-    names = (await readdir(DIR)).filter((n) => n !== 'by-client')
+    // by-client is the idempotency map and index/ is the reuse indexes; neither is a report
+    names = (await readdir(DIR)).filter((n) => n !== 'by-client' && n !== 'index')
   } catch {
     return []
   }
@@ -511,6 +518,9 @@ async function sweep() {
     if (r.clientReference && safeRef(r.clientReference)) await rm(join(DIR, 'by-client', r.clientReference), { force: true })
     console.log(`swept ${r.reference}, received ${r.receivedAt}`)
   }
+  // forgetting a report forgets what it told the indexes: a photograph's fingerprint outliving
+  // the photograph is a record of someone we promised to forget
+  await pruneSignals(DIR, new Set((await list()).map((r) => r.reference))).catch((e) => console.warn(`signals: ${e.message}`))
 }
 
 // ── the webhook ──────────────────────────────────────────────────────
