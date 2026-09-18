@@ -387,7 +387,8 @@ const again = await fetch(`http://localhost:${API_PORT}/claims`, {
 })
 const dup = await again.json()
 if (again.status !== 200 || !dup.duplicate || dup.reference !== shown) fail(`a resend was answered ${again.status} ${JSON.stringify(dup)}`)
-if ((await readdir(dir)).filter((n) => n !== 'by-client' && n !== 'index').length !== 1) fail('a resend was filed twice')
+// report folders only: by-client, the reuse indexes and the invites live beside them
+if ((await readdir(dir)).filter((n) => !['by-client', 'index', 'incidents'].includes(n)).length !== 1) fail('a resend was filed twice')
 ok('server: the same report sent twice is filed once and answered with the same reference')
 
 const nonsense = await fetch(`http://localhost:${API_PORT}/claims`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${CLAIM_TOKEN}` }, body: '{"schema":"claim/9"}' })
@@ -476,14 +477,26 @@ for (const secret of ['Sam Lee', 'sam@example.com', 'POL-9', 'ABC 123', '4T1BF1F
 }
 ok('invite: the other driver lands on a seeded report in party mode, and sees nothing of the first one')
 
-// they fill in the little that is needed and send
-await other.evaluate(() => {
+// they fill in the little that is needed and send — describing their own car as the shape and
+// colour it really is, which is how the desk pairs it with the customer's account of it
+const theirCar = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles.find((v) => v.role === 'other')
+await other.evaluate((car) => {
   const raw = JSON.parse(localStorage.getItem('claim-marker/draft'))
   raw.state.step = 'review'
   raw.state.claim.reporter = { ...raw.state.claim.reporter, name: 'Dana Q', phone: '555 0199', email: 'dana@example.com', policy: 'OTHER-1' }
   raw.state.claim.incident = { ...raw.state.claim.incident, description: 'I was already in the junction.' }
+  // they place the cars themselves, and remember it differently: the same spot, facing the
+  // other way — a real disagreement for the comparison to find
+  const at = raw.state.claim.incident.location
+  raw.state.claim.vehicles = raw.state.claim.vehicles.map((v, i) => ({
+    ...v,
+    ...(i === 0 ? { body: car.body, color: car.color } : {}),
+    position: [at.lng + 0.00004 * (i + 1), at.lat + 0.00003 * (i + 1)],
+    heading: i === 0 ? 10 : 190,
+    path: [],
+  }))
   localStorage.setItem('claim-marker/draft', JSON.stringify(raw))
-})
+}, theirCar)
 await other.reload({ waitUntil: 'networkidle' })
 await other.getByRole('checkbox', { name: enT('scene.send.agreeAria') }).check()
 await other.getByRole('textbox', { name: enT('scene.send.signAria') }).fill('Dana Q')
@@ -506,11 +519,22 @@ ok('invite: a party token files one report; a second is answered with the first'
 const both = await (await fetch(`${API}/incidents/${incidentId}`, desk)).json()
 if (both.reports?.length !== 2) fail(`the incident does not hold two accounts: ${JSON.stringify(both).slice(0, 200)}`)
 if (both.reports.map((r) => r.party).sort().join() !== 'other_party,policyholder') fail(`the two accounts are not tagged: ${both.reports.map((r) => r.party).join()}`)
+// a reload, not a hash change: the desk was opened on this report before the second account
+// existed, and like the rest of the inbox it shows what was there when it loaded
 await deskPage.goto(`${PAGE}/adjuster.html?api=http://localhost:${API_PORT}#/${shown}`)
-await deskPage.locator('text=2 accounts').first().waitFor({ timeout: 20000 }).catch(() => fail('the desk does not say there are two accounts'))
+await deskPage.reload()
+await deskPage.locator('text=2 accounts').first().waitFor({ timeout: 20000 }).catch(async () =>
+  fail(`the desk does not say there are two accounts; it shows: ${(await deskPage.locator('body').innerText()).slice(0, 600)}`),
+)
 await deskPage.locator('[data-compare]').waitFor({ timeout: 20000 }).catch(() => fail('the desk does not lay the two accounts side by side'))
+// the map mounts first and the table right behind it; wait for the table, not just the wrapper
+await deskPage.locator('[data-compare] table').waitFor({ timeout: 15000 }).catch(async () =>
+  fail(`the comparison has no table: ${(await deskPage.locator('[data-compare]').innerHTML()).slice(0, 800)}`),
+)
 const compared = await deskPage.locator('[data-compare]').innerText()
-if (!/agree/i.test(compared) || !/differ/i.test(compared)) fail(`the comparison shows neither agreement nor difference: ${compared.slice(0, 300)}`)
+const table = await deskPage.locator('[data-compare] table').innerText()
+if (!/agree/i.test(table)) fail(`the comparison lists nothing the two accounts agree on: ${table.slice(0, 600)}`)
+if (!/differ/i.test(table)) fail(`the comparison lists nothing the two accounts differ on: ${table.slice(0, 600)}`)
 for (const word of ['fraud', 'fault', 'liability', 'blame', 'suspicious']) {
   if (new RegExp(word, 'i').test(compared)) fail(`the comparison says "${word}"`)
 }

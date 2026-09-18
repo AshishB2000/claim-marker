@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import qrcode from 'qrcode-generator'
-import { useClaim, othersOf } from '../claim/store'
+import { useClaim, insuredOf } from '../claim/store'
 import { seedOf } from '../claim/seed'
 import { useT } from '../i18n/useT'
 import { createIncident, type Invite as Made } from './incidents'
@@ -39,7 +39,11 @@ export function Invite() {
   const ask = async () => {
     setBusy(true)
     setFailed(false)
-    const seed = seedOf(claim.incident, othersOf(claim).map((v) => ({ body: v.body, color: v.color, make: v.make, model: v.model })))
+    // the customer's own car, which is the *other* vehicle on the other driver's page; their
+    // own car is theirs to describe, and this customer's idea of it is exactly what the desk
+    // wants to compare, not something to hand them pre-filled
+    const own = insuredOf(claim)
+    const seed = seedOf(claim.incident, own ? [{ body: own.body, color: own.color, make: own.make, model: own.model }] : [])
     const invite = await createIncident(seed, claim.reference)
     setBusy(false)
     if (!invite) return setFailed(true)

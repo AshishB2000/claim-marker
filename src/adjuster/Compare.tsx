@@ -106,7 +106,7 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
   const center: LngLat | null = leftLoc ? [leftLoc.lng, leftLoc.lat] : rightLoc ? [rightLoc.lng, rightLoc.lat] : null
 
   return (
-    <div className="space-y-6">
+    <div data-compare className="space-y-6">
       {center && (
         <div className="overflow-hidden rounded-xl ring-1 ring-slate-900/10">
           <MapScene

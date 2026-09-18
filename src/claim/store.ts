@@ -105,8 +105,8 @@ export type ClaimState = {
   /**
    * The other driver's page, starting from the invite. Their own vehicle is the one to fill in
    * — role `insured`, which in their document means "the reporter's vehicle" — and the
-   * inviting customer's vehicles arrive as the *other* ones, as shapes and colours only. They
-   * never see the first report; the seed simply does not contain it.
+   * inviting customer's own car arrives as the *other* one, as shape, colour, make and model
+   * only. They never see the first report; the seed simply does not contain it.
    */
   seedFromIncident: (incident: string, seed: IncidentSeed) => void
   /** the customer invited the other driver: both accounts will name this incident */

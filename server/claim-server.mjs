@@ -438,6 +438,8 @@ async function serveStatic(req, res, pathname) {
 // ── storage: one folder per report ───────────────────────────────────
 
 const folder = (ref) => join(DIR, ref)
+/** what else lives in CLAIM_DIR beside the report folders */
+const NOT_REPORTS = new Set(['by-client', 'index', 'incidents'])
 const receiptOf = async (ref) => JSON.parse(await readFile(join(folder(ref), 'receipt.json'), 'utf8'))
 const claimOf = async (ref) => JSON.parse(await readFile(join(folder(ref), 'claim.json'), 'utf8'))
 
@@ -574,8 +576,8 @@ const summarise = (doc) => ({
 async function list() {
   let names = []
   try {
-    // by-client is the idempotency map and index/ is the reuse indexes; neither is a report
-    names = (await readdir(DIR)).filter((n) => n !== 'by-client' && n !== 'index')
+    // by-client is the idempotency map, index/ the reuse indexes, incidents/ the invites: none is a report
+    names = (await readdir(DIR)).filter((n) => !NOT_REPORTS.has(n))
   } catch {
     return []
   }
@@ -811,7 +813,7 @@ async function createIncident(req, res) {
   // who invited travels beside the seed, never inside it — the other driver is handed the
   // seed alone by GET /incidents/:id/seed, and must never learn the customer's id this way
   await writeFile(seedFile(id), JSON.stringify({ ...seed, invited: { by: sender.customer?.id ?? null, at: new Date().toISOString() } }, null, 2))
-  const token = signSession({ sub: `party:${id}`, policy: '' }, SESSION_SECRET, PARTY_TTL, PARTY_TTL)
+  const token = signSession({ sub: `party:${id}`, policy: '' }, SESSION_SECRET, PARTY_TTL, Date.now(), PARTY_TTL)
   const session = verifySession(token, SESSION_SECRET)
   const base = `${req.headers['x-forwarded-proto'] ?? 'http'}://${req.headers.host}`
   json(res, 201, { incident: id, url: `${base}/?party=${token}`, expiresAt: new Date(session.exp * 1000).toISOString() })

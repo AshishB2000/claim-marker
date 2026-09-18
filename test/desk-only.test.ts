@@ -28,7 +28,7 @@ const imports = (text: string, module: string) => new RegExp(`from '[^']*${modul
 describe('what the customer never sees', () => {
   it('is imported by the claims desk and by nothing the customer loads', () => {
     const readers = all.filter((s) => imports(s.text, 'plausibility')).map((s) => s.file)
-    expect(readers, 'plausibility.ts is the desk’s, and only the desk’s').toEqual(['adjuster/Desk.tsx'])
+    expect(readers, 'plausibility.ts is the desk’s, and only the desk’s').toEqual(['adjuster/Compare.tsx', 'adjuster/Desk.tsx'])
   })
 
   it('is not reachable from any step, the review page or the shared document', () => {

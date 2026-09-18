@@ -33,7 +33,9 @@ const full = (): Claim =>
 
 describe('what the other driver is given', () => {
   const claim = full()
-  const seed = seedOf(claim.incident, claim.vehicles.filter((v) => v.role !== 'insured').map((v) => ({ body: v.body, color: v.color, make: v.make, model: v.model })))
+  // the customer's own car: on the other driver's page it is the *other* vehicle
+  const own = claim.vehicles.find((v) => v.role === 'insured')!
+  const seed = seedOf(claim.incident, [{ body: own.body, color: own.color, make: own.make, model: own.model }])
   const text = JSON.stringify(seed)
 
   it('is where, when, the ground and the shapes of the cars — and those keys only', () => {
@@ -53,8 +55,9 @@ describe('what the other driver is given', () => {
     expect(seed.utcOffset).toBe(-240)
     expect(seed.surface).toBe('streets')
     expect(seed.location).toEqual({ lng: -73.9859, lat: 40.7573, address: 'Times Square' })
-    // the other driver's own car is not in the seed: it is theirs to describe
-    expect(seed.vehicles).toEqual([{ body: 'van', color: '#e9ebee', make: 'Ford', model: 'Transit' }])
+    // the customer's car, as shape, colour, make and model — never its plate or VIN — and
+    // not the other driver's own car, which is theirs to describe
+    expect(seed.vehicles).toEqual([{ body: 'sedan', color: '#b91c1c', make: 'Honda', model: 'Civic' }])
   })
 })
 
