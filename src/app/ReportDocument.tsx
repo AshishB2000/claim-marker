@@ -26,7 +26,9 @@ import { PAINTS } from '../vehicles/paint'
 import { Icon } from './icons'
 import { VehiclePhoto } from './VehiclePhoto'
 import { MarkPhotos } from './MarkPhotos'
+import { PlainViewChip } from './PlainView'
 import { usePlayback } from '../map/usePlayback'
+import type { Lighting } from '../scene/lighting'
 
 // ── the pieces the document is written in ────────────────────────────
 
@@ -201,6 +203,12 @@ export type ReportDocumentProps = {
   voice?: Voice
   /** which language to read it in; the claims desk renders this too and always stays English */
   lang?: Lang
+  /**
+   * The moment's light for the map and the marked-up cars, from `lightingFor(incident.context)`
+   * — the customer's page passes null while "Plain view" is on, the desk the receipt's own.
+   * Absent is the fixed light both scenes have always had.
+   */
+  lighting?: Lighting | null
 }
 
 /**
@@ -208,7 +216,7 @@ export type ReportDocumentProps = {
  * customer reads it on the review step with a way back into every section; the insurer
  * reads the same component on the claims desk with none.
  */
-export function ReportDocument({ claim, edit = false, mapRef, markers, badge, voice = 'customer', lang = 'en' }: ReportDocumentProps) {
+export function ReportDocument({ claim, edit = false, mapRef, markers, badge, voice = 'customer', lang = 'en', lighting = null }: ReportDocumentProps) {
   const t = (key: Key, vars?: Vars) => translate(lang, key, vars)
   const ownMarkers = useRef(new Map<string, DamageMarkerHandle>())
   const marks = markers ?? ownMarkers
@@ -503,22 +511,26 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                 impact={claim.impact}
                 selected={null}
                 lang={lang}
+                lighting={lighting}
                 interactive={false}
                 poses={play.poses}
                 mode={play.mode}
                 clock={play.clock}
                 className="h-[360px]"
               />
-              {play.canPlay && (
+              {(play.canPlay || edit) && (
                 <div className="absolute top-3 right-3 flex gap-1.5 print:hidden">
-                  <button className="chip" onClick={play.playing ? play.stop : () => play.start()} aria-pressed={play.playing}>
-                    {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
-                  </button>
-                  {!play.playing && (
+                  {play.canPlay && (
+                    <button className="chip" onClick={play.playing ? play.stop : () => play.start()} aria-pressed={play.playing}>
+                      {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
+                    </button>
+                  )}
+                  {play.canPlay && !play.playing && (
                     <button className="chip" onClick={() => play.start('cinematic')}>
                       <Icon.film /> {t('scene.play.watch')}
                     </button>
                   )}
+                  {edit && <PlainViewChip lang={lang} />}
                 </div>
               )}
             </div>
@@ -561,6 +573,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                     vehicle={v.body}
                     paint={v.color}
                     lang={lang}
+                    lighting={lighting}
                     value={{ schema: SCHEMA, vehicle: v.body, damages: v.damages }}
                   />
                 </div>

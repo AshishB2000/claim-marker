@@ -12,6 +12,7 @@ import { translate, type Key, type Lang } from '../i18n'
 import { ORBIT_TARGET, cameraFor } from './camera'
 import { STUDIO } from '../vehicles/BodyPreview'
 import { toWorld } from '../vehicles/bodies'
+import type { Lighting } from '../scene/lighting'
 import type { V3 } from '../zones'
 
 /**
@@ -191,6 +192,7 @@ export function Scene({
   theme,
   idle,
   lang,
+  lighting = null,
   onCanvas,
 }: {
   store: MarkerStore
@@ -200,9 +202,18 @@ export function Scene({
   /** turntable until the first touch */
   idle: boolean
   lang: Lang
+  /**
+   * The moment's light, the same `Lighting` the map layer takes, so the marked-up car on the
+   * review page is lit like the map above it: the sun's direction and colour, the sky's tint,
+   * how much of the studio reflects. Null is the studio as it always was.
+   */
+  lighting?: Lighting | null
   onCanvas: (canvas: HTMLCanvasElement) => void
 }) {
   const t = THEME[theme]
+  // the sun in the body's own frame — the map's (east, south, up) is the body's (−left, up, −nose),
+  // nose north as `CAR_BASIS` has it — standing eight metres out like the studio's own key light
+  const key: V3 = lighting ? [-lighting.sun[0] * 8, lighting.sun[2] * 8, -lighting.sun[1] * 8] : [4, 6.5, 3]
   return (
     <Canvas
       dpr={[1, 2]}
@@ -221,12 +232,13 @@ export function Scene({
 
       <Suspense fallback={null}>
         {/* a real photographic studio, served with the page, is what makes paint look like paint */}
-        <Environment files={STUDIO} environmentIntensity={0.9} />
+        <Environment files={STUDIO} environmentIntensity={0.9 * (lighting?.environment ?? 1)} />
         <Car store={store} paint={paint} modelUrl={modelUrl} />
       </Suspense>
 
-      <directionalLight position={[4, 6.5, 3]} intensity={1.1} />
-      <directionalLight position={[-5, 3, -4]} intensity={0.3} color="#dce7ff" />
+      <directionalLight position={key} intensity={lighting ? (1.1 * lighting.sunIntensity) / 1.5 : 1.1} color={lighting?.sunColor ?? '#ffffff'} />
+      <directionalLight position={[-5, 3, -4]} intensity={0.3} color={lighting?.sky ?? '#dce7ff'} />
+      {lighting && <hemisphereLight args={[lighting.sky, lighting.ground, lighting.skyIntensity]} />}
 
       {/* a polished floor under the car; the grid sits just above it as a measuring surface */}
       {/* wide enough that its edge never enters the frame at any orbit distance */}

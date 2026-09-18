@@ -105,6 +105,7 @@ const names = (lang) => ({
   agree: t('scene.send.agreeAria'),
   sign: t('scene.send.signAria'),
   reportIn: t('shell.done.sent.title'),
+  plain: t('scene.plain'),
 
   // composed by describe.ts, not looked up: the tag on a vehicle card, and one person's line
   yourVehicle: lang === 'es' ? 'Tu vehículo' : 'Your vehicle',
@@ -834,6 +835,120 @@ await page.reload({ waitUntil: 'networkidle' })
 await page.waitForSelector(`text=${N.reportIn}`, { timeout: 10000 })
 await noEnglish('the confirmation')
 ok('refresh keeps the confirmation')
+
+// ── the moment, lit as it was ─────────────────────────────────────────
+// A draft seeded straight onto the diagram — the same place, the same two cars, the same
+// tiles — under three lights: rain after dark, a clear evening with the sun on the horizon,
+// and "Plain view". The tiles never change, so every difference on the ground is the layer's
+// own: the wet road has to read darker than the plain one, the ground ahead of a car's nose
+// brighter than behind its tail (its headlights), a low sun has to lay a shadow between the
+// cars and nowhere else, and the canvas the export captures has to be a picture. Then the
+// chip turns all of it off, and is kept with the draft.
+const LIT_LNG = -73.9859
+const LIT_LAT = 40.7573
+const litM = 1 / (111320 * Math.cos((LIT_LAT * Math.PI) / 180))
+const litRoad = (lit) => ({ name: 'W 44th St', class: 'residential', lanes: 2, oneway: true, maxspeed: '25 mph', lit, junction: 'none', controls: [] })
+const NIGHT_RAIN = { weather: { code: 61, label: 'Light rain', tempC: 14, precipMm: 1.2, windKph: 12 }, sun: { altitude: -20, azimuth: 300 }, road: litRoad(null) }
+const LOW_SUN = { weather: { code: 0, label: 'Clear sky', tempC: 22, precipMm: 0, windKph: 6 }, sun: { altitude: 6, azimuth: 270 }, road: litRoad(null) }
+const litSeed = (context, plainView) => ({
+  // a version behind: the store's migrate fills in every section this seed leaves out
+  version: 7,
+  state: {
+    step: 'scene',
+    impactManual: false,
+    autoDamage: {},
+    autoConditions: {},
+    policy: [],
+    delivery: null,
+    lang,
+    invite: null,
+    plainView,
+    claim: {
+      incident: {
+        kind: 'collision',
+        at: '2026-09-08T21:00',
+        utcOffset: -240,
+        shared: null,
+        location: { lng: LIT_LNG, lat: LIT_LAT, address: 'Times Square, New York' },
+        surface: 'satellite',
+        conditions: { weather: '', road: '', light: '' },
+        description: '',
+        language: lang,
+        context: { ...context, source: 'open-meteo+osm', fetchedAt: '2026-09-08T12:00:00.000Z' },
+      },
+      // A six metres west of the impact facing east, B six metres east facing west: clear road between them
+      vehicles: [
+        { id: 'a', role: 'insured', body: 'sedan', color: '#c0392b', position: [LIT_LNG - 6 * litM, LIT_LAT], heading: 90, path: [[LIT_LNG - 30 * litM, LIT_LAT - 4 / 111320]], damages: [] },
+        { id: 'b', role: 'other', body: 'suv', color: '#2563eb', position: [LIT_LNG + 6 * litM, LIT_LAT], heading: 270, path: [], damages: [] },
+      ],
+      impact: [LIT_LNG, LIT_LAT],
+    },
+  },
+})
+/** mean luminance of the map canvas around a few points on the ground, in metres east of the impact along its latitude, or south of it */
+const litSample = (p) =>
+  p.evaluate(([lng, lat, m]) => {
+    const map = window.__map
+    const src = map.getCanvas()
+    const dpr = src.width / src.clientWidth
+    const off = document.createElement('canvas')
+    off.width = src.width
+    off.height = src.height
+    const ctx = off.getContext('2d')
+    ctx.drawImage(src, 0, 0)
+    const lum = (east, south) => {
+      const q = map.project([lng + east * m, lat - south / 111320])
+      const size = 12 * dpr
+      const px = ctx.getImageData(q.x * dpr - size / 2, q.y * dpr - size / 2, size, size).data
+      let s = 0
+      for (let i = 0; i < px.length; i += 4) s += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]
+      return s / (px.length / 4)
+    }
+    const all = ctx.getImageData(0, 0, src.width, src.height).data
+    const seen = new Set()
+    for (let i = 0; i < all.length; i += 4 * 499) seen.add((all[i] << 16) | (all[i + 1] << 8) | all[i + 2])
+    // open road ten metres south; ahead of A's nose and behind its tail; the ground between the two cars
+    return { road: lum(0, 10), ahead: lum(-1.5, 0), behind: lum(-10.5, 0), between: lum(1, 0), colours: seen.size }
+  }, [LIT_LNG, LIT_LAT, litM])
+const litPage = async (context, plainView = false) => {
+  const p = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
+  p.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  p.on('pageerror', (e) => errors.push(String(e)))
+  if (lang === 'es') await p.addInitScript(() => void (window.CLAIM_MARKER = { lang: 'es' }))
+  await p.addInitScript((seed) => localStorage.setItem('claim-marker/draft', JSON.stringify(seed)), litSeed(context, plainView))
+  await p.goto(`${origin}/`, { waitUntil: 'networkidle' })
+  await p.waitForSelector('.mk-car', { timeout: 20000 })
+  // the tiles and the shaders both take their time; wait for a real frame, then a little longer for the tiles
+  for (let i = 0; i < 60 && (await litSample(p)).colours < 50; i++) await p.waitForTimeout(300)
+  await p.waitForTimeout(3000)
+  return p
+}
+const nightPage = await litPage(NIGHT_RAIN)
+const night = await litSample(nightPage)
+const duskPage = await litPage(LOW_SUN)
+const dusk = await litSample(duskPage)
+await duskPage.close()
+const plainPage = await litPage(LOW_SUN, true)
+const plain = await litSample(plainPage)
+await plainPage.close()
+if (night.colours < 50) fail(`the map after dark is a blank canvas (${night.colours} colours) — the export would capture nothing`)
+if (night.road >= plain.road * 0.75) fail(`the wet road after dark is not darker than the plain one (${night.road.toFixed(0)} vs ${plain.road.toFixed(0)})`)
+if (night.ahead <= night.behind * 1.3) fail(`no headlights: the road ahead of A's nose is ${night.ahead.toFixed(0)}, behind its tail ${night.behind.toFixed(0)}`)
+if (dusk.between >= plain.between * 0.85) fail(`a sun on the horizon lays no shadow between the cars (${dusk.between.toFixed(0)} vs ${plain.between.toFixed(0)} plain)`)
+if (Math.abs(dusk.road - plain.road) > plain.road * 0.12) fail(`the low sun changed the open road, not just the shadow (${dusk.road.toFixed(0)} vs ${plain.road.toFixed(0)} plain)`)
+ok(`lit: after dark in the rain the road reads ${night.road.toFixed(0)} against ${plain.road.toFixed(0)} plain, ${night.ahead.toFixed(0)} ahead of A's headlights against ${night.behind.toFixed(0)} behind it; a sun on the horizon shadows the ground between the cars (${dusk.between.toFixed(0)} vs ${plain.between.toFixed(0)}) and leaves the open road alone (${dusk.road.toFixed(0)})`)
+
+// "Plain view" turns it all off, on this page and on a reload
+await nightPage.getByRole('button', { name: N.plain }).click()
+await nightPage.waitForTimeout(1500)
+const plained = await litSample(nightPage)
+if (plained.road < plain.road * 0.85) fail(`"Plain view" left the road dark (${plained.road.toFixed(0)} vs ${plain.road.toFixed(0)} plain)`)
+if (!(await nightPage.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.plainView))) fail('"Plain view" was not kept with the draft')
+await nightPage.reload({ waitUntil: 'networkidle' })
+await nightPage.waitForSelector('.mk-car', { timeout: 20000 })
+if ((await nightPage.getByRole('button', { name: N.plain }).getAttribute('aria-pressed')) !== 'true') fail('"Plain view" did not survive a reload')
+await nightPage.close()
+ok(`lit: "Plain view" brought the road back to ${plained.road.toFixed(0)}, and stayed on after a reload`)
 
 // ── nothing depends on the lookups ────────────────────────────────────
 // With all three hosts refused, the Where step must be exactly what it was before any of this

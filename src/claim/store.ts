@@ -230,6 +230,13 @@ export type ClaimState = {
   placeQuery: string | null
   /** true once, after `applyIntake`, when the draft had enough in it to draw the diagram itself */
   drawFromWords: boolean
+  /**
+   * "Plain view": the map and the marked-up car without the light, the shadows and the weather
+   * of the moment. How the customer is looking, not part of the report — persisted with the
+   * draft, never in `claim/1`.
+   */
+  plainView: boolean
+  setPlainView: (on: boolean) => void
   clearPath: (id: string) => void
   /** `manual` means the customer placed it, so it stops following the vehicles */
   setImpact: (impact: LngLat | null, manual?: boolean) => void
@@ -373,6 +380,8 @@ export const useClaim = create<ClaimState>()(
         lang: null,
         placeQuery: null,
         drawFromWords: false,
+        plainView: false,
+        setPlainView: (on) => set({ plainView: on }),
         invite: null,
         // the document says which language its free text is in, so the desk knows what it is reading
         setLang: (lang) => set((s) => ({ lang, claim: { ...s.claim, incident: { ...s.claim.incident, language: lang } } })),
@@ -799,6 +808,7 @@ export const useClaim = create<ClaimState>()(
         policy: s.policy,
         delivery: s.delivery,
         lang: s.lang,
+        plainView: s.plainView,
         invite: s.invite,
       }),
     },

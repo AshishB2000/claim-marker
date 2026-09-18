@@ -6,6 +6,7 @@ import { translate, type Lang } from '../i18n'
 import { injectStyle } from '../style'
 import { themeClass, type Theme } from '../theme'
 import { Scene } from './Scene'
+import type { Lighting } from '../scene/lighting'
 import type { Vehicle } from '../zones'
 
 export type ExportResult = {
@@ -32,6 +33,8 @@ export type DamageMarkerProps = {
   theme?: Theme
   /** the language of the marker's own words; English unless the page says otherwise */
   lang?: Lang
+  /** the moment's light, as the map layer has it; absent or null is the plain studio */
+  lighting?: Lighting | null
   className?: string
   style?: CSSProperties
   ref?: Ref<DamageMarkerHandle>
@@ -50,6 +53,7 @@ export function DamageMarker({
   paint = '#b9bec6',
   theme = 'light',
   lang = 'en',
+  lighting = null,
   className,
   style,
   ref,
@@ -104,7 +108,7 @@ export function DamageMarker({
 
   return (
     <div className={themeClass(theme, className)} style={style} onPointerDownCapture={() => setIdle(false)}>
-      <Scene store={store} modelUrl={modelUrl} paint={paint} theme={theme} idle={idle} lang={lang} onCanvas={setCanvas} />
+      <Scene store={store} modelUrl={modelUrl} paint={paint} theme={theme} idle={idle} lang={lang} lighting={lighting} onCanvas={setCanvas} />
       <Hint store={store} lang={lang} />
     </div>
   )
