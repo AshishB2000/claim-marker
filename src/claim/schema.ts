@@ -318,6 +318,14 @@ export type Incident = {
 export type Attachments = {
   /** PNG data URL of the map with the vehicles on it */
   scene: string | null
+  /**
+   * The playback, recorded as a short video at send time — `data:video/webm` or `video/mp4`,
+   * whichever the browser can make. What the customer drew, moving, is evidence a still
+   * cannot be: the order things happened in, and which car was where when. Null when the
+   * browser cannot record, when there was nothing to play, or when it came out larger than
+   * `MAX_REPLAY_BYTES`; the report goes without it rather than waiting on it.
+   */
+  replay: string | null
   /** PNG data URL of the marked-up car, per vehicle id */
   damage: Record<string, string>
   /** the customer's own photographs */
@@ -351,6 +359,16 @@ export const isLngLat = (v: unknown): v is LngLat =>
 export const isHex = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)
 
 const isPng = (v: unknown): v is string => typeof v === 'string' && v.startsWith('data:image/png;base64,')
+
+/**
+ * The most a recorded replay may weigh, as its data URL: about 3 MB of video, a few seconds at
+ * the rate the recorder asks for. Past that it is dropped rather than sent — the whole document
+ * travels as one JSON body from a phone at the roadside, and the diagram PNG says most of what
+ * the video does.
+ */
+export const MAX_REPLAY_BYTES = 4 * 1024 * 1024
+export const isReplay = (v: unknown): v is string =>
+  typeof v === 'string' && v.length <= MAX_REPLAY_BYTES && /^data:video\/(webm|mp4)(;[^,]*)?;base64,/.test(v)
 const isPhotoData = (v: unknown): v is string => typeof v === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(v)
 
 /** the most photographs one claim carries; each is a few hundred kB after downscaling */
@@ -528,7 +546,7 @@ export const emptyClaim = (): Claim => ({
   police: { called: null, department: '', report: '', citations: '' },
   property: { description: '', owner: '' },
   attestation: { agreed: false, name: '', at: null },
-  attachments: { scene: null, damage: {}, photos: [] },
+  attachments: { scene: null, replay: null, damage: {}, photos: [] },
 })
 
 /** the normalised document, the shape that is sent and stored */
@@ -594,6 +612,7 @@ export const toDocument = (claim: Claim): Claim => {
     attestation: { agreed: bool(claim.attestation.agreed), name: str(claim.attestation.name), at: claim.attestation.at },
     attachments: {
       scene: claim.attachments.scene,
+      replay: isReplay(claim.attachments.replay) ? claim.attachments.replay : null,
       damage: claim.attachments.damage,
       photos: claim.attachments.photos
         .filter((p) => isPhotoData(p.data))
@@ -748,7 +767,7 @@ export function parseClaim(input: unknown): { value: Claim; rejected: number } {
     police: { called: bool3(pol.called), department: str(pol.department), report: str(pol.report), citations: str(pol.citations) },
     property: { description: str(prop.description), owner: str(prop.owner) },
     attestation: { agreed: bool(attn.agreed), name: str(attn.name), at: typeof attn.at === 'string' ? attn.at : null },
-    attachments: { scene: isPng(att.scene) ? att.scene : null, damage, photos },
+    attachments: { scene: isPng(att.scene) ? att.scene : null, replay: isReplay(att.replay) ? att.replay : null, damage, photos },
   })
 
   return { value, rejected }

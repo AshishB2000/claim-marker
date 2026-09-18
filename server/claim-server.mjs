@@ -235,9 +235,16 @@ const newReference = () => `INS-${new Date().getFullYear()}-${randomCode(6)}`
 const newIncidentId = () => `INC-${randomCode(6)}`
 const safeRef = (s) => /^[A-Z0-9-]{4,40}$/i.test(s)
 const safeIncident = (s) => typeof s === 'string' && /^INC-[A-Z0-9]{6}$/i.test(s)
+/** the file extension for each attachment type the page sends */
+const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'video/webm': 'webm', 'video/mp4': 'mp4' }
+/**
+ * An attachment as a file. The replay's media type may carry parameters —
+ * `data:video/webm;codecs=vp9;base64,…` — which are the browser describing its own encoder,
+ * not something a file needs, so they are read past rather than refused.
+ */
 const dataUrl = (s) => {
-  const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/s.exec(s ?? '')
-  return m ? { type: m[1], ext: m[1] === 'image/png' ? 'png' : m[1] === 'image/webp' ? 'webp' : 'jpg', bytes: Buffer.from(m[2], 'base64') } : null
+  const m = /^data:(image\/(?:png|jpeg|webp)|video\/(?:webm|mp4))(?:;[^,;]+=[^,;]+)*;base64,(.+)$/s.exec(s ?? '')
+  return m ? { type: m[1], ext: EXT[m[1]], bytes: Buffer.from(m[2], 'base64') } : null
 }
 
 // ── the built page ───────────────────────────────────────────────────
@@ -253,6 +260,8 @@ const TYPES = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   webp: 'image/webp',
+  webm: 'video/webm',
+  mp4: 'video/mp4',
   ico: 'image/x-icon',
   glb: 'model/gltf-binary',
   hdr: 'image/vnd.radiance',
@@ -519,6 +528,7 @@ async function store(doc, clientRef, customer, party) {
     files[name] = `${name}.${d.ext}`
   }
   await put('scene', doc.attachments.scene)
+  await put('replay', doc.attachments.replay)
   for (const [vehicleId, png] of Object.entries(doc.attachments.damage)) await put(`damage-${vehicleId}`, png)
   for (let i = 0; i < doc.attachments.photos.length; i++) await put(`photo-${String(i + 1).padStart(2, '0')}`, doc.attachments.photos[i].data)
 

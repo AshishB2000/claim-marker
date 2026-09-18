@@ -151,6 +151,7 @@
       "required": ["scene", "damage", "photos"],
       "properties": {
         "scene": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/png" }], "description": "the diagram: the map with the vehicles on it" },
+        "replay": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^data:video/(webm|mp4)(;[^,]*)?;base64,", "maxLength": 4194304 }], "description": "the playback recorded as a short video at send time; null when the browser could not record it or it came out too large. Absent in documents from before there was one, which means null." },
         "damage": { "type": "object", "additionalProperties": { "$ref": "#/$defs/png" }, "description": "the marked-up car, keyed by vehicle id" },
         "photos": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/photo" } }
       }

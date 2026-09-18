@@ -52,6 +52,7 @@ const full = () =>
     attestation: { agreed: true, name: 'Ashish B', at: '2026-09-07T22:14:03.000Z' },
     attachments: {
       scene: png,
+      replay: 'data:video/webm;codecs=vp9;base64,GkXfow==',
       damage: { a: png },
       photos: [
         { data: jpg, of: 'a', caption: 'Front bumper', shows: 'front_bumper', hash: 'f0e1d2c3b4a59687', minutesFromIncident: 12, metresFromScene: 4 },

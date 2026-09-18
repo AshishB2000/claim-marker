@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { damage } from '../src/schema'
 import { UNKNOWN_DRIVER } from '../src/claim/describe'
-import { CLAIM_SCHEMA, MAX_PHOTOS, emptyClaim, makeReference, newPerson, newVehicle, nowLocal, parseClaim, toDocument, type Claim } from '../src/claim/schema'
+import { CLAIM_SCHEMA, MAX_PHOTOS, MAX_REPLAY_BYTES, emptyClaim, makeReference, newPerson, newVehicle, nowLocal, parseClaim, toDocument, type Claim } from '../src/claim/schema'
 
 const sample = (): Claim => ({
   ...emptyClaim(),
@@ -228,6 +228,22 @@ describe('claim round-trip', () => {
     expect(toDocument(c).reporter.party).toBe('policyholder')
   })
 
+  it('carries the recorded replay, and drops one that is not a video or is too large', () => {
+    const c = sample()
+    c.attachments.replay = 'data:video/webm;codecs=vp9;base64,GkXfow=='
+    const first = toDocument(c)
+    expect(first.attachments.replay).toBe('data:video/webm;codecs=vp9;base64,GkXfow==')
+    expect(JSON.stringify(toDocument(parseClaim(JSON.parse(JSON.stringify(first))).value))).toBe(JSON.stringify(first))
+    c.attachments.replay = 'data:image/png;base64,iVBORw0KGgo='
+    expect(toDocument(c).attachments.replay).toBeNull()
+    c.attachments.replay = 'data:text/html;base64,PHNjcmlwdD4='
+    expect(toDocument(c).attachments.replay).toBeNull()
+    c.attachments.replay = `data:video/mp4;base64,${'A'.repeat(MAX_REPLAY_BYTES)}`
+    expect(toDocument(c).attachments.replay).toBeNull()
+    c.attachments.replay = 'data:video/mp4;base64,AAAAIGZ0eXA='
+    expect(toDocument(c).attachments.replay).toBe('data:video/mp4;base64,AAAAIGZ0eXA=')
+  })
+
   it('defaults the kind and the conditions, and rejects values off the lists', () => {
     const raw = JSON.parse(JSON.stringify(toDocument(sample())))
     raw.incident.kind = 'asteroid'
@@ -325,7 +341,7 @@ describe('parseClaim rejects bad input', () => {
     expect(value.vehicles).toEqual([])
     expect(value.incident.location).toBeNull()
     expect(value.impact).toBeNull()
-    expect(value.attachments).toEqual({ scene: null, damage: {}, photos: [] })
+    expect(value.attachments).toEqual({ scene: null, replay: null, damage: {}, photos: [] })
     expect(value.people).toEqual([])
     expect(value.incident.kind).toBe('collision')
   })

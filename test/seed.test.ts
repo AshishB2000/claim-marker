@@ -28,7 +28,7 @@ const full = (): Claim =>
       { ...newVehicle('b', 'other', 'van', '#e9ebee'), make: 'Ford', model: 'Transit', plate: 'XYZ 789', vin: '2FMDK3GC4BBA00001', insurer: 'Acme Mutual' },
     ],
     people: [{ ...newPerson('driver', 'b'), name: 'Dana Q', phone: '555 0199', licence: 'D1234' }],
-    attachments: { scene: null, damage: {}, photos: [{ data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'the bumper' }] },
+    attachments: { scene: null, replay: null, damage: {}, photos: [{ data: 'data:image/jpeg;base64,AAAA', of: 'a', caption: 'the bumper' }] },
   })
 
 describe('what the other driver is given', () => {

@@ -610,7 +610,8 @@ export const useClaim = create<ClaimState>()(
       },
       // the rendered PNGs are regenerated at submit time; the customer's photographs cannot be
       partialize: (s) => ({
-        claim: { ...s.claim, attachments: { scene: null, damage: {}, photos: s.claim.attachments.photos } },
+        // the replay is re-recorded at send time like the PNGs; a few MB of video is no draft
+        claim: { ...s.claim, attachments: { scene: null, replay: null, damage: {}, photos: s.claim.attachments.photos } },
         step: s.step,
         impactManual: s.impactManual,
         autoDamage: s.autoDamage,
