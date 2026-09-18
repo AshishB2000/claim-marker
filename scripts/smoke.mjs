@@ -198,9 +198,11 @@ const settled = async (sel, p = page) => {
 }
 
 /**
- * The marker's canvas, read back: the mean luminance of a ring 8–16 px round where a point in
- * the kit's units lands (the ring skips the pin's own dot), the colour of a 6-px spot `dy`
- * below it, and the frame as a PNG. `n` picks the marker when a page has several.
+ * The marker's canvas, read back: the mean luminance of the upper half of a ring 8–16 px round
+ * where a point in the kit's units lands — outside the pin's own dot, and above the mark, where
+ * a dent's wall is in shadow (its lower rim catches the key light and is not what is asserted) —
+ * the colour of a 6-px spot `dy` below it, and the frame as a PNG. `n` picks the marker when a
+ * page has several.
  */
 const markerSample = (point, dy = 0, n = 0, p = page) =>
   p.evaluate(
@@ -218,7 +220,7 @@ const markerSample = (point, dy = 0, n = 0, p = page) =>
       for (let j = 0; j < 40; j++)
         for (let i = 0; i < 40; i++) {
           const r = Math.hypot(i - 20, j - 20)
-          if (r < 8 || r > 16) continue
+          if (r < 8 || r > 16 || j >= 20) continue
           const k = (j * 40 + i) * 4
           sum += 0.299 * ring[k] + 0.587 * ring[k + 1] + 0.114 * ring[k + 2]
           count++
@@ -781,9 +783,10 @@ if (autoAfter.a !== 'user') fail(`vehicle A's marks should be the customer's aft
 ok(`damage: ${d4.vehicles[0].damages[0].zone} from the impact + ${d4.vehicles[0].damages[1].zone} / dent by hand on the ${d4.vehicles[0].body}`)
 
 // ── the damage is on the paint, not just a pin on it ──────────────────
-// The dent: with the effect blended away through the real slider, the paint round the mark reads
-// lighter than with it on, and the frame the export takes differs from the unmarked car by more
-// than the pin. The picker is closed first and the camera given its moment to ease round.
+// The dent: with the effect blended away through the real slider, the paint just above the mark —
+// the dish's shadowed wall — reads lighter than with it on, and the frame the export takes differs
+// from the unmarked car by more than the pin. The picker is closed first and the camera given its
+// moment to ease round.
 await page.locator('.cm-pop .cm-x').click({ force: true })
 await page.waitForTimeout(1500)
 const strengthSlider = page.locator('.cm-tools input[type=range]')
@@ -796,10 +799,10 @@ const undented = await markerSample(dentPoint)
 await strengthSlider.fill('1')
 await page.waitForTimeout(500)
 const darker = 1 - dented.mean / undented.mean
-if (darker < 0.015) fail(`the dent is not in the paint: the ring round the mark reads ${undented.mean.toFixed(1)} without it and ${dented.mean.toFixed(1)} with it`)
+if (darker < 0.03) fail(`the dent is not in the paint: the wall above the mark reads ${undented.mean.toFixed(1)} without it and ${dented.mean.toFixed(1)} with it`)
 const differing = await pixelsDiffering(dented.png, undented.png)
 if (differing < 300) fail(`the marked car's export differs from the unmarked one by only ${differing} px`)
-ok(`damage: the dent is in the paint — ${(darker * 100).toFixed(1)}% darker round the mark, ${differing} px of the export differ from the unmarked car`)
+ok(`damage: the dent is in the paint — its wall ${(darker * 100).toFixed(1)}% darker above the mark, ${differing} px of the export differ from the unmarked car`)
 // A missing part is the whole panel: the left front door, picked at its own anchor, shows the
 // cavity just below the dot — dark, and warmer than glass or a tyre
 const door = zoneById(d4.vehicles[0].body, 'left_front_door')

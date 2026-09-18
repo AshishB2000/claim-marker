@@ -158,7 +158,9 @@ float cmHeatOn = uCmRole < 2.0 ? uCmHeat : 0.0;
     } else if (uCmRole == 0.0 && k == 1.0) {
       float dish = 0.5 * (1.0 + cos(3.14159265 * t));
       cmDish = max(cmDish, dish);
-      cmBend -= (d / max(r, 1e-4)) * sin(3.14159265 * t) * (0.5 + sev);
+      // the tilt is kept modest: under a studio environment — bright above, dark below — a steep
+      // lower lip mirrors the ceiling and the whole dish reads lighter, not deeper
+      cmBend -= (d / max(r, 1e-4)) * sin(3.14159265 * t) * (0.15 + 0.25 * sev);
     } else if (uCmRole == 0.0 && k == 0.0) {
       // three ragged streaks of different lengths, the way a key or a wall leaves them
       for (int j = 0; j < 3; j++) {
@@ -196,17 +198,18 @@ cmScratch *= uCmStrength;
 cmGroove *= uCmStrength;
 cmCrack *= uCmStrength;
 cmHole *= uCmStrength;
-// the dish: 15 % darker toward the centre, and lit from above whatever the scene's light does —
-// the upper lip faces down and darkens, the lower lip faces up and brightens, so it reads as a
-// dent from every angle, under a studio environment too even in the flat light of the map
-diffuseColor.rgb *= (1.0 - 0.15 * cmDish) * (1.0 + 0.45 * clamp(cmBend.y, -1.0, 1.0));
+// the dish: 15 % darker toward the centre, and its upper wall in shadow whatever the scene's
+// light does — a dent is mostly its shadow, and the tilted normal alone barely showed under the
+// studio's near-uniform environment; the lower rim's highlight is what the tilt reflects
+float cmShade = clamp(-cmBend.y * 3.0, 0.0, 1.0);
+diffuseColor.rgb *= (1.0 - 0.15 * cmDish) * (1.0 - 0.55 * cmShade);
 // bare metal in the streak, and its groove darker beside it, so it shows on light paint and dark
 diffuseColor.rgb *= 1.0 - 0.5 * cmGroove;
 diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.70, 0.71, 0.72), cmScratch);
 diffuseColor.rgb = mix(diffuseColor.rgb, cmHeatColour(cmHeatSum), cmHeatOn);`
 
 const ROUGHNESS = /* glsl */ `
-roughnessFactor = mix(roughnessFactor, 0.6, max(cmScratch, cmDish * 0.6));
+roughnessFactor = mix(roughnessFactor, 0.6, cmScratch);
 roughnessFactor = mix(roughnessFactor, 0.55, cmCrack);
 roughnessFactor = mix(roughnessFactor, 0.85, cmHeatOn);`
 
