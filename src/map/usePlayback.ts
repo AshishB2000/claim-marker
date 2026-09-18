@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClaimVehicle } from '../claim/schema'
 import type { CarPose } from './carLayer'
-import { HOLD_MS, advance, endOf, frameAt, seekTo, shotAt, shots, timelineOf, type PlaybackMode, type Shot } from './playback'
+import { HOLD_MS, advance, endOf, frameAt, shotAt, shots, timelineOf, type PlaybackMode, type Shot } from './playback'
 
 type Frame = { poses: CarPose[]; t: number; ms: number; rate: number; mode: PlaybackMode }
 
@@ -57,10 +57,17 @@ export function usePlayback(vehicles: ClaimVehicle[]) {
     [vehicles, timeline, show, stop],
   )
 
-  /** jump to `t` (0–1) of the drive, mid-run or not */
+  /**
+   * Hold the playback at one moment on its own clock, in ms — the clock `clock` reports, which
+   * runs past the drive through the hold, where the shockwave is. The frame loop stops there:
+   * a seeked frame stays on screen instead of being overwritten by the next tick, which is
+   * what a scrub wants and what lets a test look at a chosen frame rather than race one.
+   */
   const seek = useCallback(
-    (t: number) => {
-      clock.current = seekTo(t, timeline)
+    (ms: number) => {
+      cancelAnimationFrame(raf.current)
+      // the clock `ms` on from zero at rate 1: the same clamp the run itself advances under
+      clock.current = advance(0, ms, 1, run.current?.end ?? timeline.ms + HOLD_MS)
       show(base.current)
     },
     [timeline, show],

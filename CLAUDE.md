@@ -269,8 +269,13 @@ live instance at the first playback frame and drops it to 0 — after jumping ba
 it captured — on the last, or on a Stop, before the markers return. The DOM-marker maths
 assumes a flat map; keep it that way. The playback clock is the hook's own (`usePlayback`
 holds it in a ref and advances it by wall delta × `rate`), not `performance.now()`; `seek`
-and slow motion depend on that. The pure parts — `Timeline`, `impactTimeOf` (closest
-approach, sixty samples), `shots`, `cameraAt`, `ringAt` — live in `src/map/playback.ts`,
+and slow motion depend on that. `seek(ms)` is a moment on that clock — past the drive, into
+the hold, where the shockwave is — and it holds the frame loop there, which is how the smoke
+proves the ring without racing it: it drives `window.__play` (DEV only, from the diagram step,
+like `__map`) and diffs one settled frame of a shot against the same shot once the ring has
+gone, rather than sampling for a peak a loaded machine's frame rate decides. The pure parts —
+`Timeline`, `impactTimeOf` (closest approach, sixty samples), `shots`, `cameraAt`, `ringAt` —
+live in `src/map/playback.ts`,
 which must stay free of value imports of maplibre or three so `test/playback.test.ts` runs
 in plain node. `ease` and `HOLD_MS` have one home there; `record.ts` and `Compare.tsx` import
 them. The shockwave goes through `CarLayer.setDecor()` — placed by `vehicleMatrix`, wound
@@ -298,8 +303,9 @@ off — and `ReportDocument` takes `roads`/`buildings` as **props** because the 
 too and must have neither (`claim/1` carries the road in words and the buildings not at all).
 The smoke's pixel check asks the map **where** it is drawing a building rather than projecting
 a footprint — at that zoom a block's centroid is usually off the top of the frame while the
-building fills it — and is capped at three frames, because it runs inside the window the
-shockwave statistic is sampled in and must not cost it its frame rate.
+building fills it — and it rides the three frames the shockwave check already seeks to and
+settles, after that check has copied its pixels out, so the city costs it neither a frame nor
+a second playback.
 
 **Settings are runtime, through `src/config.ts`.** Read `config.submitUrl`, `config.brand`,
 `config.assistUrl`, `config.token`, `config.prefill` — never `import.meta.env.VITE_SUBMIT_URL`
