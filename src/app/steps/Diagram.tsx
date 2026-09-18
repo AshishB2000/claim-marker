@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useClaim, othersOf } from '../../claim/store'
 import { assistOn, buildDiagram, writeStatement } from '../../assist/client'
 import { config } from '../../config'
@@ -64,7 +64,10 @@ export function Diagram() {
   const [said, setSaid] = useState<string | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
 
-  const draw = async () => {
+  // memoised so the "draw it once from words" effect below can list it as a dependency without
+  // re-running on every render: only `applyScene` (a stable store action) and `t` (stable
+  // unless the language changes) are what it actually closes over
+  const draw = useCallback(async () => {
     setBusy('diagram')
     setFailed(null)
     setSaid(null)
@@ -78,7 +81,7 @@ export function Diagram() {
     } finally {
       setBusy(null)
     }
-  }
+  }, [applyScene, t])
 
   const write = async () => {
     setBusy('describe')
@@ -94,6 +97,21 @@ export function Diagram() {
   }
 
   useEffect(() => placeVehicles(), [placeVehicles])
+
+  /**
+   * "Just tell us what happened" may already have described a scene: draw it once,
+   * automatically — the same button press the customer would otherwise make — as soon as
+   * there is a place to draw it on. The flag is cleared and `draw()` called from inside a
+   * microtask the effect queues, never as a synchronous `setState` in the effect body itself;
+   * queueing is enough to move both out of the render phase, with nothing slower to await.
+   */
+  useEffect(() => {
+    if (!useClaim.getState().drawFromWords || !assistOn() || !claim.incident.location) return
+    queueMicrotask(() => {
+      useClaim.setState({ drawFromWords: false })
+      void draw()
+    })
+  }, [claim.incident.location, draw])
 
   const loc = claim.incident.location
   if (!loc) return null

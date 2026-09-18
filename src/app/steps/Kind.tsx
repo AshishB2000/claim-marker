@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react'
+import { assistOn } from '../../assist/client'
 import { useClaim } from '../../claim/store'
 import { KINDS, type Kind } from '../../claim/schema'
 import type { Key } from '../../i18n'
 import { useT } from '../../i18n/useT'
 import { Icon } from '../icons'
+import { Intake } from './Intake'
 
 const ICON: Record<Kind, () => ReactNode> = {
   collision: Icon.collision,
@@ -23,6 +25,7 @@ export function WhatHappened() {
   const t = useT()
   return (
     <div>
+      {assistOn() && <Intake />}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" role="radiogroup" aria-label={t('start.kind.group')}>
         {KINDS.map((k) => {
           const on = k === kind

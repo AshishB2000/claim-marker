@@ -39,10 +39,11 @@ import { applyPrefill, vehicleFromPolicy, type Prefill, type PrefillVehicle } fr
 import { type IncidentSeed } from './seed'
 import { readExif, type PhotoExif } from './exif'
 import { fromFrame } from '../assist/frame'
-import type { Scene } from '../assist/schema'
+import type { IntakeDraft, Scene } from '../assist/schema'
 import { SIZE } from '../vehicles/bodies'
 import { suggestDamage } from './suggest'
 import type { Lang } from '../i18n'
+import { PAINTS } from '../vehicles/paint'
 
 // the flow's own steps live in the schema, where the assistant can name one without
 // dragging the store in; everything here still imports them from the store as it did
@@ -84,6 +85,22 @@ const nextId = (vehicles: ClaimVehicle[]) => {
     if (!vehicles.some((v) => v.id === id)) return id
   }
   return `v${vehicles.length}`
+}
+
+/**
+ * Which of an intake draft's proposals the customer left ticked, row for row with the "here is
+ * what we understood" card in `Intake.tsx`. `vehicles` has one entry per `draft.vehicles`, in
+ * the same order, because a draft can propose several; every other proposal is one row.
+ */
+export type IntakeTake = {
+  kind: boolean
+  when: boolean
+  place: boolean
+  conditions: boolean
+  vehicles: boolean[]
+  people: boolean
+  police: boolean
+  property: boolean
 }
 
 export type ClaimState = {
@@ -196,6 +213,16 @@ export type ClaimState = {
   addWaypointAt: (id: string, position: LngLat) => void
   /** the assistant read the customer's words: place and turn the vehicles it recognised */
   applyScene: (scene: Scene) => void
+  /**
+   * "Just tell us what happened": one account, applied piece by piece. Fills only what is
+   * empty, the same bargain as `prefill` — except `kind`, an explicit choice, and the
+   * description, which is the customer's own words and always theirs to keep.
+   */
+  applyIntake: (draft: IntakeDraft, take: IntakeTake, transcript: string) => void
+  /** the intake draft's place, in words, for the Where step's search box to start from; never coordinates */
+  placeQuery: string | null
+  /** true once, after `applyIntake`, when the draft had enough in it to draw the diagram itself */
+  drawFromWords: boolean
   clearPath: (id: string) => void
   /** `manual` means the customer placed it, so it stops following the vehicles */
   setImpact: (impact: LngLat | null, manual?: boolean) => void
@@ -308,6 +335,8 @@ export const useClaim = create<ClaimState>()(
         policy: [],
         delivery: null,
         lang: null,
+        placeQuery: null,
+        drawFromWords: false,
         // the document says which language its free text is in, so the desk knows what it is reading
         setLang: (lang) => set((s) => ({ lang, claim: { ...s.claim, incident: { ...s.claim.incident, language: lang } } })),
 
@@ -559,6 +588,92 @@ export const useClaim = create<ClaimState>()(
             settle()
           }
         },
+        applyIntake: (draft, take, transcript) => {
+          if (take.kind && draft.kind) get().setKind(draft.kind)
+          if (take.when && draft.when) get().setIncident({ at: draft.when })
+
+          if (take.place && draft.place) set({ placeQuery: draft.place })
+
+          if (take.conditions && draft.conditions) {
+            const cur = get().claim.incident.conditions
+            const patch: Partial<Conditions> = {}
+            const fill = <K extends keyof Conditions>(k: K) => {
+              const v = draft.conditions?.[k]
+              if (v && !cur[k]) patch[k] = v
+            }
+            fill('weather')
+            fill('road')
+            fill('light')
+            if (Object.keys(patch).length) get().setConditions(patch)
+          }
+
+          // body and colour have no "empty" value of their own to test against — unlike make,
+          // model and year, every vehicle is created with some shape and some paint. This only
+          // ever runs from the Kind step, before the customer can have chosen either for real,
+          // so overwriting them here is safe; `vehicleFromPolicy` in prefill.ts makes the same
+          // call for the same reason.
+          const fillVehicle = (id: string, dv: NonNullable<IntakeDraft['vehicles']>[number]) => {
+            const v = get().claim.vehicles.find((x) => x.id === id)
+            if (!v) return
+            const hex = dv.color ? PAINTS.find((p) => p.id === dv.color)?.hex : undefined
+            get().updateVehicle(id, {
+              make: v.make || dv.make || v.make,
+              model: v.model || dv.model || v.model,
+              year: v.year ?? dv.year ?? v.year,
+              ...(hex ? { color: hex } : {}),
+            })
+            if (dv.body) get().setBody(id, dv.body)
+          }
+
+          if (draft.vehicles) {
+            // mirrors the cap `Vehicles.tsx` enforces on "Add a vehicle"
+            const MAX_VEHICLES = 6
+            let otherIndex = 0
+            draft.vehicles.forEach((dv, i) => {
+              if (!take.vehicles[i]) return
+              if (dv.role === 'insured') {
+                fillVehicle(insuredOf(get().claim).id, dv)
+                return
+              }
+              const existing = othersOf(get().claim)[otherIndex]
+              otherIndex++
+              if (existing) {
+                fillVehicle(existing.id, dv)
+              } else if (get().claim.vehicles.length < MAX_VEHICLES) {
+                get().addVehicle()
+                const added = othersOf(get().claim).at(-1)
+                if (added) fillVehicle(added.id, dv)
+              }
+            })
+          }
+
+          if (take.people && draft.people?.length) {
+            for (const dp of draft.people) {
+              // the draft only knows "insured" or "other", never which of several other
+              // vehicles: the first one is the best guess with nothing more to go on
+              const vehicle = dp.vehicle === 'insured' ? insuredOf(get().claim).id : dp.vehicle === 'other' ? (othersOf(get().claim)[0]?.id ?? null) : null
+              get().addPerson(dp.role, vehicle)
+              get().updatePerson(get().claim.people.length - 1, { injured: dp.injured, injury: dp.injury ?? '' })
+            }
+          }
+
+          if (take.police && draft.police) {
+            const cur = get().claim.police
+            const patch: Partial<Police> = {}
+            if (cur.called === null) patch.called = draft.police.called
+            if (!cur.report && draft.police.report) patch.report = draft.police.report
+            if (Object.keys(patch).length) get().setPolice(patch)
+          }
+
+          if (take.property && draft.property && !get().claim.property.description) get().setProperty({ description: draft.property })
+
+          // their own words, verbatim — never the model's summary — because this is their
+          // statement and what they sign; there is no row to untick it by, the same as there
+          // is none for the transcript itself
+          if (transcript.trim()) get().setIncident({ description: transcript.trim() })
+
+          set({ drawFromWords: !!(draft.vehicles?.length && draft.description) })
+        },
         clearPath: (id) => mapVehicle(id, (v) => ({ ...v, path: [] })),
         setImpact: (impact, manual = true) => {
           set({ impactManual: manual })
@@ -582,7 +697,19 @@ export const useClaim = create<ClaimState>()(
           set((s) => {
             const claim = emptyClaim()
             claim.incident.language = s.lang ?? 'en'
-            return { claim, step: 'kind', impactManual: false, autoDamage: {}, autoConditions: {}, contextKey: null, roadWays: null, photoExif: [], delivery: null }
+            return {
+              claim,
+              step: 'kind',
+              impactManual: false,
+              autoDamage: {},
+              autoConditions: {},
+              contextKey: null,
+              roadWays: null,
+              photoExif: [],
+              delivery: null,
+              placeQuery: null,
+              drawFromWords: false,
+            }
           }),
       }
     },

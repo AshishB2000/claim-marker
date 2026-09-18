@@ -152,6 +152,28 @@ export const en = {
   // ── the photograph on a vehicle card
   'start.photo.credit': 'Photo: Wikimedia Commons',
   'start.photo.creditTitle': '{title} — Wikimedia Commons',
+
+  // ── "Just tell us what happened": one account, proposed back piece by piece
+  'start.intake.title': 'Just tell us what happened',
+  'start.intake.lead': "Speak or type one account of the whole thing. We'll show you everything we understood, and you check it piece by piece before any of it is used.",
+  'start.intake.placeholder': 'What happened, where, when, who was involved…',
+  'start.intake.send': 'Tell us',
+  'start.intake.sending': 'Working it out…',
+  'start.intake.failed': "We couldn't make sense of that. Pick what happened below instead.",
+  'start.intake.review.title': 'Here is what we understood',
+  'start.intake.review.lead': "Untick anything that isn't right. Nothing here is added until you say so.",
+  'start.intake.use': 'Use these',
+  'start.intake.again': 'Start again',
+  'start.intake.place': 'We’ll search for “{place}”',
+  'start.intake.police.yes': 'The police were called',
+  'start.intake.police.no': 'The police were not called',
+  'start.intake.hurt.none': 'No injuries mentioned',
+  'start.intake.hurt.one': '{n} person hurt',
+  'start.intake.hurt.other': '{n} people hurt',
+  'start.intake.property.label': 'Other property: {text}',
+  'start.intake.vehicle.insured': 'Your vehicle',
+  'start.intake.vehicle.other': 'Another vehicle',
+  'start.intake.ai': 'Read from what you said. Nothing is added until you tick it and press "Use these".',
 } as const
 
 export const es: Record<keyof typeof en, string> = {
@@ -297,4 +319,25 @@ export const es: Record<keyof typeof en, string> = {
 
   'start.photo.credit': 'Foto: Wikimedia Commons',
   'start.photo.creditTitle': '{title} — Wikimedia Commons',
+
+  'start.intake.title': 'Cuéntanos qué pasó',
+  'start.intake.lead': 'Cuéntalo hablando o escribiendo, todo de una vez. Te mostramos todo lo que entendimos, y tú lo revisas parte por parte antes de usar nada.',
+  'start.intake.placeholder': 'Qué pasó, dónde, cuándo, quién estuvo involucrado…',
+  'start.intake.send': 'Contarlo',
+  'start.intake.sending': 'Entendiendo lo que dijiste…',
+  'start.intake.failed': 'No pudimos entender eso. Mejor elige abajo qué pasó.',
+  'start.intake.review.title': 'Esto es lo que entendimos',
+  'start.intake.review.lead': 'Quita la marca de lo que no sea correcto. Nada de esto se agrega hasta que lo confirmes.',
+  'start.intake.use': 'Usar esto',
+  'start.intake.again': 'Empezar de nuevo',
+  'start.intake.place': 'Vamos a buscar “{place}”',
+  'start.intake.police.yes': 'Llamaron a la policía',
+  'start.intake.police.no': 'No llamaron a la policía',
+  'start.intake.hurt.none': 'No se mencionan heridos',
+  'start.intake.hurt.one': '{n} persona herida',
+  'start.intake.hurt.other': '{n} personas heridas',
+  'start.intake.property.label': 'Otro daño: {text}',
+  'start.intake.vehicle.insured': 'Tu vehículo',
+  'start.intake.vehicle.other': 'Otro vehículo',
+  'start.intake.ai': 'Se armó con lo que dijiste. No se agrega nada hasta que lo marques y presiones "Usar esto".',
 }

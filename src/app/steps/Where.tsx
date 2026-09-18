@@ -44,7 +44,11 @@ export function Where() {
   // what the last photograph said, waiting to be accepted; `false` means it said nothing
   const [fromPhoto, setFromPhoto] = useState<FromPhoto | false | null>(null)
 
-  const [query, setQuery] = useState('')
+  // "Just tell us what happened" may have left the place in words, waiting here: read once at
+  // mount, so it starts the box exactly as if the customer had typed it themselves — the
+  // "suggestions as you type" effect below then searches it and opens the list on its own.
+  // The model never supplies coordinates; the customer still has to pick the actual match.
+  const [query, setQuery] = useState(() => useClaim.getState().placeQuery ?? '')
   const [results, setResults] = useState<Place[]>([])
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
@@ -53,6 +57,11 @@ export function Where() {
   const abort = useRef<AbortController | null>(null)
   // the address a result put into the box; searching it again would only reopen the list
   const picked = useRef<string | null>(null)
+
+  // consumed once, on the way in; a draft applied twice must not keep re-seeding this box
+  useEffect(() => {
+    if (useClaim.getState().placeQuery) useClaim.setState({ placeQuery: null })
+  }, [])
 
   const center: LngLat | null = incident.location ? [incident.location.lng, incident.location.lat] : null
   // only biases the ranking; a new location must not re-run the search, so it is read, not depended on

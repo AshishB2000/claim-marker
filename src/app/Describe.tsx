@@ -1,30 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useClaim } from '../claim/store'
-import type { Lang } from '../i18n'
 import { useLang, useT } from '../i18n/useT'
 import { Field } from './ui'
 import { Icon } from './icons'
-
-/** the browser's own speech recognition, where it has one (Chrome, Safari, Edge); no key, nothing leaves the page but the audio to the browser's own service */
-type Recognizer = {
-  lang: string
-  continuous: boolean
-  interimResults: boolean
-  onresult: ((e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null
-  onend: (() => void) | null
-  onerror: (() => void) | null
-  start: () => void
-  stop: () => void
-}
-const Speech = (globalThis as { SpeechRecognition?: new () => Recognizer; webkitSpeechRecognition?: new () => Recognizer }).SpeechRecognition ??
-  (globalThis as { webkitSpeechRecognition?: new () => Recognizer }).webkitSpeechRecognition
-
-/**
- * The tag the recogniser wants is a full one — a bare "es" gets a recogniser nobody chose.
- * The browser's own tag for this language carries the region the customer actually speaks;
- * with none, US Spanish and US English, which is who this page is for.
- */
-const speechTag = (lang: Lang): string => navigator.languages?.find((l) => l.toLowerCase().startsWith(`${lang}-`)) || `${lang}-US`
+import { Speech, speechTag, type Recognizer } from './speech'
 
 /**
  * "In your own words, what happened?" — typed, or spoken into the box on a phone at the
