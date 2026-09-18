@@ -455,8 +455,10 @@ const blueShare = await page.evaluate(() => {
   const my = ((way.top + way.height / 2 + car.top + car.height / 2) / 2 - cr.top) * dpr
   const size = 24 * dpr
   const px = ctx.getImageData(mx - size / 2, my - size / 2, size, size).data
+  // by hue, not by level: the car's own shadow — a low morning sun, as the record has it —
+  // can lie across this stretch of the path, and a path in shadow is still on the map
   let blue = 0
-  for (let i = 0; i < px.length; i += 4) if (px[i + 2] > 170 && px[i] < 110 && px[i + 1] < 150) blue++
+  for (let i = 0; i < px.length; i += 4) if (px[i + 2] > 100 && px[i + 2] > px[i] * 1.6 && px[i + 2] > px[i + 1] * 1.25) blue++
   return blue / (px.length / 4)
 })
 if (blueShare < 0.05) fail(`the path is in the store but not on the map (${(blueShare * 100).toFixed(0)}% blue between the waypoint and the car)`)
@@ -915,7 +917,8 @@ const litPage = async (context, plainView = false) => {
   p.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
   p.on('pageerror', (e) => errors.push(String(e)))
   if (lang === 'es') await p.addInitScript(() => void (window.CLAIM_MARKER = { lang: 'es' }))
-  await p.addInitScript((seed) => localStorage.setItem('claim-marker/draft', JSON.stringify(seed)), litSeed(context, plainView))
+  // seeded once: an init script runs on every navigation, and the reload below must find what the page saved
+  await p.addInitScript((seed) => void (localStorage.getItem('claim-marker/draft') || localStorage.setItem('claim-marker/draft', JSON.stringify(seed))), litSeed(context, plainView))
   await p.goto(`${origin}/`, { waitUntil: 'networkidle' })
   await p.waitForSelector('.mk-car', { timeout: 20000 })
   // the tiles and the shaders both take their time; wait for a real frame, then a little longer for the tiles

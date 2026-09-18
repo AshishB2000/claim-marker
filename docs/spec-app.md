@@ -1100,6 +1100,86 @@ and every car marker's screen position must be within a pixel of where it was be
 presses it again on the review's read-only map, which is the component the desk renders, and
 checks the tilt and the return there too.
 
+## The moment, lit as it was (v10)
+
+The cinematic replay tilts the map and chases the car, and a tilted map lit by a fixed
+studio light from the east-north-east, at noon, in any weather, looks like a diagram with a
+camera on it. The record already says where the sun stood, what the weather was doing and
+whether the street was lit — `incident.context`, looked up from the place and the time. So
+the scene lights itself from those facts: the sun where it was, real shadows on the ground
+that lengthen into the evening, a wet road and rain when it rained, snow, fog, headlights and a
+warm pool under a street light after dark. Long evening shadows are what sell the time of day.
+
+**One pure function, two scenes.** `lightingFor(context)` in `src/scene/lighting.ts` turns a
+`SceneContext` into a `Lighting`: the sun as a unit vector in the map layer's frame (x east,
+y south, z up — `[cos alt · sin az, −cos alt · cos az, sin alt]`), whether it is up under a
+sky clear enough to cast a shadow, its intensity (the map's own 1.5 from 25° up, falling to a
+quarter at the horizon, off once set, and dimmed by rain, snow, fog or overcast), its colour,
+the hemisphere sky and ground colours and intensity in three buckets — day, orange below 10°,
+blue below −6°, the same line `lightFrom` draws for "dark" — how much of the environment map
+shows, and five booleans: `rain`, `snow`, `fog` (through `weatherOfCode`, the one table for WMO
+codes), `night`, and `lit` (night on a road the record says is lit). `lightingFor(null)` is
+`DEFAULT_LIGHTING`: exactly the fixed light the map has always had, and the file has no value
+imports of three or maplibre, so `test/lighting.test.ts` runs in plain node. The car layer
+(`CarLayer.setLighting`) and the damage studio (`Scene`'s `lighting` prop, through
+`DamageMarker`) both read it — the studio's `Environment` intensity and its two directionals
+take the same sun and weather, with the sun turned into the body's frame, so the marked-up car
+on the review page is lit like the map above it. `MapScene` and `ReportDocument` take the
+prop; the customer's page memoises it from the store, the desk from the receipt's document,
+and every caller that does not ask — the desk's `Compare`, the damage step's marker — is
+unchanged.
+
+**Real shadows, inside MapLibre's context.** The layer had no ground for a shadow to land on
+and faked one with a soft disc. Now a `ShadowMaterial` plane at 0.35 opacity lies under
+everything, the directional light casts a 2048² PCF shadow map, and every real car's meshes
+cast; the blob stays only for a ghost, and for whenever there is no sun to throw a real one.
+Three things about doing this in a custom layer are easy to get wrong, and are in `CLAUDE.md`:
+the scene is in mercator units, so the shadow camera's bounds, near and far, the light's
+distance, the fog's reach and every lamp's throw are set in metres times
+`metresToMercator(lat)` and refitted when the origin moves (`fit()`); the shadow pass renders
+back faces by default and the kit's bodies are open shells with no floor, so from a high sun
+the depth map held a sliver of door lining and no shadow at all until the car materials'
+`shadowSide` was set to `DoubleSide`; and the shadow pass restores the viewport three believes
+the canvas has — its size at creation — so `render()` sets three's viewport from the drawing
+buffer before rendering, or a resized map draws the cars in the wrong corner. MapLibre restores
+its own viewport after the layer (`setBaseState`); this is for three's main pass, which draws
+straight after the shadow pass with no other reset in between.
+
+**Everything at ground level is one group in a body's frame.** The shadow ground, the wet
+road, the fog sheet, the street-light pool and the rain are built in the same y-up metres frame
+as a car and placed at the incident by the same `vehicleMatrix`, so one unit is a metre there
+too and the map's mirrored projection is answered once, by `reverseWinding`, exactly as a body
+is. The wet road is a dark, near-mirror (`roughness 0.05`), translucent plane under the cars,
+so the sky and the lamps reflect in it; the rain is six hundred short vertical lines in one
+`LineSegments`, scattered through a box twice the fall height and slid down by up to one height
+each frame, so the visible band is always full — snow is the same lines a quarter as long, white,
+at a sixth of the rate; fog is `scene.fog` on the cars plus a white sheet at 30 % over the
+ground, in the layer rather than the DOM, so the export and the recorder get it for free and the
+DOM pills stay legible. After dark each real car has two `SpotLight` headlights at the corners
+of its nose, always on — whether a car faces the camera is not worth a check — and a street-lit
+road adds a warm additive pool and a warm `PointLight` over the incident. Those lights decay in
+mercator units, where 1/d² clamps to its ceiling everywhere inside the throw and only the
+distance cutoff shapes the pool: flat with a soft edge, which is what a headlight on wet tarmac
+looks like anyway; the intensities are tuned to that ceiling and say so.
+
+**All of it is decoration.** Nothing here moves a car, a heading, a mark or the impact, and
+nothing reaches the document: `export()` captures the canvas, so the PNGs and the replay hold
+the light as it was, and that is the whole of it. "Plain view" is one chip on the diagram step
+and the review page, `plainView` in the persisted store — how the customer is looking, like
+the language, never in `claim/1` — and while it is on every scene on that page is lit as it
+always was.
+
+**What the smoke proves.** A draft seeded straight onto the diagram — the same tiles, the same
+two cars six metres either side of the impact, facing each other — under three lights. Rain
+after dark: the open road ten metres south must read darker than in plain view (the tiles never
+change, so the difference is the layer's), the ground ahead of A's nose brighter than behind
+its tail, and the canvas the export captures a picture. A clear sun on the horizon: the ground
+between the cars must read darker than plain — the shadow — while the open road reads the same,
+so it is the shadow and not a veil. Then "Plain view" must bring the road back, be in the draft,
+and still be pressed after a reload. The unit test pins the sun vector by quadrant and length,
+the intensities at 60°, 25°, 12.5°, 2°, 0° and below, the three sky buckets by channel order,
+which codes mean rain, snow and fog, and when the street counts as lit.
+
 ## Tell us everything, once (v9)
 
 A form asks forty questions one at a time. A person who has just been in a crash tells you what
