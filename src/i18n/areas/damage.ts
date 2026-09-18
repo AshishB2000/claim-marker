@@ -29,6 +29,21 @@ export const en = {
   'damage.tile.taken': '{label}, taken — take it again',
   'damage.guided.choose': 'Choose from your photos',
 
+  // ── the live camera sheet a guided tile opens; the per-shot instruction reuses damage.shot.*
+  'damage.camera.title': 'Take the photo',
+  'damage.camera.aria': 'Camera',
+  'damage.camera.shutter': 'Take photo',
+  'damage.camera.close': 'Close',
+  'damage.camera.torch': 'Torch',
+  'damage.camera.denied': 'We could not reach your camera. Use the button below instead.',
+  'damage.camera.ready': 'Starting the camera…',
+  'damage.camera.hint.hold_still': 'Hold still',
+  'damage.camera.hint.too_dark': 'Too dark — turn on the light or move',
+  'damage.camera.hint.too_bright': 'Too bright — move out of the glare',
+  // the check behind this fires when the frame is almost featureless, which is what a panel
+  // filling the whole frame looks like — so the fix is to back off a little, not lean in
+  'damage.camera.hint.move_closer': 'Step back a little',
+
   // ── the photo card everywhere else
   'damage.photos.title': 'Photos',
   'damage.photos.lead':
@@ -123,6 +138,18 @@ export const es: Record<keyof typeof en, string> = {
   'damage.shot.other': 'El otro vehículo y su placa',
   'damage.tile.taken': '{label}, ya tomada — tómala otra vez',
   'damage.guided.choose': 'Elegir de tus fotos',
+
+  'damage.camera.title': 'Toma la foto',
+  'damage.camera.aria': 'Cámara',
+  'damage.camera.shutter': 'Tomar foto',
+  'damage.camera.close': 'Cerrar',
+  'damage.camera.torch': 'Linterna',
+  'damage.camera.denied': 'No pudimos usar tu cámara. Usa el botón de abajo en su lugar.',
+  'damage.camera.ready': 'Iniciando la cámara…',
+  'damage.camera.hint.hold_still': 'No te muevas',
+  'damage.camera.hint.too_dark': 'Muy oscuro: enciende la luz o cambia de lugar',
+  'damage.camera.hint.too_bright': 'Muy claro: aléjate del reflejo',
+  'damage.camera.hint.move_closer': 'Aléjate un poco',
 
   'damage.photos.title': 'Fotos',
   'damage.photos.lead':
