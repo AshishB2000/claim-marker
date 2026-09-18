@@ -1,4 +1,4 @@
-import { Fragment, useRef, type ReactNode, type RefObject } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useClaim, type Step } from '../claim/store'
 import { KIND_INFO, ROLE_COLOR, newPerson, type Claim, type ClaimVehicle, type Person } from '../claim/schema'
 import {
@@ -117,6 +117,72 @@ function Hurt({ p, lang }: { p: Person; lang: Lang }) {
       <span className="font-semibold">{translate(lang, 'scene.doc.hurtLabel')}</span>
       {p.injury && ` — ${p.injury}`}
     </span>
+  )
+}
+
+/** one video frame, at the recorder's own rate */
+const FRAME_S = 1 / 30
+
+/**
+ * The video the customer's browser recorded at send time — what actually went out, not the
+ * live playback above it — with a scrubber an adjuster can step frame by frame, because
+ * "was the red car already moving" is a question `controls` alone answers badly.
+ */
+function ReplayVideo({ src, lang }: { src: string; lang: Lang }) {
+  const t = (key: Key, vars?: Vars) => translate(lang, key, vars)
+  const video = useRef<HTMLVideoElement>(null)
+  const [time, setTime] = useState(0)
+
+  useEffect(() => {
+    const v = video.current
+    if (!v) return
+    // A MediaRecorder webm reports `duration === Infinity` until the browser has demuxed all
+    // the way to the end — which normal playback of a short clip never does on its own.
+    // Seeking to a point far past the end forces it to do that work; seeking back to 0 then
+    // leaves the scrubber at the start with a real length to step through.
+    const onLoaded = () => {
+      if (v.duration !== Infinity) return
+      const onSeeked = () => {
+        v.currentTime = 0
+        v.removeEventListener('seeked', onSeeked)
+      }
+      v.addEventListener('seeked', onSeeked)
+      v.currentTime = 1e9
+    }
+    v.addEventListener('loadedmetadata', onLoaded)
+    return () => v.removeEventListener('loadedmetadata', onLoaded)
+  }, [])
+
+  const step = (frames: number) => {
+    const v = video.current
+    if (!v) return
+    v.pause()
+    const end = Number.isFinite(v.duration) ? v.duration : Infinity
+    v.currentTime = Math.min(Math.max(0, v.currentTime + frames * FRAME_S), end)
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="mb-1.5 text-xs font-semibold text-slate-500">{t('scene.doc.replay.heading')}</div>
+      <video
+        ref={video}
+        src={src}
+        controls
+        muted
+        playsInline
+        onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+        className="w-full rounded-xl bg-black ring-1 ring-slate-900/10"
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-2 print:hidden">
+        <button type="button" className="chip" onClick={() => step(-1)}>
+          <Icon.back /> {t('scene.doc.replay.stepBack')}
+        </button>
+        <button type="button" className="chip" onClick={() => step(1)}>
+          <Icon.next /> {t('scene.doc.replay.stepForward')}
+        </button>
+        <span className="font-mono text-xs text-slate-500 tabular-nums">{t('scene.doc.replay.time', { time: time.toFixed(1) })}</span>
+      </div>
+    </div>
   )
 }
 
@@ -466,6 +532,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
             </figcaption>
           </figure>
         )}
+        {voice === 'desk' && claim.attachments.replay && <ReplayVideo src={claim.attachments.replay} lang={lang} />}
       </Part>
 
       {/* ── damage ──────────────────────────────────────────────── */}

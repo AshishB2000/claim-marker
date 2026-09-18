@@ -3,10 +3,10 @@ import type { ClaimVehicle } from '../claim/schema'
 import type { CarPose } from './carLayer'
 import { durationOf, posesAt } from './playback'
 
-/** cars pull away and brake rather than teleport */
-const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2)
+/** cars pull away and brake rather than teleport; exported so `Compare`'s two-account clock eases the same way */
+export const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2)
 /** how long the final frame — the moment of impact — is held before the map is handed back */
-const HOLD_MS = 700
+export const HOLD_MS = 700
 
 /**
  * A playback of the scenario: `poses` is null when idle and the frame's poses while playing.
