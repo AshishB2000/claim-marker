@@ -113,15 +113,19 @@ export function sunPosition(instantMs: number, at: LngLat): SceneSun {
 
 /**
  * The claim's four-way light bucket from the sun's altitude, and — once it's dark — whether the
- * road was lit. `lit` is the OSM street-lighting tag the road lookup supplies: `null` means the
- * record does not say either way, and an unknown road is treated as unlit rather than assumed
- * lit, since a wrongly-dark reading only makes a report ask for more detail, where a wrongly-lit
- * one hides that the customer was driving an unlit road in the dark.
+ * road was lit. `lit` is the OSM street-lighting tag the road lookup supplies.
+ *
+ * **Null when it is dark and the record does not say.** Most streets carry no `lit` tag at all —
+ * West 44th Street, a hundred metres from Times Square, is one — so reading "unknown" as "unlit"
+ * told a customer in the brightest square on earth that there were no street lights. The lookup
+ * fills only what it actually knows: after dark with no tag, the light select is left for the
+ * customer, and the card still says it was after dark from the sun alone.
  */
-export function lightFrom(altitude: number, lit: boolean | null): Light {
+export function lightFrom(altitude: number, lit: boolean | null): Light | null {
   if (altitude > 6) return 'daylight'
   if (altitude >= -6) return 'dusk'
-  return lit === true ? 'dark_lit' : 'dark_unlit'
+  if (lit === null) return null
+  return lit ? 'dark_lit' : 'dark_unlit'
 }
 
 /**

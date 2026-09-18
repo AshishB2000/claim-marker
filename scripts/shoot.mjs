@@ -51,6 +51,12 @@ const N = {
 
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, deviceScaleFactor: 2 })
+// the road comes from the same recorded Overpass answer the smoke uses: a public mirror that
+// hangs one request in three is no way to make a README picture (see scripts/smoke.mjs)
+const OVERPASS_FIXTURE = readFileSync(new URL('./fixtures/overpass-times-square.json', import.meta.url), 'utf8')
+await page.route('**://overpass.kumi.systems/**', (route) =>
+  route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: OVERPASS_FIXTURE }),
+)
 const errors = []
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 page.on('pageerror', (e) => errors.push(String(e)))
@@ -75,8 +81,10 @@ await next()
 await page.getByRole('combobox', { name: N.where }).fill('Times Square New York')
 await page.waitForSelector('[role=option]', { timeout: 20000 })
 await page.locator('[role=option]').first().click()
-// the fly-to takes 1.4 s and the vector tiles and glyphs come after it
-await page.waitForTimeout(6500)
+// the fly-to takes 1.4 s and the vector tiles and glyphs come after it; the picture is of the
+// finished "we looked this up" card, not of it still looking
+await page.waitForSelector('[data-looked-lines] li', { timeout: 30000 }).catch(() => fail('the looked-up card never finished'))
+await page.waitForTimeout(4000)
 await shot('where')
 
 await next()
@@ -182,6 +190,12 @@ await phone.route('https://assist.example/read', (r) =>
     }),
   }),
 )
+// The README picture wants a photograph of a car in the tile, not a camera's test pattern, so
+// this phone has no camera: the guided tiles then take the file-input path they always had
+// (the live camera sheet is walked, and its release checked, by assist-smoke.mjs)
+await phone.addInitScript(() => {
+  if (navigator.mediaDevices) Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: undefined })
+})
 await phone.goto(`${origin}/`, { waitUntil: 'networkidle' })
 await phone.evaluate((s) => localStorage.setItem('claim-marker/draft', s), JSON.stringify(saved))
 await phone.reload({ waitUntil: 'networkidle' })

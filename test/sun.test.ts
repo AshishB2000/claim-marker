@@ -114,14 +114,17 @@ describe('lightFrom', () => {
     expect(lightFrom(-7, false)).toBe('dark_unlit')
   })
 
-  it('below -6°, lit null (unknown treated as unlit): dark_unlit', () => {
-    expect(lightFrom(-7, null)).toBe('dark_unlit')
+  it('below -6°, lit null: no answer — most streets have no tag, and unknown is not unlit', () => {
+    expect(lightFrom(-7, null)).toBeNull()
   })
 
-  it('only returns values from the LIGHT enum', () => {
+  it('only ever answers from the LIGHT enum, or not at all', () => {
     for (const altitude of [10, 6, 0, -6, -10]) {
       for (const lit of lits) {
-        expect(LIGHT).toContain(lightFrom(altitude, lit))
+        const light = lightFrom(altitude, lit)
+        if (light !== null) expect(LIGHT).toContain(light)
+        // the one case with no answer is the dark with no record of lighting
+        else expect([altitude, lit]).toEqual([-10, null])
       }
     }
   })

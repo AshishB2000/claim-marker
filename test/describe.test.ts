@@ -1,21 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  cap,
-  conditionLabels,
-  contactLine,
-  displayName,
-  driverName,
-  driverShort,
-  gaps,
-  ownerLabel,
-  personLine,
-  vehicleName,
-  vehicleOf,
-  whose,
-  yesNo,
-  UNKNOWN_DRIVER,
-} from '../src/claim/describe'
-import { emptyClaim, newPerson, newVehicle, type Claim } from '../src/claim/schema'
+import { cap, conditionLabels, contactLine, displayName, driverName, driverShort, gaps, ownerLabel, personLine, vehicleName, vehicleOf, whose, yesNo, UNKNOWN_DRIVER, lookedUpLines } from '../src/claim/describe'
+import { emptyClaim, newPerson, newVehicle, type Claim , type SceneContext } from '../src/claim/schema'
 
 const mine = { ...newVehicle('a', 'insured', 'sedan', '#b91c1c'), make: 'Toyota', model: 'Camry', year: 2022 }
 const theirs = newVehicle('b', 'other', 'suv', '#1c1f26')
@@ -201,5 +186,46 @@ describe('how the report names things in Spanish', () => {
     expect(conditionLabels({ weather: 'rain', road: 'wet', light: 'dark_lit' }, 'es')).toEqual(['Lluvia', 'Camino mojado', 'De noche, con alumbrado'])
     expect(conditionLabels({ weather: '', road: 'icy', light: '' }, 'es')).toEqual(['Camino con hielo'])
     expect(conditionLabels({ weather: '', road: '', light: '' }, 'es')).toEqual([])
+  })
+})
+
+describe('what the record said, as the card and the report read it', () => {
+  const ctx: SceneContext = {
+    weather: { code: 61, label: 'Light rain', tempC: 11.4, precipMm: 0.3, windKph: 34 },
+    sun: { altitude: 4, azimuth: 270 },
+    road: { name: '5th Avenue', class: 'primary', lanes: 2, oneway: true, maxspeed: '25 mph', lit: true, junction: 'cross', controls: ['crossing', 'traffic_signals'] },
+    source: 'open-meteo+osm',
+    fetchedAt: '2026-09-07T22:10:00.000Z',
+  }
+
+  it('reads the weather, the road, the light with the low sun, and the street', () => {
+    expect(lookedUpLines(ctx, { weather: 'rain', road: 'wet', light: 'dusk' })).toEqual([
+      'Rain, 11 °C, wind 34 km/h',
+      'Wet road',
+      'dusk or dawn, the sun low in the west',
+      '5th Avenue, 2 lanes, one-way, 25 mph, a crossroads, a pedestrian crossing, traffic lights',
+    ])
+  })
+
+  it('follows the customer once they have changed an answer: the card is a receipt, not an argument', () => {
+    expect(lookedUpLines(ctx, { weather: 'clear', road: '', light: '' })[0]).toBe('Clear, 11 °C, wind 34 km/h')
+  })
+
+  it('says it was dark from the sun alone when the record cannot say whether the street was lit', () => {
+    const night = { ...ctx, sun: { altitude: -20, azimuth: 0 }, road: { ...ctx.road!, lit: null } }
+    expect(lookedUpLines(night, { weather: 'rain', road: 'wet', light: '' })).toContain('After dark')
+    // and not when the customer has answered it themselves
+    expect(lookedUpLines(night, { weather: 'rain', road: 'wet', light: 'dark_lit' })).not.toContain('After dark')
+  })
+
+  it('reads in Spanish without English left in it', () => {
+    const lines = lookedUpLines(ctx, { weather: 'rain', road: 'wet', light: 'dusk' }, 'es')
+    expect(lines[0]).toBe('Lluvia, 11 °C, viento 34 km/h')
+    expect(lines[2]).toBe('al atardecer o al amanecer, con el sol bajo hacia el oeste')
+    expect(lines[3]).toContain('semáforo')
+  })
+
+  it('prints only what came back', () => {
+    expect(lookedUpLines({ ...ctx, weather: null, road: null }, { weather: '', road: '', light: '' })).toEqual([])
   })
 })

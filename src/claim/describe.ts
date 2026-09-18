@@ -237,6 +237,9 @@ export function lookedUpLines(ctx: SceneContext, c: Conditions, lang: Lang = 'en
 
   if (c.road) out.push(es ? t('road.phrase', { road: t(`road.${c.road}` as Key).toLowerCase() }) : `${cap(c.road)} road`)
 
+  // the sun alone says it was dark even when the record cannot say whether the street was lit
+  if (!c.light && ctx.sun && ctx.sun.altitude < -6) out.push(t('start.where.looked.dark'))
+
   if (c.light) {
     const light = es ? t(`light.${c.light}` as Key) : LIGHT_LABEL[c.light]
     // where the sun was only says anything while it is low: at noon it is simply up

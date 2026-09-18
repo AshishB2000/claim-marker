@@ -130,7 +130,10 @@ export function Where() {
         fill.weather = c.weather
         fill.road = c.road
       }
-      if (sun) fill.light = lightFrom(sun.altitude, r?.road.lit ?? null)
+      // only what the record actually knows: after dark on a street with no lighting tag the
+      // select stays the customer's to answer (see `lightFrom`)
+      const light = sun ? lightFrom(sun.altitude, r?.road.lit ?? null) : null
+      if (light) fill.light = light
       const context = sceneContext({
         weather: w ? toSceneWeather(w) : null,
         sun,

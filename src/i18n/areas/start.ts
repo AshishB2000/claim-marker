@@ -32,6 +32,8 @@ export const en = {
   /** "dusk, the sun low in the west" */
   'start.where.looked.sun': '{light}, the sun low in the {dir}',
   'start.where.looked.windy': 'wind {kph} km/h',
+  /** dark by the sun, when the record cannot say whether the street was lit */
+  'start.where.looked.dark': 'After dark',
   'start.where.looked.lane': '1 lane',
   'start.where.looked.lanes': '{n} lanes',
   'start.where.looked.oneway': 'one-way',
@@ -206,6 +208,7 @@ export const es: Record<keyof typeof en, string> = {
   'start.where.looked.wrong': 'No exactamente',
   'start.where.looked.sun': '{light}, con el sol bajo hacia el {dir}',
   'start.where.looked.windy': 'viento {kph} km/h',
+  'start.where.looked.dark': 'De noche',
   'start.where.looked.lane': '1 carril',
   'start.where.looked.lanes': '{n} carriles',
   'start.where.looked.oneway': 'sentido único',
