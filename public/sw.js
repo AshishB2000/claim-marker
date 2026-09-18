@@ -75,7 +75,9 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  if (RUNTIME_HOSTS.includes(url.host)) event.respondWith(fresh(req))
+  // except a reverse lookup: its query is a raw position — "use my location", or a photo's —
+  // and a position does not go into Cache Storage, where it would outlive the report
+  if (RUNTIME_HOSTS.includes(url.host) && !url.pathname.startsWith('/reverse')) event.respondWith(fresh(req))
   // everything else — /claims, /sessions, the assist endpoint — is none of our business
 })
 

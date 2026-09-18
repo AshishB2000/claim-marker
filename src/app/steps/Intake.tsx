@@ -37,7 +37,7 @@ const draftVehicleLabel = (dv: DraftVehicle, lang: Lang, t: T): string => {
   return t(dv.role === 'insured' ? 'start.intake.vehicle.insured' : 'start.intake.vehicle.other')
 }
 
-/** "who was hurt" as a count, from i18n — never the model's own words about an injury */
+/** "who was hurt" as a count, from i18n; the model's own words about each injury follow it, quoted, in `Said` */
 const hurtLine = (people: DraftPeople, t: T): string => {
   const n = people.filter((p) => p.injured).length
   return n === 0 ? t('start.intake.hurt.none') : t(plural(n, 'start.intake.hurt.one', 'start.intake.hurt.other'), { n })
@@ -62,6 +62,15 @@ function IntakeRow({ checked, onChange, children }: { checked: boolean; onChange
       <span>{children}</span>
     </label>
   )
+}
+
+/**
+ * Words the model wrote that would land in the claim as written — an injury, the property, a
+ * report number — shown under their row before they can, quoted so they read as what was
+ * understood rather than as the page's own. Nothing lands unseen.
+ */
+function Said({ children }: { children: React.ReactNode }) {
+  return <span className="mt-0.5 block text-xs text-slate-500">{children}</span>
 }
 
 type Result = { draft: IntakeDraft; take: IntakeTake; transcript: string }
@@ -194,11 +203,13 @@ export function Intake() {
             {!!result.draft.people?.length && (
               <IntakeRow checked={result.take.people} onChange={(v) => setTake({ people: v })}>
                 {hurtLine(result.draft.people, t)}
+                {result.draft.people.map((p, i) => p.injury && <Said key={i}>“{p.injury}”</Said>)}
               </IntakeRow>
             )}
             {result.draft.police && (
               <IntakeRow checked={result.take.police} onChange={(v) => setTake({ police: v })}>
                 {t(result.draft.police.called ? 'start.intake.police.yes' : 'start.intake.police.no')}
+                {result.draft.police.report && <Said>{t('start.intake.police.report', { report: result.draft.police.report })}</Said>}
               </IntakeRow>
             )}
             {result.draft.conditions && (
@@ -212,6 +223,7 @@ export function Intake() {
             {result.draft.property && (
               <IntakeRow checked={result.take.property} onChange={(v) => setTake({ property: v })}>
                 {t('start.intake.property')}
+                <Said>“{result.draft.property}”</Said>
               </IntakeRow>
             )}
           </div>

@@ -146,6 +146,9 @@ await page.route('**://overpass.kumi.systems/**', (route) => {
   overpassHits++
   return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: OVERPASS_FIXTURE })
 })
+/** every reverse-geocoder request, with its query: a raw position must not leave before the customer agrees */
+const reverseAsks = []
+page.on('request', (r) => /\/reverse\?/.test(r.url()) && reverseAsks.push(r.url()))
 const errors = []
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 page.on('pageerror', (e) => errors.push(String(e)))
@@ -247,12 +250,20 @@ const withExif = stampExif(readFileSync(new URL('./fixtures/scene.jpg', import.m
   lng: -73.9859,
   lat: 40.7573,
 })
+const asksBefore = reverseAsks.length
 await page.setInputFiles(`input[type=file][aria-label="${N.fromPhoto}"]`, { name: 'scene.jpg', mimeType: 'image/jpeg', buffer: withExif })
 await page.waitForSelector('[data-photo-found]', { timeout: 20000 })
 const offered = await page.locator('[data-photo-found]').innerText()
-if (!/Times Square|40\.757/.test(offered)) fail(`the photo's own place was not offered: ${offered}`)
+// offered as rounded coordinates, and not yet sent anywhere: a gallery photo may have been taken at home
+if (!/40\.757, -73\.986/.test(offered)) fail(`the photo's own place was not offered, rounded: ${offered}`)
+if (/40\.7573|-73\.9859/.test(offered)) fail(`the photo's exact position is on screen before the customer agreed: ${offered}`)
+await page.waitForTimeout(500)
+if (reverseAsks.length !== asksBefore) fail(`the photo's position went to the geocoder before "use that": ${reverseAsks.slice(asksBefore).join(' ')}`)
 await page.getByRole('button', { name: N.usePhoto }).click()
-await page.waitForTimeout(400)
+await page
+  .waitForFunction(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.claim.incident.location, null, { timeout: 20000 })
+  .catch(() => fail('"use that" did not set the place'))
+if (reverseAsks.length !== asksBefore + 1) fail(`after "use that" the position should be looked up once, was ${reverseAsks.length - asksBefore} times`)
 const fromPic = await draft()
 if (!fromPic.incident.location || Math.abs(fromPic.incident.location.lat - 40.7573) > 0.001) fail(`the photo did not fill the place: ${JSON.stringify(fromPic.incident.location)}`)
 if (fromPic.incident.at !== pastLocal) fail(`the photo did not fill the time: ${fromPic.incident.at} vs ${pastLocal}`)
@@ -303,6 +314,9 @@ await page.getByRole('combobox', { name: N.roadSel }).selectOption('wet')
 await page.getByRole('combobox', { name: N.lightSel }).selectOption('daylight')
 const condsTaken = (await state()).autoConditions ?? {}
 for (const k of ['weather', 'road', 'light']) if (condsTaken[k] !== 'user') fail(`${k} should be the customer's after they picked it (${JSON.stringify(condsTaken)})`)
+// and the card, which says "public records, not your answers", still reads the record
+const lookedAfter = await page.locator('[data-looked-lines] li').allInnerTexts()
+if (JSON.stringify(lookedAfter) !== JSON.stringify(lookedLines)) fail(`the looked-up card followed the customer's answers: ${JSON.stringify(lookedLines)} → ${JSON.stringify(lookedAfter)}`)
 // and it stops following: moving the pin re-runs the lookup and must not take them back
 const pinned = (await draft()).incident.conditions
 await noEnglish('where')

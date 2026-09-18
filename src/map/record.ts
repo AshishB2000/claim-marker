@@ -268,8 +268,13 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
     }
     return null
   } finally {
-    // exactly how the customer left it: cars at rest, the DOM markers back
-    cars.setPoses(posesAt(vehicles, 1))
-    map.getContainer().classList.remove('mk-playing')
+    // exactly how the customer left it: cars at rest, the DOM markers back — unless the map was
+    // taken down mid-recording (the send won the race and the page moved on), which is no error
+    try {
+      cars.setPoses(posesAt(vehicles, 1))
+      map.getContainer().classList.remove('mk-playing')
+    } catch {
+      // nothing left to restore
+    }
   }
 }

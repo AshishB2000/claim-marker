@@ -34,7 +34,9 @@ async function recordReplay(map: MapSceneHandle | null): Promise<string | null> 
   if (!map) return null
   try {
     const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), RECORD_TIMEOUT_MS))
-    const blob = await Promise.race([map.record(), timeout])
+    // the recording that loses the race keeps running after this returns — and after the page
+    // has moved on and the map is gone — so anything it throws then is caught here, not left loose
+    const blob = await Promise.race([map.record().catch(() => null), timeout])
     if (!blob) return null
     const dataUrl = await blobToDataUrl(blob)
     return isReplay(dataUrl) ? dataUrl : null

@@ -17,8 +17,13 @@ import { Icon } from '../icons'
 /** who the lookup names as its source in the document; the two keyless providers it asks */
 const SOURCE = 'open-meteo+osm'
 
-/** what a photograph turned out to know: either half may be missing, and usually is */
-type FromPhoto = { at: LngLat | null; address: string; takenAt: string | null }
+/**
+ * What a photograph turned out to know: either half may be missing, and usually is. `near` is
+ * where it was taken to three decimals (about a hundred metres), which is all that is shown until
+ * the customer says "use that": a photo picked from the gallery may have been taken at home, and
+ * its exact position is not sent to the geocoder, or anywhere, before they agree.
+ */
+type FromPhoto = { at: LngLat | null; near: string; takenAt: string | null }
 
 const spoken = (at: string, lang: Lang) => {
   const d = new Date(at)
@@ -213,25 +218,30 @@ export function Where() {
       setBusy(null)
       return
     }
-    const place = exif.at ? await reversePlace(exif.at).catch(() => null) : null
     setFromPhoto({
       at: exif.at,
-      address: place?.address ?? (exif.at ? `${exif.at[1].toFixed(5)}, ${exif.at[0].toFixed(5)}` : ''),
+      near: exif.at ? `${exif.at[1].toFixed(3)}, ${exif.at[0].toFixed(3)}` : '',
       // a time in the future is a camera with a wrong clock, not an accident that has not happened
       takenAt: exif.takenAt && exif.takenAt <= nowLocal() ? exif.takenAt : null,
     })
     setBusy(null)
   }
 
-  const usePhoto = () => {
+  const takePhoto = async () => {
     if (!fromPhoto) return
+    setFromPhoto(null)
     if (fromPhoto.at) {
-      setLocation({ lng: fromPhoto.at[0], lat: fromPhoto.at[1], address: fromPhoto.address })
-      picked.current = fromPhoto.address
-      setQuery(fromPhoto.address)
+      // agreed: now, and only now, the position goes to the geocoder for its address
+      const at = fromPhoto.at
+      setBusy('photo')
+      const place = await reversePlace(at).catch(() => null)
+      const address = place?.address ?? `${at[1].toFixed(5)}, ${at[0].toFixed(5)}`
+      setLocation({ lng: at[0], lat: at[1], address })
+      picked.current = address
+      setQuery(address)
+      setBusy(null)
     }
     if (fromPhoto.takenAt) setIncident({ at: fromPhoto.takenAt })
-    setFromPhoto(null)
   }
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -334,13 +344,13 @@ export function Where() {
           <div data-photo-found className="rounded-xl bg-brand-50 px-4 py-3 text-sm ring-1 ring-brand-100">
             <p>
               {fromPhoto.at && fromPhoto.takenAt
-                ? t('start.where.photo.both', { place: fromPhoto.address, when: spoken(fromPhoto.takenAt, lang) })
+                ? t('start.where.photo.both', { place: fromPhoto.near, when: spoken(fromPhoto.takenAt, lang) })
                 : fromPhoto.at
-                  ? t('start.where.photo.place', { place: fromPhoto.address })
+                  ? t('start.where.photo.place', { place: fromPhoto.near })
                   : t('start.where.photo.time', { when: spoken(fromPhoto.takenAt!, lang) })}
             </p>
             <div className="mt-2.5 flex gap-2">
-              <button className="btn btn-primary btn-sm" onClick={usePhoto}>
+              <button className="btn btn-primary btn-sm" onClick={() => void takePhoto()}>
                 {t('start.where.photo.use')}
               </button>
               <button className="btn btn-ghost btn-sm" onClick={() => setFromPhoto(null)}>

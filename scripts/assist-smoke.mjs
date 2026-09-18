@@ -528,6 +528,12 @@ await tell.evaluate(() => {
 await tell.reload({ waitUntil: 'networkidle' })
 await tell.locator('text=Just tell us what happened').waitFor({ timeout: 15000 }).catch(() => fail('the intake card is not on the first screen'))
 
+/** the day before a local `YYYY-MM-DDTHH:mm`, as `YYYY-MM-DD` */
+const yesterday = (now) => {
+  const d = new Date(`${now.slice(0, 10)}T12:00`)
+  d.setDate(d.getDate() - 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const account = 'This morning at about 8.40 I was driving my red Honda Civic on 5th Avenue in the rain, a black SUV pulled out and hit my front. My passenger hurt her neck. The police came, report 2026-0042.'
 answer = (req) => [
   200,
@@ -536,7 +542,9 @@ answer = (req) => [
     task: 'intake',
     draft: {
       kind: 'collision',
-      when: `${req.now.slice(0, 10)}T08:40`,
+      // yesterday's morning: today's 08:40 is still in the future for a run before 08:40, and
+      // `parseIntake` rightly drops a time that has not happened yet
+      when: `${yesterday(req.now)}T08:40`,
       place: '5th Avenue and 42nd Street, New York',
       conditions: { weather: 'rain', road: 'wet', light: 'daylight' },
       vehicles: [
@@ -559,12 +567,15 @@ const sentIntake = seen.at(-1)
 if (seen.length !== beforeIntake + 1 || sentIntake.task !== 'intake' || sentIntake.transcript !== account) fail(`wrong intake request: ${JSON.stringify(sentIntake).slice(0, 200)}`)
 if (!sentIntake.kinds?.includes('collision') || !sentIntake.bodies?.includes('suv') || !sentIntake.colours?.includes('red')) fail('the intake request does not carry the enums')
 const proposal = await tell.locator('body').innerText()
-for (const secret of ['Maria Lopez', '555 0100', 'ABC 123', 'XYZ 789', '1HGCM82633A004352', 'Ashish B', 'me@example.com', 'neck pain']) {
+for (const secret of ['Maria Lopez', '555 0100', 'ABC 123', 'XYZ 789', '1HGCM82633A004352', 'Ashish B', 'me@example.com']) {
   if (proposal.includes(secret)) fail(`the proposal shows "${secret}", which came from the model`)
 }
 if (!proposal.includes('We’ll search for “5th Avenue and 42nd Street, New York”')) fail('the place is not offered as a search')
 if (!proposal.includes('1 person hurt')) fail('the injury is not a count')
-ok('intake: one account comes back as proposals — no names, plates, VINs or phone numbers, the injury as a count, the place as a search')
+// words of the model's that would land in the claim as written are shown before they can: nothing lands unseen
+if (!proposal.includes('“neck pain”')) fail('the injury the model wrote would land without being shown')
+if (!proposal.includes('Report number 2026-0042')) fail('the police report number the model wrote would land without being shown')
+ok('intake: one account comes back as proposals — no names, plates, VINs or phone numbers, the injury as a count with its own words shown, the place as a search')
 
 // untick the police: that answer must stay the customer's to give
 await tell.getByLabel('The police were called').uncheck()
@@ -583,7 +594,7 @@ if (!filled.vehicles.some((v) => v.role === 'other' && v.body === 'suv' && v.col
 if (filled.vehicles.some((v) => v.plate || v.vin)) fail('a plate or VIN from the model reached the report')
 if (filled.people.some((p) => p.name || p.phone)) fail('a name or phone from the model reached the report')
 if (!filled.people.some((p) => p.role === 'passenger' && p.injured && p.vehicle === filled.vehicles[0].id)) fail('the hurt passenger was not placed in the customer\'s car')
-if (filled.police.called !== null) fail(`an unticked proposal was used anyway: police ${filled.police.called}`)
+if (filled.police.called !== null || filled.police.report) fail(`an unticked proposal was used anyway: police ${JSON.stringify(filled.police)}`)
 if (filled.incident.description !== account) fail('the statement is not the customer\'s own words, verbatim')
 ok('intake: "Use these" fills what was empty, leaves what was typed and what was unticked, keeps the account verbatim, and opens the place search')
 

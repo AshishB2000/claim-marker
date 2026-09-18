@@ -378,7 +378,9 @@ const intakePerson = (entry: unknown): IntakePersonDraft | undefined => {
 const intakePolice = (v: unknown): IntakeDraft['police'] | undefined => {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined
   const p = v as Record<string, unknown>
-  const out: NonNullable<IntakeDraft['police']> = { called: p.called === true }
+  // no answer is not "no": without a yes or a no there is nothing to propose, report number or not
+  if (typeof p.called !== 'boolean') return undefined
+  const out: NonNullable<IntakeDraft['police']> = { called: p.called }
   const report = capped(p.report, MAX_REPORT)
   if (report) out.report = report
   return out

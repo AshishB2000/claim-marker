@@ -203,6 +203,13 @@ describe('intake', () => {
       expect(parseIntake({ when: bad }, now).when, JSON.stringify(bad)).toBeUndefined()
   })
 
+  it('proposes nothing about the police unless the account said whether they were called', () => {
+    for (const bad of [{}, { report: '123' }, { called: 'yes' }, { called: null }])
+      expect(parseIntake({ police: bad }, now).police, JSON.stringify(bad)).toBeUndefined()
+    expect(parseIntake({ police: { called: false } }, now).police).toEqual({ called: false })
+    expect(parseIntake({ police: { called: true, report: 'RPT-9' } }, now).police).toEqual({ called: true, report: 'RPT-9' })
+  })
+
   it('caps vehicles at six', () => {
     const vehicles = Array.from({ length: 9 }, (_, i) => ({ role: i % 2 ? 'other' : 'insured', make: `Make${i}` }))
     expect(parseIntake({ vehicles }, now).vehicles).toHaveLength(6)
