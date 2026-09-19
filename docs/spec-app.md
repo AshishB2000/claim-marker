@@ -1243,10 +1243,11 @@ it.
 **Send never records mid-chase.** If the customer presses Send while "Watch it" is running on
 the review map, the cinematic effect would still be driving the camera under the recorder and
 under `export()`. The PNG would be a tilted frame with a shockwave in it, and the recorder and
-the effect would take turns moving the camera. `MapSceneHandle.stop()` ends the replay: it
-calls `onPlaybackStop` so the hook stops, jumps back to the home view, locks the tilt, clears
-the ring, and resolves once the map has painted that way, with a 300 ms fallback in case the
-map never paints again. `send()` awaits it before `export()`. `record()` also flattens the map
+the effect would take turns moving the camera. A flat "Play it back" still running would leave
+the cars partway along their routes in the PNG. `MapSceneHandle.stop()` ends either kind of
+playback: it calls `onPlaybackStop` so the hook stops, puts the cars and ghosts back at rest,
+jumps back to the home view, locks the tilt, clears the ring, and resolves once the map has
+painted that way, with a 300 ms fallback in case the map never paints again. `send()` awaits it before `export()`. `record()` also flattens the map
 itself, and sets `recording` so the playback effects leave the map alone until the recorder
 has finished.
 

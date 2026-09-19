@@ -38,8 +38,9 @@ export type MapSceneHandle = {
    */
   record: (mode?: PlaybackMode) => Promise<Blob | null>
   /**
-   * Hand the map back flat and idle: any cinematic replay running on it is ended, the camera
-   * jumps to the view it was let off at, and this resolves once the map has painted that way.
+   * Hand the map back flat and idle: any playback running on it is ended, the cars go back to
+   * rest, a cinematic camera jumps to the view it was let off at, and this resolves once the
+   * map has painted that way.
    * What `export()` and `record()` are worth depends on it — a still taken mid-chase is a
    * tilted frame with a shockwave in it — so the review page's send calls it first.
    */
@@ -723,11 +724,19 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
         const s = live.current
         if (!s) return
         latest.current.onPlaybackStop?.()
-        if (!flatten(s)) return
+        // a flat "Play it back" leaves the cars mid-route just as surely as a chase leaves the
+        // camera tilted; either way the map goes back to rest here rather than on the re-render
+        // the stop above will cause, which comes after the caller has taken its picture
+        const container = s.map.getContainer()
+        const playing = container.classList.contains('mk-playing')
+        flatten(s)
+        if (!playing) return
+        container.classList.remove('mk-playing')
         s.cars.setPoses(posesOf(latest.current.vehicles))
-        // the jump above is not on the canvas until the map has painted again; a still taken
-        // before that is the frame the chase was on. The timeout is the safety net for a map
-        // that will never paint again — a send is never held up by its own picture.
+        s.cars.setGhosts(posesOf(latest.current.ghosts ?? []))
+        // none of that is on the canvas until the map has painted again; a still taken before
+        // then is the frame the playback was on. The timeout is the safety net for a map that
+        // will never paint again — a send is never held up by its own picture.
         await new Promise<void>((resolve) => {
           const done = () => resolve()
           setTimeout(done, 300)

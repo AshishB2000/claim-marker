@@ -128,6 +128,7 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
   const play = usePlayback(pair?.[0].claim.vehicles ?? NO_VEHICLES, ghosts)
   const [follow, setFollow] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [unsaved, setUnsaved] = useState(false)
   const map = useRef<MapSceneHandle>(null)
   // DEV only, like `window.__map` and the diagram step's own: the shared clock, so
   // `scripts/integration-smoke.mjs` can hold both accounts on a chosen frame
@@ -152,10 +153,12 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
   /** the same recorder the customer's page runs at send time, over both accounts; nothing leaves the desk */
   const save = async () => {
     setSaving(true)
+    setUnsaved(false)
     try {
       await map.current?.stop()
       const blob = await map.current?.record('cinematic')
-      if (!blob) return
+      // no recorder, no codec, nothing to play: the button says so rather than doing nothing
+      if (!blob) return setUnsaved(true)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -235,6 +238,7 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
               <button type="button" className="chip ml-auto" onClick={save} disabled={saving}>
                 {saving ? <Icon.spinner /> : <Icon.film />} {saving ? 'Saving…' : 'Save video'}
               </button>
+              {unsaved && <span className="w-full text-right text-xs text-slate-500">This browser could not record a video of it.</span>}
             </div>
           )}
         </div>
