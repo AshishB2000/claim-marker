@@ -184,9 +184,12 @@ const mint = (headers, body) =>
 
 const person = {
   customer: { id: 'cust-1', policy: 'POL-9', name: 'Sam Lee', phone: '555 0100', email: 'Sam@Example.com' },
+  // the policy record says the shape as well as the name, which is what an insurer's own record
+  // has. Without it, picking the F-150 and then the Camry leaves a Camry standing as a pickup:
+  // `guessBody` has no rule for "Camry" and a null answer deliberately leaves the shape alone.
   vehicles: [
-    { make: 'Toyota', model: 'Camry', year: 2021, plate: 'ABC 123', plateState: 'NY', vin: '4T1BF1FK5CU123456', color: '#b91c1c' },
-    { make: 'Ford', model: 'F-150', year: 2020, plate: 'TRK 9', color: '#1c1f26' },
+    { make: 'Toyota', model: 'Camry', year: 2021, body: 'sedan', plate: 'ABC 123', plateState: 'NY', vin: '4T1BF1FK5CU123456', color: '#b91c1c' },
+    { make: 'Ford', model: 'F-150', year: 2020, body: 'truck', plate: 'TRK 9', color: '#1c1f26' },
   ],
   ttlSeconds: 1800,
 }
@@ -312,6 +315,29 @@ await next()
 await frame.locator('.mk-car').first().waitFor({ timeout: 30000 })
 await page.waitForTimeout(3000)
 
+// the two cars put together the way a customer does it: the other vehicle dragged along the
+// route it took and into the policyholder's car, which is the one gesture that draws a path,
+// turns the car to face the drag and places the point of impact. Until this walk did it, every
+// report it filed was two cars parked ten metres apart on an empty diagram — which is not an
+// accident, and made the desk's reconstruction of one a picture of a car park.
+await frame.locator('.mk-car').first().scrollIntoViewIfNeeded()
+await page.waitForTimeout(800)
+const carAt = async (n) => {
+  const b = await frame.locator('.mk-car').nth(n).boundingBox()
+  if (!b) fail(`car ${n} is not on the diagram to drag`)
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+}
+const theirs = await carAt(1)
+const ours = await carAt(0)
+for (const [who, at] of [['the other vehicle', theirs], ['the policyholder\'s car', ours]])
+  if (at.y < 0 || at.y > 1000 || at.x < 0 || at.x > 1280) fail(`${who} is off screen at ${Math.round(at.x)}, ${Math.round(at.y)}: the drag would land somewhere else`)
+await page.mouse.move(theirs.x, theirs.y)
+await page.mouse.down()
+await page.mouse.move(theirs.x - 25, theirs.y - 55, { steps: 8 })
+await page.mouse.move(ours.x + 22, ours.y - 22, { steps: 12 })
+await page.mouse.up()
+await page.waitForTimeout(2500)
+
 // ── the other driver, invited from the scene step ─────────────────────
 await frame.getByRole('button', { name: es('scene.invite.ask') }).click()
 await frame.locator('[data-invite-url]').waitFor({ timeout: 20000 }).catch(() => fail('the invite did not produce a link'))
@@ -365,10 +391,15 @@ if (list.claims.length !== 1 || list.claims[0].reference !== shown) fail(`the se
 const one = await (await fetch(`http://localhost:${API_PORT}/claims/${shown}`, desk)).json()
 if (one.claim.reporter.name !== 'Sam Lee' || one.claim.vehicles[0].vin !== '4T1BF1FK5CU123456' || one.claim.attestation.name !== 'Sam Lee') fail('the stored document is not the one sent')
 if (!one.claim.attestation.at || !one.claim.submittedAt) fail('the attestation was not stamped')
+// the drag drew a path and the two bodies came within touching: the point of impact is in the
+// document, and from it the panels each car was hit on
+if (!one.claim.impact) fail('dragging one car into the other did not place the point of impact')
+if (!one.claim.vehicles.some((v) => v.damages.length)) fail('the point of impact marked no panel on either car')
 if (one.customer?.id !== 'cust-1' || one.customer.policy !== 'POL-9') fail(`the report was not filed against the session's customer: ${JSON.stringify(one.customer)}`)
 if (one.claim.incident.language !== 'es') fail(`the stored document says ${one.claim.incident.language}, not es`)
 const files = await readdir(join(dir, shown))
-// no damage was marked on this walk (scripts/smoke.mjs covers that), so there is a diagram but no marked-up car
+// the customer marked nothing by hand, but the impact the drag placed suggests a panel apiece,
+// so there is a marked-up car beside the diagram
 for (const f of ['claim.json', 'receipt.json', 'scene.png']) if (!files.includes(f)) fail(`${f} was not unpacked; have ${files.join(', ')}`)
 // the replay is unpacked as a real video file, and served as one
 const replayFile = files.find((f) => /^replay\.(webm|mp4)$/.test(f))
@@ -776,6 +807,9 @@ const policyCars = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).
 const redCar = policyCars.find((v) => v.color === '#b91c1c')
 const darkCar = policyCars.find((v) => v.color === '#1c1f26')
 if (!redCar?.position || !darkCar?.position) fail(`the policyholder's report should have a red car and a black one on the diagram: ${JSON.stringify(policyCars.map((v) => [v.id, v.color, !!v.position]))}`)
+// the policy said "Camry, sedan" and the page kept both, after the customer looked at the
+// pickup on the same policy and came back: a Camry standing as a pickup is a wrong picture
+if (redCar.body !== 'sedan') fail(`the policyholder's ${redCar.make} ${redCar.model} is filed as a ${redCar.body}`)
 await deskPage.getByRole('tab', { name: 'Reconstruction' }).click()
 await deskPage.waitForSelector(RECON, { timeout: 20000 }).catch(() => fail('the reconstruction tab has no canvas'))
 await deskPage.locator(RECON).scrollIntoViewIfNeeded()
@@ -807,10 +841,6 @@ if (turned < still + 5000 || slid < 20) fail(`dragging did not orbit the reconst
 const reconDoc = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles
 if (JSON.stringify(reconDoc) !== JSON.stringify(policyCars)) fail('orbiting the reconstruction changed the stored vehicles')
 ok(`desk: the reconstruction tab stands both bodies in their paints (${paints.red} red px, ${paints.dark} dark px round each), and a drag orbits it (${turned} px changed, ${still} standing still; the red car moved ${slid.toFixed(0)} px on screen, the document did not)`)
-// the README's picture of the third tab, after the orbit — so the cars are seen from the angle
-// an adjuster puts them at, and after the paints above have proved the canvas is a real frame
-await figure(deskPage, 'desk-reconstruction', deskPage.locator('[data-reconstruction-view]'))
-
 // play drives them in on the same clock as the map, and they come back to rest; a scrub holds a moment.
 // Measured in the scene's metres, not on screen, where a car driving at the camera barely moves
 const reconWhere = () =>
@@ -835,6 +865,38 @@ if (reconScrubbed < 5) fail(`scrubbing to the start did not take the cars back u
 if (!(await view.getByRole('button', { name: 'Play' }).count())) fail('a scrubbed, held frame should offer Play, not Stop')
 ok(`desk: "Play" drives both cars in (at least ${drove.toFixed(1)} m each) and back to rest; scrubbing to the start holds them ${reconScrubbed.toFixed(1)} m up their routes`)
 
+// the README's picture of the third tab, held at the moment the two cars are nearest each
+// other. At rest they are where they stopped, which is a picture of two parked cars; the moment
+// worth showing is the one `impactTimeOf` picks on the map's own clock, and it is found here the
+// same way — the closest approach — by walking the scrubber and measuring, so the picture cannot
+// drift away from the moment its caption names.
+const slider = deskPage.getByRole('slider', { name: 'Moment in the drive' })
+const clockMs = Number(await slider.getAttribute('max'))
+// the scrubber steps in tens of milliseconds and refuses anything off the step, so every moment
+// asked for here is snapped to it — including the end, which is not a round number of steps
+const STEP = 10
+const snap = (ms) => Math.max(0, Math.min(Math.floor(clockMs / STEP) * STEP, Math.round(ms / STEP) * STEP))
+const gapAt = async (ms) => {
+  await slider.fill(String(snap(ms)))
+  await deskPage.waitForTimeout(160)
+  const at = await reconWhere()
+  return Math.hypot(at[redCar.id][0] - at[darkCar.id][0], at[redCar.id][2] - at[darkCar.id][2])
+}
+let nearest = { ms: clockMs, gap: Infinity }
+for (let i = 0; i <= 24; i++) {
+  const ms = (i / 24) * clockMs
+  const gap = await gapAt(ms)
+  if (gap < nearest.gap) nearest = { ms, gap }
+}
+const restGap = await gapAt(clockMs)
+// two cars that never come within a car's length of each other are a picture of a car park, not
+// of an accident: the moment held here has to be one where they are beside each other
+if (nearest.gap > 8) fail(`the two cars never come within 8 m in the drive (nearest ${nearest.gap.toFixed(1)} m, ${restGap.toFixed(1)} m at rest)`)
+await gapAt(nearest.ms)
+await deskPage.waitForTimeout(1200)
+await figure(deskPage, 'desk-reconstruction', deskPage.locator('[data-reconstruction-view]'))
+ok(`desk: the reconstruction is held at the two cars' closest approach — ${nearest.gap.toFixed(1)} m at ${(nearest.ms / 1000).toFixed(1)} s of ${(clockMs / 1000).toFixed(1)} s, against ${restGap.toFixed(1)} m at rest`)
+
 // ── the same photograph, the same VIN, seen before ────────────────────
 // Two reports from two different customers carrying the same picture and the same VIN. The
 // server notices, on the receipt, for the adjuster — and the customer's own page, which has
@@ -842,8 +904,9 @@ ok(`desk: "Play" drives both cars in (at least ${drove.toFixed(1)} m each) and b
 const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
 const SHARED_HASH = 'f0e1d2c3b4a59687'
 const SHARED_VIN = '1HGCM82633A004352'
-const reused = (id) => ({
+const reused = (id, who) => ({
   schema: 'claim/1',
+  reporter: { name: who },
   vehicles: [{ id: 'a', role: 'insured', body: 'sedan', color: '#b91c1c', vin: SHARED_VIN, plate: 'ZZZ 999' }],
   incident: { kind: 'collision', at: '2026-09-06T17:30', location: { lng: -73.9859, lat: 40.7573, address: 'Times Square' } },
   attachments: { photos: [{ data: JPEG, of: 'a', caption: id, hash: SHARED_HASH }] },
@@ -857,8 +920,8 @@ const fileAs = async (customerId, body) => {
   })
   return (await res.json()).reference
 }
-const firstRef = await fileAs('reuse-one', reused('one'))
-const secondRef = await fileAs('reuse-two', reused('two'))
+const firstRef = await fileAs('reuse-one', reused('one', 'Robin Vale'))
+const secondRef = await fileAs('reuse-two', reused('two', 'Casey Nolan'))
 if (!firstRef || !secondRef) fail(`the two reports were not filed: ${firstRef} ${secondRef}`)
 const firstReceipt = await (await fetch(`${API}/claims/${firstRef}`, desk)).json()
 const secondReceipt = await (await fetch(`${API}/claims/${secondRef}`, desk)).json()
@@ -919,16 +982,21 @@ ok("invite: a party token is 403; another customer or the shared token cannot at
 
 // the other driver says they are the policyholder, of someone else's incident: the token wins
 const fresh = await (await invite(await sessionFor('liar-host'))).json()
+// a place and a name on these two as well: they are rows on the desk like any other, and the
+// picture of the inbox is of a desk, not of a fixture
+const WHERE = { lng: -73.9911, lat: 40.7506, address: '8th Avenue at 34th Street, New York' }
 const liarRef = await fileWith(new URL(fresh.url).searchParams.get('party'), {
-  reporter: { name: 'Lee R', party: 'policyholder' },
-  incident: { kind: 'collision', shared: incidentId },
+  reporter: { name: 'Lee Rossi', party: 'policyholder' },
+  incident: { kind: 'collision', at: '2026-09-06T17:30', location: WHERE, shared: incidentId },
 })
 const lie = await filed(liarRef)
 if (lie.party !== 'other_party' || lie.claim.reporter.party !== 'other_party') fail(`a party report claiming to be the policyholder was filed as ${lie.party} / ${lie.claim.reporter.party}`)
 if (lie.incident !== fresh.incident || lie.claim.incident.shared !== fresh.incident) fail(`a party report joined ${lie.incident} / ${lie.claim.incident.shared}, not its token's ${fresh.incident}`)
 // a customer names an incident cust-1 created, and one that does not exist
 const crasher = await sessionFor('gatecrasher')
-const crash = await filed(await fileWith(crasher, { incident: { kind: 'collision', shared: incidentId } }))
+const crash = await filed(
+  await fileWith(crasher, { reporter: { name: 'Dev Okonkwo' }, incident: { kind: 'collision', at: '2026-09-06T17:30', location: WHERE, shared: incidentId } }),
+)
 if (crash.incident || crash.claim.incident.shared !== null) fail(`a customer joined an incident they did not create: ${crash.incident} / ${crash.claim.incident.shared}`)
 if ((await (await fetch(`${API}/incidents/${incidentId}`, desk)).json()).reports.length !== 2) fail(`${incidentId} gained a third account`)
 await fileWith(crasher, { incident: { kind: 'collision', shared: 'INC-NOPE99' } })
@@ -953,26 +1021,28 @@ ok(`invite: the address is capped at 200, an unknown body is dropped, a 20 kB bo
 
 const mapIp = { 'x-forwarded-for': '198.51.100.44' }
 const mapSession = async (id) => (await (await mint({ 'x-api-key': API_KEY, ...mapIp }, { customer: { id, policy: 'POL-MAP' }, ttlSeconds: 600 })).json()).token
-const fileAt = async (id, location) =>
+const fileAt = async (id, location, who) =>
   (
     await (
       await fetch(`${API}/claims`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${await mapSession(id)}`, ...mapIp },
-        body: JSON.stringify({ schema: 'claim/1', vehicles: [], incident: { kind: 'collision', at: '2026-09-06T17:30', location } }),
+        body: JSON.stringify({ schema: 'claim/1', reporter: { name: who }, vehicles: [], incident: { kind: 'collision', at: '2026-09-06T17:30', location } }),
       })
     ).json()
   ).reference
 
 /** the colours the inbox rows wear, which the pins wear too */
 const STATUS_COLOUR = { new: '#1f56e6', reviewing: '#d97706', closed: '#64748b' }
+// a reporter apiece as well as a place: the pin and the row are the same sentence, and a row
+// with no name in it is a picture of an empty fixture rather than of the desk
 const PLACES = [
-  { id: 'map-one', status: 'new', location: { lng: -73.9859, lat: 40.7573, address: 'Broadway at 7th, New York' } },
-  { id: 'map-two', status: 'reviewing', location: { lng: -118.2437, lat: 34.0522, address: 'Wilshire Boulevard, Los Angeles' } },
-  { id: 'map-three', status: 'closed', location: { lng: -0.1276, lat: 51.5072, address: 'Trafalgar Square, London' } },
+  { id: 'map-one', status: 'new', who: 'Jordan Reyes', location: { lng: -73.9859, lat: 40.7573, address: 'Broadway at 7th, New York' } },
+  { id: 'map-two', status: 'reviewing', who: 'Priya Raman', location: { lng: -118.2437, lat: 34.0522, address: 'Wilshire Boulevard, Los Angeles' } },
+  { id: 'map-three', status: 'closed', who: 'Tomas Ek', location: { lng: -0.1276, lat: 51.5072, address: 'Trafalgar Square, London' } },
 ]
 for (const place of PLACES) {
-  place.reference = await fileAt(place.id, place.location)
+  place.reference = await fileAt(place.id, place.location, place.who)
   if (!place.reference) fail(`the report at ${place.location.address} was not filed`)
   const { summary } = await filed(place.reference)
   if (summary.lng !== place.location.lng || summary.lat !== place.location.lat) fail(`the receipt for ${place.reference} does not carry its place: ${JSON.stringify(summary)}`)
@@ -1141,7 +1211,8 @@ await deskPage.getByRole('button', { name: 'Heat' }).click()
 await deskPage.waitForTimeout(500)
 const all = await listed()
 await deskPage.getByRole('button', { name: "Only what's on the map" }).click()
-// fewer than the whole list already: a report with no place is on no map
+// fewer than the whole list already: the report that named an incident which does not exist was
+// filed without a place, and a receipt without one is on no map while it stays in the list
 const framed = await listed()
 if (framed < PLACES.length || framed > all) fail(`the map's own view lists ${framed} of ${all} reports, and the three just filed are on it`)
 for (let i = 0; i < 8; i++) {

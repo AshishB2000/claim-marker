@@ -252,39 +252,162 @@ await page.getByRole('button', { name: N.dent, exact: true }).click({ force: tru
 await page.waitForTimeout(1800)
 await shot('damage')
 
-// ── the car with the damage drawn on it, and a photograph standing beside its panel ──
-// The picker is closed through the marker's own store (the DEV `__probe`), which also clears
-// the panel the camera is facing — a card on the faced panel stands aside so it cannot cover
-// its own pin — and shrinks the selected mark's pin back to the dot the shader leaves under it,
-// so what is left on the paint is the damage itself. The photograph is tagged to the front
-// bumper, one panel round from the marked hood the camera is looking at, so the card stands
-// clear of the mark instead of over it. The card is waited for in the scene rather than timed
-// for: `__probe.card(i)` is null until it is there, and it is then held to standing well inside
-// the frame — which is what makes this picture proof that the card is drawn where a reader can
-// see it, and not merely tagged.
+// ── the car with the damage in its paint, and a photograph standing beside its panel ──
+// Two marks of two kinds on one flank, put there through the marker's own store rather than by
+// clicking pixels, so the picture is of named panels and not of wherever a ray happened to land:
+// the dent the diagram already worked out on the right front door, and a scratch beside it on the
+// rear door. The camera is aimed at the middle of that flank and then turned off square, because
+// a dished panel seen head-on has nothing to cast the shading that shows it is dished.
+//
+// The photograph pinned to the car is the one the page itself found for this make and model — a
+// real car in a real photograph, fetched here from the src the vehicle card is already showing.
+// (`scripts/fixtures/scene.jpg` is not a photograph: it is a 160×120 pattern of coloured blocks
+// that exists to carry EXIF for scripts/smoke.mjs, and on a card on the car it reads as noise.)
+//
+// Nothing here is taken on trust. Both marks and the card have to be well inside the frame, the
+// card has to be in the scene at all (`__probe.card(i)` is null until it is), and the paint round
+// each mark has to change when the strength slider runs from 0 to 1 — which is the check that
+// fails if the shader stops drawing and leaves a clean car with pins on it.
 if (lang === 'en') {
   const MARGIN = 80
-  await page.evaluate((sel) => document.querySelector(sel).__probe.store.getState().select(null), MARKER)
-  await page.getByLabel(N.addPhotos).first().setInputFiles({ name: 'damage.png', mimeType: 'image/png', buffer: carShot })
+  /** the anchors come from the page's own module, so this script needs no types and no build */
+  const anchorOf = (zone) =>
+    page.evaluate(
+      async ([sel, zone]) => {
+        const { zoneById } = await import('/src/zones.ts')
+        return zoneById(document.querySelector(sel).__probe.store.getState().vehicle, zone)?.anchor ?? null
+      },
+      [MARKER, zone],
+    )
+  /** call one of the marker store's own actions, by name — a closure cannot cross into the page */
+  const inStore = (method, ...args) =>
+    page.evaluate(([sel, method, args]) => document.querySelector(sel).__probe.store.getState()[method](...args), [MARKER, method, args])
+  const dentAt = await anchorOf('right_front_door')
+  const scratchAt = await anchorOf('right_rear_door')
+  if (!dentAt || !scratchAt) fail('the sedan has no right front and rear doors to mark')
+  await page.evaluate(
+    ([sel, at]) => {
+      const canvas = document.querySelector(sel)
+      canvas.__probe.store.getState().pick(at)
+      canvas.__probe.store.getState().commit('scratch')
+    },
+    [MARKER, scratchAt],
+  )
+  await page.waitForTimeout(1200)
+
+  // the flank head-on, then off square. `face` wants a zone, but only for its anchor and its id,
+  // so the midpoint of the two marked doors aims the camera between them rather than at either.
+  await page.evaluate(
+    ([sel, at]) => document.querySelector(sel).__probe.store.getState().face({ id: 'flank', label: '', anchor: at, radius: 0.4 }),
+    [MARKER, [(dentAt[0] + scratchAt[0]) / 2, (dentAt[1] + scratchAt[1]) / 2, (dentAt[2] + scratchAt[2]) / 2]],
+  )
+  await page.waitForTimeout(2500)
+  const azimuth = () => page.evaluate((sel) => document.querySelector(sel).__probe.azimuth(), MARKER)
+  const square = await azimuth()
+  const cv = await page.locator(MARKER).boundingBox()
+  await page.mouse.move(cv.x + cv.width * 0.5, cv.y + cv.height * 0.55)
+  await page.mouse.down()
+  await page.mouse.move(cv.x + cv.width * 0.5 - 130, cv.y + cv.height * 0.46, { steps: 20 })
+  await page.mouse.up()
+  await page.waitForTimeout(2500)
+  const apart = Math.abs(((((await azimuth()) - square) * 180) / Math.PI + 540) % 360 - 180)
+  if (apart < 12) fail(`the camera is still square on to the marked flank (${apart.toFixed(0)}° off)`)
+
+  // the photograph the page found for this car, fetched in node so no CORS stands in the way
+  const photoUrl = await page.locator('img[src^="https://"]').first().getAttribute('src')
+  if (!photoUrl) fail('the damage step is not showing a photograph of the real car to pin to it')
+  const res = await fetch(photoUrl)
+  if (!res.ok) fail(`the vehicle photograph at ${photoUrl} answered ${res.status}`)
+  await page.getByLabel(N.addPhotos).first().setInputFiles({ name: 'car.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(await res.arrayBuffer()) })
   const shows = page.getByRole('combobox', { name: N.photoShows })
   await shows.waitFor({ timeout: 20000 }).catch(() => fail('the photograph never reached the pinned list'))
-  await shows.selectOption('right_front_door')
+  // a panel along from the two marks, so the card stands beside them instead of over them
+  await shows.selectOption('right_front_fender')
+  await inStore('select', null)
+
+  /** where a point in the kit's units (an array), or the photo's card (its index), lands on the canvas */
+  const framed = (what) =>
+    page.evaluate(
+      ([sel, what]) => {
+        const c = document.querySelector(sel)
+        const at = Array.isArray(what) ? c.__probe.project(what) : c.__probe.card(what)
+        return at && { at, size: [c.width, c.height] }
+      },
+      [MARKER, what],
+    )
   let card = null
   for (let i = 0; i < 40 && !card; i++) {
     await page.waitForTimeout(250)
-    card = await page.evaluate((sel) => {
-      const c = document.querySelector(sel)
-      const at = c.__probe.card(0)
-      return at && { at, size: [c.width, c.height] }
-    }, MARKER)
+    card = await framed(0)
   }
-  if (!card) fail('the photograph tagged to the right front door never stood beside it on the car')
-  const [x, y] = card.at
-  const [w, h] = card.size
-  if (x < MARGIN || y < MARGIN || x > w - MARGIN || y > h - MARGIN) fail(`the photograph's card is at the edge of the frame: ${Math.round(x)}, ${Math.round(y)} of ${w}×${h}`)
-  await page.waitForTimeout(1500)
+  if (!card) fail('the photograph tagged to the right front fender never stood beside it on the car')
+  const inside = (p, name) => {
+    const [x, y] = p.at
+    const [w, h] = p.size
+    if (x < MARGIN || y < MARGIN || x > w - MARGIN || y > h - MARGIN) fail(`${name} is at the edge of the frame: ${Math.round(x)}, ${Math.round(y)} of ${w}×${h}`)
+    return [Math.round(x), Math.round(y)]
+  }
+  const cardAt = inside(card, "the photograph's card")
+  const marks = [inside(await framed(dentAt), 'the dent on the right front door'), inside(await framed(scratchAt), 'the scratch on the right rear door')]
+
+  /** the canvas as it stands, base64 — the element screenshot, which is what the README carries */
+  const frame = async () => (await page.locator(MARKER).screenshot()).toString('base64')
+  /** how many pixels differ within 50 px of each mark between two frames of the same camera */
+  const changedRound = (before, after, points) =>
+    page.evaluate(
+      async ([before, after, points, sel]) => {
+        const load = async (b64) => {
+          const img = new Image()
+          img.src = `data:image/png;base64,${b64}`
+          await img.decode()
+          const c = document.createElement('canvas')
+          c.width = img.width
+          c.height = img.height
+          c.getContext('2d').drawImage(img, 0, 0)
+          return { w: img.width, h: img.height, px: c.getContext('2d').getImageData(0, 0, img.width, img.height).data }
+        }
+        const a = await load(before)
+        const b = await load(after)
+        // the probe answers in the canvas's drawing buffer; the screenshot is the element's pixels
+        const k = a.w / document.querySelector(sel).width
+        return points.map(([x, y]) => {
+          let n = 0
+          const [cx, cy] = [Math.round(x * k), Math.round(y * k)]
+          for (let j = Math.max(0, cy - 50); j < Math.min(a.h, cy + 50); j++)
+            for (let i = Math.max(0, cx - 50); i < Math.min(a.w, cx + 50); i++) {
+              const p = (j * a.w + i) * 4
+              if (Math.abs(a.px[p] - b.px[p]) > 8 || Math.abs(a.px[p + 1] - b.px[p + 1]) > 8 || Math.abs(a.px[p + 2] - b.px[p + 2]) > 8) n++
+            }
+          return n
+        })
+      },
+      [before, after, points, MARKER],
+    )
+
+  // the car as it was against the car as it is: the pins, the labels and the card stand in the
+  // same place in both, so whatever differs round a mark is the shader drawing the damage
+  await inStore('setStrength', 0)
+  await page.waitForTimeout(900)
+  const clean = await frame()
+  await inStore('setStrength', 1)
+  await page.waitForTimeout(900)
+  const damaged = await frame()
+  const [dentPx, scratchPx] = await changedRound(clean, damaged, marks)
+  if (dentPx < 400) fail(`the dent is not in the paint: ${dentPx} px changed between strength 0 and 1 round it`)
+  if (scratchPx < 400) fail(`the scratch is not in the paint: ${scratchPx} px changed between strength 0 and 1 round it`)
   await shotOf('marked-car', page.locator('.card:has(.cm-root)').first())
-  console.log(`  the photograph's card stands at ${Math.round(x)}, ${Math.round(y)} of ${w}×${h} on the marker's canvas`)
+  console.log(`  ${apart.toFixed(0)}° off square; the dent changed ${dentPx} px of paint and the scratch ${scratchPx} px; the card stands at ${cardAt.join(', ')}`)
+
+  // ── the severity map: the same car with the paint replaced by what it carries ──
+  // Legible at a glance where a dish in bright paint is not, and it is the marker's other tool.
+  await inStore('setHeatmap', true)
+  await page.waitForTimeout(1600)
+  const [dentHeat, scratchHeat] = await changedRound(damaged, await frame(), marks)
+  if (dentHeat < 400 || scratchHeat < 400) fail(`the severity map changed nothing round the marks: ${dentHeat} and ${scratchHeat} px`)
+  await shotOf('severity-map', page.locator('.card:has(.cm-root)').first())
+  console.log(`  severity map on: ${dentHeat} px changed round the dent, ${scratchHeat} px round the scratch`)
+  await inStore('setHeatmap', false)
+  await page.waitForTimeout(800)
 }
 
 // ── the same step on a phone, with the assistant on: photos first ──────
@@ -360,6 +483,11 @@ if (lang === 'en') {
   dark.state.claim.incident = {
     ...dark.state.claim.incident,
     at: `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}T21:30`,
+    // the drawn parking lot, not the satellite. The scene lights itself from the record, but the
+    // imagery under it is a photograph somebody took in daylight and stays bright whatever the
+    // hour says — which reads as dark cars on a bright map rather than as night. `lotStyle` is
+    // drawn, in the page's own colours, and goes dark with everything standing on it.
+    surface: 'lot',
     context: null,
     utcOffset: null,
   }
