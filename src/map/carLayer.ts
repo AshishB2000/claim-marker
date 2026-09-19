@@ -276,6 +276,8 @@ export class CarLayer implements CustomLayerInterface {
   private readonly pool = disc(36, 36, [255, 180, 90, 0.55], THREE.AdditiveBlending)
   private readonly streetLight = new THREE.PointLight('#ffc27a', STREET_INTENSITY, 0, 2)
   private readonly rain = streaks()
+  /** the rain's next frame is already asked for: it falls at about 20 fps, not the display's rate */
+  private falling: ReturnType<typeof setTimeout> | null = null
 
   constructor(origin: LngLat) {
     this.origin = origin
@@ -316,6 +318,8 @@ export class CarLayer implements CustomLayerInterface {
   }
 
   onRemove() {
+    if (this.falling) clearTimeout(this.falling)
+    this.falling = null
     this.map = null
     this.renderer = null
   }
@@ -480,6 +484,8 @@ export class CarLayer implements CustomLayerInterface {
         const size = SIZE[pose.body]
         const root = new THREE.Group()
         const blob = shadowBlob(size.width, size.length)
+        // the blob has a material of its own (`disc`), so a ghost's fades with its body
+        if (ghost) (blob.material as THREE.MeshBasicMaterial).opacity = GHOST_OPACITY
         const lamps = ghost ? [] : headlamps(size)
         root.add(inner, blob, ...lamps, ...lamps.map((lamp) => lamp.target))
         root.matrixAutoUpdate = false
@@ -513,10 +519,15 @@ export class CarLayer implements CustomLayerInterface {
     this.camera.projectionMatrix.multiplyMatrices(this.proj, this.shift.makeTranslation(this.eye.x, this.eye.y, this.eye.z))
     if (this.rain.visible) {
       // the box is twice the fall height, so sliding it down by up to one height keeps the
-      // visible band full; a repaint is asked for every frame for as long as it falls
+      // visible band full. The next frame is asked for 50 ms on, not every frame: a repaint is
+      // the whole map — tiles, lines, the wet plane — and streaks read as falling at 20 fps
       const rate = this.lighting.snow ? 1.5 : 9
       this.rain.position.y = -((performance.now() / 1000) * rate) % (RAIN_HEIGHT_M * this.rain.scale.y)
-      this.map?.triggerRepaint()
+      if (!this.falling)
+        this.falling = setTimeout(() => {
+          this.falling = null
+          this.map?.triggerRepaint()
+        }, 50)
     }
     this.renderer.resetState()
     // the shadow pass renders into its own framebuffer and, coming back, restores the viewport

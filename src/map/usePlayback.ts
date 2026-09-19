@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClaimVehicle } from '../claim/schema'
 import type { CarPose } from './carLayer'
-import { HOLD_MS, advance, endOf, frameAt, sharedTimeline, shotAt, shots, timelineOf, type PlaybackMode, type Shot } from './playback'
+import { HOLD_MS, advance, endOf, frameAt, hasReplay, sharedTimeline, shotAt, shots, timelineOf, type PlaybackMode, type Shot } from './playback'
 
 type Frame = { poses: CarPose[]; ghostPoses: CarPose[] | null; t: number; ms: number; rate: number; mode: PlaybackMode }
 
@@ -116,7 +116,7 @@ export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | 
 
   useEffect(() => () => cancelAnimationFrame(raf.current), [])
 
-  const canPlay = [...vehicles, ...others].some((v) => v.position && v.path.length > 0)
+  const canPlay = hasReplay([...vehicles, ...others])
   return {
     poses: frame?.poses ?? null,
     /** the second account at the same moment, or null when there is not one */

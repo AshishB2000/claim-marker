@@ -42,6 +42,20 @@ import {
 
 export const REC_WIDTH = 960
 export const REC_HEIGHT = 540
+/** the buildings' grey and how solid they are drawn, flat or standing (`MapScene` adds both layers) */
+export const CITY_GREY = '#b4b8bf'
+export const CITY_OPACITY = 0.85
+
+/**
+ * The city stands up for a tilted camera and lies flat otherwise: the extrusion only while the
+ * cinematic replay runs, the flat footprint the rest of the time. An extrusion at opacity 0 is
+ * not drawn at all, so it writes no depth a car or a path under a roof could be hidden by.
+ */
+export function standCity(map: MapLibreMap, up: boolean) {
+  if (map.getLayer('buildings')) map.setPaintProperty('buildings', 'fill-extrusion-opacity', up ? CITY_OPACITY : 0)
+  if (map.getLayer('buildings-flat')) map.setPaintProperty('buildings-flat', 'fill-opacity', up ? 0 : CITY_OPACITY)
+}
+
 /** about 1.5 Mbps: plenty for a diagram of flat colour and a moving map tile, not a photo */
 const BITRATE = 1_500_000
 
@@ -297,7 +311,10 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
 
   map.getContainer().classList.add('mk-playing')
   try {
-    if (list) map.setMaxPitch(MAX_PITCH)
+    if (list) {
+      map.setMaxPitch(MAX_PITCH)
+      standCity(map, true)
+    }
     cars.setPoses(posesAt(vehicles, 0))
     if (ghosts.length) cars.setGhosts(posesAt(ghosts, 0))
     draw(posesAt(vehicles, 0), 0)
@@ -343,6 +360,7 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
       if (ghosts.length) cars.setGhosts(posesAt(ghosts, 1))
       if (list) {
         map.setMaxPitch(0)
+        standCity(map, false)
         map.jumpTo({ center: home.center, zoom: home.zoom, pitch: 0, bearing: 0 })
       }
       map.getContainer().classList.remove('mk-playing')

@@ -219,6 +219,12 @@ export function parseRoad(json: unknown, at: LngLat): RoadResult | null {
 }
 
 /**
+ * Roofs a car drives under — a fuel station's canopy, a carport, a parking or garage structure.
+ * These are where accidents happen, and a solid block drawn over the cars would hide them.
+ */
+const COVERED = new Set(['roof', 'carport', 'parking', 'garage', 'garages'])
+
+/**
  * How tall to draw a building. `height` is metres by OSM convention and may carry a unit
  * ("12 m"), which `parseFloat` drops; failing that `building:levels` at 3.2 m a storey; failing
  * both, a default low enough that a mis-tagged corner shop never becomes a tower. Absurd values
@@ -257,7 +263,7 @@ export function parseBuildings(json: unknown): BuildingCollection {
     if (!(el && typeof el === 'object' && (el as { type?: unknown }).type === 'way')) continue
     const w = el as OverpassWay
     const tags = w.tags ?? {}
-    if (!tags.building || tags.building === 'no') continue
+    if (!tags.building || tags.building === 'no' || COVERED.has(tags.building)) continue
     const ids = w.nodes ?? []
     const ring: LngLat[] = []
     for (const id of ids) {

@@ -264,6 +264,13 @@ describe('parseBuildings', () => {
     expect(parseBuildings(overpass([...road, ...open, ...headless])).features).toEqual([])
   })
 
+  it('leaves out the covered places accidents happen under — a canopy, a carport, a parking or garage structure', () => {
+    const kinds = ['roof', 'carport', 'parking', 'garage', 'garages']
+    const covered = kinds.flatMap((building, i) => block(i + 1, { building }, [i * 0.01, 0]))
+    const house = block(9, { building: 'house' }, [0.1, 0])
+    expect(parseBuildings(overpass([...covered, ...house])).features).toHaveLength(1)
+  })
+
   it('an answer with nothing in it, or no answer at all, is an empty collection rather than a throw', () => {
     expect(parseBuildings(overpass([]))).toEqual({ type: 'FeatureCollection', features: [] })
     expect(parseBuildings(null).features).toEqual([])

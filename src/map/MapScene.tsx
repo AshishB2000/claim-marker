@@ -22,7 +22,7 @@ import { SIZE } from '../vehicles/bodies'
 import type { Lighting } from '../scene/lighting'
 import { CarLayer, shockRing, type CarPose } from './carLayer'
 import { MAX_PITCH, cameraAt, ringAt, sharedTimeline, shotAt, shots, type Camera, type PlaybackMode, type SharedTimeline, type Shot } from './playback'
-import { damageCount, paintOverlay, recordPlayback, type OverlayLabel } from './record'
+import { CITY_GREY, CITY_OPACITY, damageCount, paintOverlay, recordPlayback, standCity, type OverlayLabel } from './record'
 import { reducedMotion } from './usePlayback'
 import { styleFor, type MapStyle } from './styles'
 
@@ -96,7 +96,7 @@ export type MapSceneProps = {
    * reporter's own, as `shots` always did.
    */
   follow?: string
-  /** the playback running on this map should stop: `export()` and `record()` say so before they take the map over */
+  /** the playback running on this map should stop: `stop()` and `record()` say so before they take the map over */
   onPlaybackStop?: () => void
   /**
    * The moment's light, from `lightingFor(incident.context)`: the sun where it stood, real
@@ -311,21 +311,32 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
 
       // the city around the crash, added — hence drawn — first of everything this handler
       // adds, so the road, the paths, the markers' cars and the shockwave are all over it.
-      // Flat map, flat footprint; it is only a city when the cinematic replay tilts the camera.
+      // Flat map, flat footprint: a plain `fill`. The extrusion is drawn only while a cinematic
+      // run has the camera tilted (`standCity`) — MapLibre draws it with a depth pass the cars
+      // and every line are then tested against, so a car under a roof would vanish from the
+      // flat diagram. Both are switched by opacity, not visibility, which is the ground's.
       //
       // The grey is light but deliberately short of white: everything the replay draws over it
       // — the shockwave's ring, the travel paths' flow line, the labels — is white, and a city
       // of near-white blocks would swallow all three. At 0.85 over the brightest imagery there
-      // is, no channel of this colour reaches 200, so a wall never passes for one of them.
+      // is, this colour stays at about 200, so a wall never passes for one of them.
       map.addSource('buildings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addLayer({
+        id: 'buildings-flat',
+        type: 'fill',
+        source: 'buildings',
+        layout: { visibility: groundVisibility },
+        paint: { 'fill-color': CITY_GREY, 'fill-opacity': CITY_OPACITY, 'fill-opacity-transition': { duration: 0, delay: 0 } },
+      })
       map.addLayer({
         id: 'buildings',
         type: 'fill-extrusion',
         source: 'buildings',
         layout: { visibility: groundVisibility },
         paint: {
-          'fill-extrusion-color': '#b4b8bf',
-          'fill-extrusion-opacity': 0.85,
+          'fill-extrusion-color': CITY_GREY,
+          'fill-extrusion-opacity': 0,
+          'fill-extrusion-opacity-transition': { duration: 0, delay: 0 },
           'fill-extrusion-height': ['get', 'height'],
           'fill-extrusion-base': 0,
         },
@@ -463,7 +474,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     const s = live.current
     if (!s) return
     const visibility = onRealGround(props.style)
-    for (const id of ['buildings', 'roads-casing', 'roads-core']) {
+    for (const id of ['buildings-flat', 'buildings', 'roads-casing', 'roads-core']) {
       if (s.map.getLayer(id)) s.map.setLayoutProperty(id, 'visibility', visibility)
     }
   }, [props.style])
@@ -608,6 +619,10 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     const s = live.current
     if (!s || s.recording) return
     if (s.styleReady) pushGhostGeometry(s.map, ghosts ?? [])
+  }, [ghosts])
+  useEffect(() => {
+    const s = live.current
+    if (!s || s.recording) return
     s.cars.setGhosts(ghostPoses ?? posesOf(ghosts ?? []))
   }, [ghosts, ghostPoses])
 
@@ -617,19 +632,13 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     live.current?.cars.setLighting(lighting)
   }, [lighting])
 
-  // ── playback: the cars follow the frame, the handles step aside ─────
-  const { poses } = props
-  useEffect(() => {
-    const s = live.current
-    if (!s || s.recording) return
-    s.map.getContainer().classList.toggle('mk-playing', !!poses)
-    s.cars.setPoses(poses ?? posesOf(latest.current.vehicles))
-  }, [poses])
-
   // ── cinematic playback: the camera opens up, chases, slows into the impact, comes back ─
   // The map is built flat and un-tiltable; it may tilt only between the first cinematic frame
   // and the last, and whatever happens in between — a stop pressed mid-chase, the run ending
   // — it is handed back at exactly the view the customer left, before the markers return.
+  // It is declared above the poses effect below, so on the run's natural end — both effects in
+  // one flush — the map is flat before `mk-playing` comes off and the markers return.
+  const { poses } = props
   const mode = props.mode ?? 'diagram'
   const clock = props.clock ?? 0
   const follow = props.follow
@@ -658,6 +667,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
         slow: false,
       }
       map.setMaxPitch(MAX_PITCH)
+      standCity(map, true)
     } else if (s.cine.follow !== follow) {
       // "Swap" mid-playback: the chase moves to the other car, and the moment moves with it
       Object.assign(s.cine, cut())
@@ -684,6 +694,14 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       cars.setDecor([{ object: c.ring, at: impact, metres: ring.metres }])
     } else cars.setDecor([])
   }, [mode, clock, poses, ghostPoses, follow])
+
+  // ── playback: the cars follow the frame, the handles step aside ─────
+  useEffect(() => {
+    const s = live.current
+    if (!s || s.recording) return
+    s.map.getContainer().classList.toggle('mk-playing', !!poses)
+    s.cars.setPoses(poses ?? posesOf(latest.current.vehicles))
+  }, [poses])
 
   // ── impact ──────────────────────────────────────────────────────────
   const { impact } = props
@@ -720,8 +738,10 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       record: (mode) => {
         const s = live.current
         if (!s) return Promise.resolve(null)
-        // whatever the camera was doing, the recorder owns it from here: the effects above step
-        // aside for as long as it runs, or they would fight it frame by frame
+        // whatever the camera was doing, the recorder owns it from here: the playback on screen
+        // is stopped, and the effects above step aside for as long as it runs, or they would
+        // fight it frame by frame
+        latest.current.onPlaybackStop?.()
         flatten(s)
         s.recording = true
         return recordPlayback({
@@ -780,6 +800,7 @@ function flatten(s: Live): boolean {
   if (!s.cine) return false
   s.map.jumpTo({ center: ll(s.cine.home.center), zoom: s.cine.home.zoom, pitch: 0, bearing: 0 })
   s.map.setMaxPitch(0)
+  standCity(s.map, false)
   s.cars.setDecor([])
   if (s.map.getLayer('paths-flow')) s.map.setPaintProperty('paths-flow', 'line-width', FLOW_WIDTH)
   s.cine = null

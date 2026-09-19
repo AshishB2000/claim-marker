@@ -39,6 +39,10 @@ describe('hasReplay', () => {
     expect(hasReplay([car('a', [destination(here, 90, 10)], null)])).toBe(false)
   })
 
+  it('is false for a drawn path that goes nowhere, a point on the car itself', () => {
+    expect(hasReplay([car('a', [here], here)])).toBe(false)
+  })
+
   it('is true as soon as one vehicle has a route with some length', () => {
     const moved = car('a', [destination(here, 180, 20)], here)
     expect(hasReplay([car('b', [], here), moved])).toBe(true)
