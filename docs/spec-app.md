@@ -1418,8 +1418,8 @@ thousands of green pixels after, round where the DEV probe (`card(id)`) projects
 smoke's photograph is green because nothing else in the studio is. The car is then turned away
 by a drag from an empty corner, the card is clicked where it now is, and the camera's azimuth
 (`azimuth()`) comes back to within 5° of the door while the dialog named "Left front door" shows
-that photograph; Escape closes it. On the desk, a tap on the car opens no picker, and the card on
-the door opens the photograph.
+that photograph; Escape closes it. On the desk, a tap on the car opens no picker, the card on the
+door opens the photograph, and the Reconstruction tab's screenshot has the card's green by A.
 
 **A known limit.** Seen head-on — which is where tapping a card takes the camera — the card
 stands between the camera and its panel, because it is on the panel's outward normal. The photo
