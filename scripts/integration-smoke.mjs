@@ -669,6 +669,117 @@ ok(`desk: "Save video" recorded both accounts to ${savedName} (${describeVideo(s
 if (otherErrors.length) fail(`the other driver's page threw: ${otherErrors.join('\n')}`)
 await otherCtx.close()
 
+// ── the reconstruction: the policyholder's diagram in 3D, the desk's third tab ──
+// Its canvas keeps no drawing buffer (it is never exported), so it is read the way the adjuster
+// sees it — a screenshot — and each car is found where the scene's DEV probe says it stands.
+const RECON = '[data-reconstruction] canvas'
+const reconShot = async () => (await deskPage.screenshot({ clip: await deskPage.locator(RECON).boundingBox() })).toString('base64')
+/** where each car stands on the canvas, in CSS pixels */
+const reconAt = (ids) =>
+  deskPage.evaluate(([sel, ids]) => {
+    const c = document.querySelector(sel)
+    const k = c.clientWidth / c.width
+    const at = ids.map((id) => [id, c.__probe.project(id)?.map((n) => n * k)])
+    // null until every body has loaded into the scene
+    return at.every(([, p]) => p) ? Object.fromEntries(at) : null
+  }, [RECON, ids])
+/** in a screenshot: red paint within 60 px of `red`, dark paint within 60 px of `dark`, and how many pixels differ from `than` */
+const reconRead = (png, { red, dark, than = null }) =>
+  deskPage.evaluate(
+    async ([png, red, dark, than]) => {
+      const load = async (b64) => {
+        const img = new Image()
+        img.src = `data:image/png;base64,${b64}`
+        await img.decode()
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        c.getContext('2d').drawImage(img, 0, 0)
+        return { w: img.width, h: img.height, px: c.getContext('2d').getImageData(0, 0, img.width, img.height).data }
+      }
+      const { w, h, px } = await load(png)
+      const near = ([x, y], test) => {
+        let n = 0
+        for (let j = Math.max(0, Math.round(y - 60)); j < Math.min(h, y + 60); j++)
+          for (let i = Math.max(0, Math.round(x - 60)); i < Math.min(w, x + 60); i++) {
+            const k = (j * w + i) * 4
+            if (test(px[k], px[k + 1], px[k + 2])) n++
+          }
+        return n
+      }
+      let differ = 0
+      if (than) {
+        const b = (await load(than)).px
+        for (let k = 0; k < px.length; k += 4) if (Math.abs(px[k] - b[k]) > 20 || Math.abs(px[k + 1] - b[k + 1]) > 20 || Math.abs(px[k + 2] - b[k + 2]) > 20) differ++
+      }
+      return {
+        red: near(red, (r, g, b) => r > 60 && r > g * 1.6 && r > b * 1.6),
+        dark: near(dark, (r, g, b) => Math.max(r, g, b) < 70),
+        differ,
+      }
+    },
+    [png, red, dark, than],
+  )
+const policyCars = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles
+const redCar = policyCars.find((v) => v.color === '#b91c1c')
+const darkCar = policyCars.find((v) => v.color === '#1c1f26')
+if (!redCar?.position || !darkCar?.position) fail(`the policyholder's report should have a red car and a black one on the diagram: ${JSON.stringify(policyCars.map((v) => [v.id, v.color, !!v.position]))}`)
+await deskPage.getByRole('tab', { name: 'Reconstruction' }).click()
+await deskPage.waitForSelector(RECON, { timeout: 20000 }).catch(() => fail('the reconstruction tab has no canvas'))
+await deskPage.locator(RECON).scrollIntoViewIfNeeded()
+// the bodies load and their programs link before anything is drawn: poll for both paints
+let reconAtRest = null
+let restShot = null
+let paints = { red: 0, dark: 0 }
+for (let i = 0; i < 60 && (paints.red < 300 || paints.dark < 300); i++) {
+  await deskPage.waitForTimeout(500)
+  reconAtRest = await reconAt([redCar.id, darkCar.id])
+  if (!reconAtRest) continue
+  restShot = await reconShot()
+  paints = await reconRead(restShot, { red: reconAtRest[redCar.id], dark: reconAtRest[darkCar.id] })
+}
+if (!reconAtRest || paints.red < 300 || paints.dark < 300) fail(`the reconstruction does not show both bodies in their paints: ${paints.red} red px round ${redCar.id}, ${paints.dark} dark px round ${darkCar.id}`)
+// nothing moves on its own — no turntable — so whatever changes next is the drag's doing
+await deskPage.waitForTimeout(800)
+const still = (await reconRead(await reconShot(), { red: reconAtRest[redCar.id], dark: reconAtRest[darkCar.id], than: restShot })).differ
+const canvasBox = await deskPage.locator(RECON).boundingBox()
+await deskPage.mouse.move(canvasBox.x + canvasBox.width * 0.3, canvasBox.y + canvasBox.height * 0.5)
+await deskPage.mouse.down()
+await deskPage.mouse.move(canvasBox.x + canvasBox.width * 0.6, canvasBox.y + canvasBox.height * 0.4, { steps: 16 })
+await deskPage.mouse.up()
+await deskPage.waitForTimeout(2000)
+const orbited = await reconAt([redCar.id, darkCar.id])
+const turned = (await reconRead(await reconShot(), { red: orbited[redCar.id], dark: orbited[darkCar.id], than: restShot })).differ
+const slid = Math.hypot(orbited[redCar.id][0] - reconAtRest[redCar.id][0], orbited[redCar.id][1] - reconAtRest[redCar.id][1])
+if (turned < still + 5000 || slid < 20) fail(`dragging did not orbit the reconstruction: ${turned} px changed against ${still} standing still, ${redCar.id} moved ${slid.toFixed(0)} px`)
+const reconDoc = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles
+if (JSON.stringify(reconDoc) !== JSON.stringify(policyCars)) fail('orbiting the reconstruction changed the stored vehicles')
+ok(`desk: the reconstruction tab stands both bodies in their paints (${paints.red} red px, ${paints.dark} dark px round each), and a drag orbits it (${turned} px changed, ${still} standing still; the red car moved ${slid.toFixed(0)} px on screen, the document did not)`)
+
+// play drives them in on the same clock as the map, and they come back to rest; a scrub holds a moment.
+// Measured in the scene's metres, not on screen, where a car driving at the camera barely moves
+const reconWhere = () =>
+  deskPage.evaluate(([sel, ids]) => Object.fromEntries(ids.map((id) => [id, document.querySelector(sel).__probe.where(id)])), [RECON, [redCar.id, darkCar.id]])
+const restNow = await reconWhere()
+const away = (at) => Math.min(...[redCar.id, darkCar.id].map((id) => Math.hypot(at[id][0] - restNow[id][0], at[id][2] - restNow[id][2])))
+const view = deskPage.locator('[data-reconstruction-view]')
+await view.getByRole('button', { name: 'Play' }).click()
+let drove = 0
+for (let i = 0; i < 300 && (await view.getByRole('button', { name: 'Stop' }).count()); i++) {
+  drove = Math.max(drove, away(await reconWhere()))
+  await deskPage.waitForTimeout(30)
+}
+await view.getByRole('button', { name: 'Play' }).waitFor({ timeout: 15000 }).catch(() => fail('the reconstruction never finished playing'))
+const backAt = away(await reconWhere())
+if (drove < 2) fail(`playing did not move both cars: the lesser moved ${drove.toFixed(2)} m`)
+if (backAt > 0.01) fail(`after playing, the cars did not come back to rest (${backAt.toFixed(2)} m off)`)
+await deskPage.getByRole('slider', { name: 'Moment in the drive' }).fill('0')
+await deskPage.waitForTimeout(500)
+const reconScrubbed = away(await reconWhere())
+if (reconScrubbed < 5) fail(`scrubbing to the start did not take the cars back up their routes (${reconScrubbed.toFixed(1)} m)`)
+if (!(await view.getByRole('button', { name: 'Play' }).count())) fail('a scrubbed, held frame should offer Play, not Stop')
+ok(`desk: "Play" drives both cars in (at least ${drove.toFixed(1)} m each) and back to rest; scrubbing to the start holds them ${reconScrubbed.toFixed(1)} m up their routes`)
+
 // ── the same photograph, the same VIN, seen before ────────────────────
 // Two reports from two different customers carrying the same picture and the same VIN. The
 // server notices, on the receipt, for the adjuster — and the customer's own page, which has

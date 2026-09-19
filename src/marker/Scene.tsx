@@ -1,7 +1,7 @@
-import { Suspense, useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { Billboard, ContactShadows, Environment, Grid, Html, MeshReflectorMaterial, OrbitControls } from '@react-three/drei'
+import { Billboard, Html, OrbitControls } from '@react-three/drei'
 import { useStore } from 'zustand'
 import { SEVERITY_COLOR } from '../schema'
 import { THEME, type Theme } from '../theme'
@@ -10,11 +10,11 @@ import { Car } from './Car'
 import { Picker } from './Picker'
 import { translate, type Key, type Lang } from '../i18n'
 import { ORBIT_TARGET, cameraFor } from './camera'
-import { STUDIO } from '../vehicles/BodyPreview'
 import { toWorld } from '../vehicles/bodies'
-import { studioLight, type Lighting } from '../scene/lighting'
+import type { Lighting } from '../scene/lighting'
 import type { V3 } from '../zones'
 import { MAX_MARKS, renders } from './damageUniforms'
+import { Studio } from './Studio'
 
 /**
  * A digit drawn into a texture, one per label, shared by every pin and every instance.
@@ -228,8 +228,6 @@ export function Scene({
   // the sun in the body's own frame — the map's (east, south, up) is the body's (−left, up, −nose),
   // nose north as `CAR_BASIS` has it — standing eight metres out like the studio's own key light
   const key: V3 = lighting ? [-lighting.sun[0] * 8, lighting.sun[2] * 8, -lighting.sun[1] * 8] : [4, 6.5, 3]
-  // the same sun, floored: this render is the evidence, and a claim filed at night must stay legible
-  const studio = lighting ? studioLight(lighting) : { key: 1, environment: 1 }
   return (
     <Canvas
       dpr={[1, 2]}
@@ -257,49 +255,9 @@ export function Scene({
       }}
       onPointerMissed={() => store.getState().select(null)}
     >
-      <color attach="background" args={[t.bg]} />
-
-      <Suspense fallback={null}>
-        {/* a real photographic studio, served with the page, is what makes paint look like paint */}
-        <Environment files={STUDIO} environmentIntensity={0.9 * studio.environment} />
+      <Studio theme={theme} lighting={lighting} keyAt={key}>
         <Car store={store} paint={paint} modelUrl={modelUrl} />
-      </Suspense>
-
-      <directionalLight position={key} intensity={1.1 * studio.key} color={lighting?.sunColor ?? '#ffffff'} />
-      <directionalLight position={[-5, 3, -4]} intensity={0.3} color={lighting?.sky ?? '#dce7ff'} />
-      {lighting && <hemisphereLight args={[lighting.sky, lighting.ground, lighting.skyIntensity]} />}
-
-      {/* a polished floor under the car; the grid sits just above it as a measuring surface */}
-      {/* wide enough that its edge never enters the frame at any orbit distance */}
-      <mesh rotation-x={-Math.PI / 2} position={[0, -0.004, 0]}>
-        <planeGeometry args={[160, 160]} />
-        <MeshReflectorMaterial
-          blur={[600, 180]}
-          resolution={1024}
-          mixBlur={1}
-          mixStrength={theme === 'dark' ? 6 : 2.2}
-          roughness={0.9}
-          depthScale={1.1}
-          minDepthThreshold={0.4}
-          maxDepthThreshold={1.4}
-          color={t.bg}
-          metalness={0.2}
-          mirror={0}
-        />
-      </mesh>
-      <Grid
-        position={[0, -0.002, 0]}
-        infiniteGrid
-        cellSize={1}
-        cellThickness={0.7}
-        cellColor={t.grid}
-        sectionSize={5}
-        sectionThickness={1.1}
-        sectionColor={t.section}
-        fadeDistance={34}
-        fadeStrength={1.6}
-      />
-      <ContactShadows position={[0, 0.001, 0]} opacity={0.5} scale={16} blur={2.6} far={4} resolution={1024} color={t.shadow} />
+      </Studio>
 
       <Markers store={store} accent={t.accent} dots={dots} />
       <HoverLabel store={store} lang={lang} />

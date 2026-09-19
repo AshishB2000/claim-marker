@@ -22,6 +22,7 @@ import type { LngLat } from '../geo'
 import { plural, translate, type Key, type Lang, type Vars } from '../i18n'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
 import { DamageMarker, type DamageMarkerHandle } from '../marker/DamageMarker'
+import { Reconstruction } from '../marker/Reconstruction'
 import { SCHEMA, SEVERITY_COLOR } from '../schema'
 import { PAINTS } from '../vehicles/paint'
 import { Icon } from './icons'
@@ -563,6 +564,14 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
               )}
               <span className="ml-auto">{t('scene.doc.routes')}</span>
             </figcaption>
+          </figure>
+        )}
+        {/* the same moment in 3D, small, for the customer: it plays along with the map above and is never exported — the desk has it as a tab */}
+        {edit && center && info.diagram && claim.vehicles.some((v) => v.position) && (
+          <figure className="mt-3 overflow-hidden rounded-xl ring-1 ring-slate-900/10 print:hidden">
+            {/* a phone's swipe over it scrolls the page, and a wheel here scrolls it too */}
+            <Reconstruction vehicles={claim.vehicles} impact={claim.impact} poses={play.poses} lang={lang} lighting={lighting} zoom={false} className="h-60 bg-slate-100 max-sm:pointer-events-none" />
+            <figcaption className="bg-slate-50 px-4 py-2 text-xs text-slate-600">{t('scene.doc.reconstruction')}</figcaption>
           </figure>
         )}
         {voice !== 'customer' && claim.attachments.replay && <ReplayVideo src={claim.attachments.replay} lang={lang} />}

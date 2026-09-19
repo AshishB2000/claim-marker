@@ -1518,6 +1518,84 @@ video check above, with no non-GET request sent while it does. The desk shows th
 two documents under it), so `window.__map` is whichever map was created last. Each map
 therefore also hangs its DEV handle on its own element, `.maplibregl-map.__map`.
 
+## The reconstruction in your hands (v10)
+
+The map is a diagram seen from above, and the marked-up car is one car alone in a studio. An
+adjuster reading a collision wants the two together: the cars standing where they stopped, in
+their own paint, with their own damage, and a way to walk round them. The reconstruction is
+that — every vehicle on the diagram stood in the damage marker's studio where the map put it,
+orbitable, and nothing else. It is a third tab on the desk, and a small version under the map
+on the customer's review page, because it is one component.
+
+**One placement, the map's.** `placeVehicles(vehicles, impact)` in `src/marker/place.ts` is
+pure and gives each car `{ id, position, rotationY }` in the studio's frame — three's y-up,
+metres, the impact at the origin, **east +x and north −z**. The offset is the map layer's own:
+the `mercator` difference from the origin that `vehicleMatrix` translates by, divided by the
+metre at the impact (`metresToMercator`), so a car stands exactly where the diagram drew it;
+mercator runs (east, south) and so does the studio's (x, z). The heading is the same compass
+bearing: the body's nose is +Z, three's rotation-y turns +Z to (sin r, 0, cos r), and the nose
+must point at (sin h, 0, −cos h), so `rotationY = π − h`. The map needs `CAR_BASIS`, with its
+determinant of −1, because mercator's (east, south, up) labelling is left-handed; the studio's
+frame is right-handed like the body's, so here a plain rotation puts the car's left on its
+left. `test/place.test.ts` pins two cars at known offsets, the four compass points, and — for
+four cars at arbitrary offsets and headings — the offset, the nose and the car's left against
+`vehicleMatrix` itself, so the two scenes cannot drift apart.
+
+**The studio is shared, not copied.** `src/marker/Studio.tsx` is what `Scene.tsx` used to
+build inline: the photographic environment, the key and fill lights (with the moment's
+`lighting` from `lightingFor`, floored by `studioLight` as the marker's is), the reflector
+floor, the grid and the contact shadows, with the cars under the same `Suspense` as the
+environment. Two props differ between the scenes: `keyAt`, because the marker's body frame has
+its nose north and the reconstruction has north at −z, so each turns the sun into its own
+frame; and `reach`, how far out the floor, the grid's fade and the shadows must look right —
+sixteen metres for one car, a little past the camera's distance here. The single-car marker keeps its
+picking, its pins, its store and its camera rig untouched. Each car's materials are cloned and
+patched by `patchInstance` in `damageShader.ts`, the loop `Car.tsx` had and now shares, so
+Task 3's dents, scratches, cracks and cavities are on both cars, from the same packing.
+
+**The origin and the framing come from where the cars came to rest.** The origin is the
+impact; without one, the middle of the resting positions — never the poses', or a playback
+would slide the floor along with the cars. The camera is placed once, from the south-east and
+above, 2.2 times a radius that reaches the farthest resting car plus half a car (at least five
+and a half metres), and may zoom out to twice that. A playback's cars drive in from beyond that frame and
+meet in it, which is the point of the view; zooming out shows the approach.
+
+**Read-only, and never exported.** Nothing in the scene has a pointer handler: `OrbitControls`
+is the only input, and nothing reaches the store or the document. The canvas renders on demand
+(`frameloop="demand"`) — a drag, a playback frame, a body arriving — and keeps no drawing
+buffer, because nothing reads it back: it is not the review's export, not in `attachments`, not
+in `claim/1`. Each car is a group named `car:<id>` in its body's own metres, nose +Z and left +X,
+so anything that belongs to a car — a photo card pinned to a panel — can stand in that group.
+
+**The desk's tab.** `ReportView` holds a tab — Report, Compare (only with two accounts),
+Reconstruction (only when the diagram placed a vehicle) — defaulting to Compare and reading as
+Report until there is a second account to compare, so a report without one opens as it always
+did and one with one opens on the comparison, with no effect to reset between reports. The
+reconstruction's own `usePlayback` drives it: "Play" runs the same `posesAt` on the same clock
+as the map's playback; the scrubber is `seek(ms)` over the drive, and a scrub holds its frame
+— the hook keeps `playing` true and stops its loop — so the view tracks that in its own `held`
+state and offers Play again rather than a Stop with nothing to stop. At rest the scrubber sits
+at the end, which is where the cars are. Under it, each car's paint swatch and name in the
+desk's voice. The desk stays English (`lang="en"`).
+
+**The review page's small version.** Under the map figure, 240 px tall, only on the
+customer's own review (`edit`) and only when a vehicle has a position. It takes the map's
+`play.poses`, so pressing Play on the map drives the cars here too. The wheel does not zoom it
+(`zoom={false}`) and it takes no pointer below 640 px, so a wheel or a thumb scrolling the
+review over it scrolls the page — the review page's other scenes are read-only for the same
+reason.
+
+**What the smoke proves.** On the desk (`integration-smoke.mjs`, the policyholder's report with
+its red Camry and black SUV): the tab's screenshot has red paint round where the scene's DEV
+probe says the red car stands and dark paint round the black one; two screenshots 800 ms apart
+are identical (nothing moves on its own), and a mouse drag changes tens of thousands of pixels
+and moves the red car hundreds on screen; "Play" takes both cars metres up their routes and
+brings them back to rest to the centimetre; a scrub to the start holds them there, with Play
+offered. On the review page (`smoke.mjs`, both languages): car A's paint where the probe says A
+stands, and the map's Play moving A metres in the reconstruction and back. Screenshots, not
+`toDataURL`, because the canvas keeps no buffer; movement in the scene's metres through the
+probe, not on screen, because a car driving at the camera barely moves there.
+
 ## Tell us everything, once (v9)
 
 A form asks forty questions one at a time. A person who has just been in a crash tells you what

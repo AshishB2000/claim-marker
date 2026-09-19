@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { KIND_INFO, parseClaim, toDocument, type Claim, type Party } from '../claim/schema'
 import { findings, type Finding } from '../claim/plausibility'
-import { deskVoice } from '../claim/describe'
+import { deskVoice, vehicleOf, type Voice } from '../claim/describe'
 import { config } from '../config'
 import { Icon } from '../app/icons'
 import { ReportDocument } from '../app/ReportDocument'
@@ -15,7 +15,9 @@ import { Compare } from './Compare'
 import { DeskMap } from './DeskMap'
 import { inboxRows } from './inbox'
 import { inRange, inView, RANGE_LABEL, type Bounds, type Range } from './pins'
-import { lightingFor } from '../scene/lighting'
+import { lightingFor, type Lighting } from '../scene/lighting'
+import { Reconstruction } from '../marker/Reconstruction'
+import { usePlayback } from '../map/usePlayback'
 
 /**
  * The claims server: `?api=` for a desk pointed at another one, then the build-time default,
@@ -145,34 +147,100 @@ const StatusPill = ({ status }: { status: Status }) => (
 )
 
 /**
- * The open report: `Compare` when it is one of two accounts, `ReportDocument` otherwise, with a
- * control to move between them when both are available. `compareOpen` lives here rather than in
- * `Desk` and defaults to true, so switching to a different report — a new `key` from the caller
- * — starts back on the comparison rather than needing an effect to reset it.
+ * The accident in 3D, for the desk: the cars where the diagram put them, with their real damage,
+ * orbitable; "Play" drives them in on the same `posesAt` clock as the map's playback, and the
+ * scrubber holds any moment of it. A scrub stops the frame loop where it lands (`seek`), so the
+ * button offers Play again rather than a Stop that has nothing running to stop.
+ */
+function ReconstructionView({ claim, voice, lighting }: { claim: Claim; voice: Voice; lighting: Lighting | null }) {
+  const play = usePlayback(claim.vehicles)
+  const [held, setHeld] = useState(false)
+  const running = play.playing && !held
+  // at rest the scene is the end of the drive, so that is where the scrubber sits
+  const at = play.playing ? Math.min(play.clock, play.timeline.ms) : play.timeline.ms
+  return (
+    <div data-reconstruction-view className="card overflow-hidden">
+      <Reconstruction vehicles={claim.vehicles} impact={claim.impact} poses={play.poses} lang="en" lighting={lighting} className="h-[480px] bg-slate-100" />
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 px-4 py-3 text-xs text-slate-600">
+        {play.canPlay && (
+          <>
+            <button
+              type="button"
+              className="chip"
+              aria-pressed={running}
+              onClick={() => {
+                setHeld(false)
+                if (running) play.stop()
+                else play.start()
+              }}
+            >
+              {running ? <Icon.stop /> : <Icon.play />} {running ? 'Stop' : 'Play'}
+            </button>
+            <input
+              type="range"
+              className="min-w-40 flex-1 accent-brand-600"
+              min={0}
+              max={play.timeline.ms}
+              step={10}
+              value={at}
+              aria-label="Moment in the drive"
+              onChange={(e) => {
+                setHeld(true)
+                play.seek(Number(e.target.value))
+              }}
+            />
+            <span className="font-mono tabular-nums">{(at / 1000).toFixed(1)} s</span>
+          </>
+        )}
+        <span className="flex w-full flex-wrap gap-x-4 gap-y-1">
+          {claim.vehicles
+            .filter((v) => v.position)
+            .map((v) => (
+              <span key={v.id} className="inline-flex items-center gap-1.5">
+                <span className="size-2.5 rounded-sm ring-1 ring-slate-900/20" style={{ background: v.color }} />
+                {v.id.toUpperCase()} · {vehicleOf(v, voice)}
+              </span>
+            ))}
+          <span className="ml-auto">Drag to turn it round.{claim.impact && ' The red ring is where they hit.'}</span>
+        </span>
+      </div>
+    </div>
+  )
+}
+
+type Tab = 'report' | 'compare' | 'reconstruction'
+
+/**
+ * The open report, in tabs: the document; `Compare` when it is one of two accounts; and the
+ * reconstruction when the diagram placed a vehicle. `tab` lives here rather than in `Desk` and
+ * starts on the comparison, so switching to a different report — a new `key` from the caller —
+ * starts back there with no effect to reset it; until the other account has loaded (or when
+ * there is none) a comparison it cannot show reads as the report.
  */
 function ReportView({ showing, linked, onOpen }: { showing: { receipt: Receipt; claim: Claim }; linked: { receipt: Receipt; claim: Claim }[] | null; onOpen: (reference: string) => void }) {
-  const [compareOpen, setCompareOpen] = useState(true)
-  const comparing = !!linked && compareOpen
+  const [tab, setTab] = useState<Tab>('compare')
+  const canReconstruct = showing.claim.vehicles.some((v) => v.position)
+  const view: Tab = (tab === 'compare' && !linked) || (tab === 'reconstruction' && !canReconstruct) ? 'report' : tab
+  const tabs: [Tab, string][] = [['report', 'Report'], ...(linked ? [['compare', 'Compare'] as [Tab, string]] : []), ...(canReconstruct ? [['reconstruction', 'Reconstruction'] as [Tab, string]] : [])]
+  const voice = deskVoice(showing.receipt.party)
   // the moment's light, from what the record in this document said
   const context = showing.claim.incident.context
   const lighting = useMemo(() => lightingFor(context), [context])
   return (
     <>
-      {linked && (
-        <div className="mb-4 flex justify-end print:hidden">
-          <button className="btn btn-secondary btn-sm" onClick={() => setCompareOpen((v) => !v)}>
-            {compareOpen ? (
-              <>
-                <Icon.back /> Just this report
-              </>
-            ) : (
-              'Compare both accounts'
-            )}
-          </button>
+      {tabs.length > 1 && (
+        <div role="tablist" aria-label="View" className="mb-4 flex gap-1.5 print:hidden">
+          {tabs.map(([id, label]) => (
+            <button key={id} type="button" role="tab" className="chip" aria-selected={view === id} onClick={() => setTab(id)}>
+              {label}
+            </button>
+          ))}
         </div>
       )}
-      {!comparing && <WorthALook claim={showing.claim} signals={showing.receipt.signals ?? []} onOpen={onOpen} />}
-      {comparing && linked ? <Compare reports={linked} /> : <ReportDocument claim={showing.claim} voice={deskVoice(showing.receipt.party)} lighting={lighting} badge={<StatusPill status={showing.receipt.status} />} />}
+      {view !== 'compare' && <WorthALook claim={showing.claim} signals={showing.receipt.signals ?? []} onOpen={onOpen} />}
+      {view === 'compare' && linked && <Compare reports={linked} />}
+      {view === 'report' && <ReportDocument claim={showing.claim} voice={voice} lighting={lighting} badge={<StatusPill status={showing.receipt.status} />} />}
+      {view === 'reconstruction' && <ReconstructionView claim={showing.claim} voice={voice} lighting={lighting} />}
     </>
   )
 }

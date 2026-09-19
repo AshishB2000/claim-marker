@@ -1001,6 +1001,50 @@ const reviewCavity = { off: await cavityPixels(0), on: await cavityPixels(1) }
 if (reviewCavity.on < reviewCavity.off + 150) fail(`the review's car does not show the missing door: ${reviewCavity.off} cavity px without the damage, ${reviewCavity.on} with it`)
 if (await page.locator('.cm-tools').count()) fail('the customer’s review page should not offer the before/after slider')
 ok(`review: the marked-up car shows the missing door (${reviewCavity.on - reviewCavity.off} px of cavity), and has no slider to blend it away before the export`)
+
+// the same moment in 3D under the map: every car stood where the diagram put it, A in its paint.
+// Its canvas is never exported and keeps no drawing buffer, so it is read as a screenshot, round
+// where the scene's DEV probe says A stands
+const RECON = '[data-reconstruction] canvas'
+await page.waitForSelector(RECON, { timeout: 20000 }).catch(() => fail('the review page has no reconstruction under the map'))
+await page.locator(RECON).scrollIntoViewIfNeeded()
+const reconA = () =>
+  page.evaluate((sel) => {
+    const c = document.querySelector(sel)
+    const k = c.clientWidth / c.width
+    // null until A's body has loaded into the scene
+    return c.__probe.project('a')?.map((n) => n * k) ?? null
+  }, RECON)
+let reconRed = 0
+for (let i = 0; i < 60 && reconRed < 150; i++) {
+  await page.waitForTimeout(500)
+  const at = await reconA()
+  if (!at) continue
+  const shot = (await page.screenshot({ clip: await page.locator(RECON).boundingBox() })).toString('base64')
+  reconRed = await page.evaluate(
+    async ([png, [x, y]]) => {
+      const img = new Image()
+      img.src = `data:image/png;base64,${png}`
+      await img.decode()
+      const c = document.createElement('canvas')
+      c.width = img.width
+      c.height = img.height
+      const ctx = c.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+      const px = ctx.getImageData(0, 0, img.width, img.height).data
+      let n = 0
+      for (let j = Math.max(0, Math.round(y - 60)); j < Math.min(img.height, y + 60); j++)
+        for (let i = Math.max(0, Math.round(x - 60)); i < Math.min(img.width, x + 60); i++) {
+          const k = (j * img.width + i) * 4
+          if (px[k] > 60 && px[k] > px[k + 1] * 1.6 && px[k] > px[k + 2] * 1.6) n++
+        }
+      return n
+    },
+    [shot, at],
+  )
+}
+if (reconRed < 150) fail(`the review's reconstruction does not show car A in its paint (${reconRed} red px round it)`)
+ok(`review: the same moment in 3D under the map — A stands there in its paint (${reconRed} red px round it)`)
 if (!(await page.locator('text=2026-0042').count())) fail('review does not show the police report number')
 if (!(await page.locator('text=Times Square').count())) fail('review does not show the address')
 if (!(await page.locator('text=The van pulled out across me.').count())) fail('review does not show the description')
@@ -1008,11 +1052,28 @@ await page.waitForSelector('.maplibregl-canvas', { timeout: 20000 })
 await page.waitForTimeout(7000)
 await noEnglish('the review')
 
-// the review can play it back too: the insurer sees what happened, not a still
+// the review can play it back too: the insurer sees what happened, not a still — and the
+// reconstruction under the map plays along, A driving in there too and coming back to rest
+// measured in the scene's metres, not on screen, where a car driving at the camera barely moves
+const reconWhere = () => page.evaluate((sel) => document.querySelector(sel).__probe.where('a'), RECON)
+const reconRest = await reconWhere()
+const reconAway = async () => {
+  const [x, , z] = await reconWhere()
+  return Math.hypot(x - reconRest[0], z - reconRest[2])
+}
 await page.getByRole('button', { name: N.playBack }).click()
 await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
+let reconDrove = 0
+for (let i = 0; i < 240 && (await page.evaluate(() => document.querySelector('.maplibregl-map').classList.contains('mk-playing'))); i++) {
+  reconDrove = Math.max(reconDrove, await reconAway())
+  await page.waitForTimeout(50)
+}
 await page.waitForFunction(() => !document.querySelector('.maplibregl-map').classList.contains('mk-playing'), null, { timeout: 12000 })
 ok('review: playback ran on the review map')
+const reconBack = await reconAway()
+if (reconDrove < 2) fail(`the review's reconstruction did not play along with the map (A moved ${reconDrove.toFixed(2)} m)`)
+if (reconBack > 0.01) fail(`after the playback, A did not come back to rest in the reconstruction (${reconBack.toFixed(2)} m off)`)
+ok(`review: the reconstruction played along (A drove ${reconDrove.toFixed(1)} m there and came back to rest)`)
 
 // and watch it there too: the read-only map — the desk's is this same component — tilts and comes back
 await page.getByRole('button', { name: N.watch }).click()
