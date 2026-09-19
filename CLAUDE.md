@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 634 tests across 39 files
+npm test               # vitest, 636 tests across 39 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
