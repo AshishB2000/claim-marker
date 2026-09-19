@@ -1295,7 +1295,7 @@ floor, the grid and the contact shadows, with the cars under the same `Suspense`
 environment. Two props differ between the scenes: `keyAt`, because the marker's body frame has
 its nose north and the reconstruction has north at −z, so each turns the sun into its own
 frame; and `reach`, how far out the floor, the grid's fade and the shadows must look right —
-sixteen metres for one car, 2.4 times the framing radius here. The single-car marker keeps its
+sixteen metres for one car, a little past the camera's distance here. The single-car marker keeps its
 picking, its pins, its store and its camera rig untouched. Each car's materials are cloned and
 patched by `patchInstance` in `damageShader.ts`, the loop `Car.tsx` had and now shares, so
 Task 3's dents, scratches, cracks and cavities are on both cars, from the same packing.
@@ -1303,8 +1303,8 @@ Task 3's dents, scratches, cracks and cavities are on both cars, from the same p
 **The origin and the framing come from where the cars came to rest.** The origin is the
 impact; without one, the middle of the resting positions — never the poses', or a playback
 would slide the floor along with the cars. The camera is placed once, from the south-east and
-above, 2.4 times a radius that reaches the farthest resting car plus half a car (at least seven
-metres), and may zoom out to twice that. A playback's cars drive in from beyond that frame and
+above, 2.2 times a radius that reaches the farthest resting car plus half a car (at least five
+and a half metres), and may zoom out to twice that. A playback's cars drive in from beyond that frame and
 meet in it, which is the point of the view; zooming out shows the approach.
 
 **Read-only, and never exported.** Nothing in the scene has a pointer handler: `OrbitControls`

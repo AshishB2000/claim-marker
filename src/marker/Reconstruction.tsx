@@ -95,8 +95,8 @@ export function Reconstruction({
   // framed once, from where they came to rest: every car in view, however far from the impact
   const [view] = useState(() => {
     const far = origin ? Math.max(0, ...placeVehicles(rest, origin).map((p) => Math.hypot(p.position[0], p.position[2]))) : 0
-    const radius = Math.max(7, far + 3.5)
-    return { radius, distance: radius * 2.4 }
+    const radius = Math.max(5.5, far + 3.5)
+    return { radius, distance: radius * 2.2 }
   })
   // the sun in this frame — the map's (east, south, up) is the studio's (x, z, y) — eight metres out
   const key: V3 = lighting ? [lighting.sun[0] * 8, lighting.sun[2] * 8, lighting.sun[1] * 8] : [4, 6.5, 3]
@@ -125,7 +125,7 @@ export function Reconstruction({
           }
         }}
       >
-        <Studio theme="light" lighting={lighting} keyAt={key} reach={view.radius * 2.4}>
+        <Studio theme="light" lighting={lighting} keyAt={key} reach={view.distance * 1.1}>
           {shown.map((v, i) => (
             <Body key={`${v.id}:${v.body}`} v={v} at={placed[i]} />
           ))}
