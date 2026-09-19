@@ -469,7 +469,8 @@ into the floor; `test/cards.test.ts` pins it. A canvas texture on a `Billboard`,
 `Html`**, or the export loses it. Tagging by drag is `PHOTO_DRAG` data (the photo's index on the
 claim) dropped on the canvas, cast against the body alone (the car's primitive is named `car`),
 then `toModel` → `nearestZone` → `tagPhoto`; the select under each thumbnail is the same call.
-A tap is `store.face(point)` — a new `facing` object per tap, or a second tap would not re-aim —
+A card opens on a still click, not the press (a modal under a drag swallows it), through
+`store.face(point)` — a new `facing` object per tap, or a second tap would not re-aim —
 and a `<dialog>` lightbox that takes `lang`. `ReportDocument`'s marker is `readOnly` (no pick,
 no picker, no wheel zoom); only the desk's takes pointer events — the review's copy is the
 evidence exported at send and stays as framed. The DEV `__probe` has `card(id)` (canvas px)

@@ -41,13 +41,29 @@ function photoTexture(dataUrl: string, loaded: () => void) {
   return tex
 }
 
-function Card({ photo, stacked, onOpen }: { photo: CardPhoto; stacked: number; onOpen?: (e: ThreeEvent<PointerEvent>) => void }) {
+/** the press is the card's, so the body behind it is not picked; a drag that starts on the card still turns the car */
+const keep = (e: ThreeEvent<PointerEvent>) => e.stopPropagation()
+
+function Card({ photo, stacked, onOpen }: { photo: CardPhoto; stacked: number; onOpen?: () => void }) {
   const invalidate = useThree((s) => s.invalidate)
   const tex = useMemo(() => photoTexture(photo.dataUrl, () => invalidate()), [photo.dataUrl, invalidate])
   useEffect(() => () => tex.dispose(), [tex])
-  // a second photo of the same panel sits a little down and to the right of the first, and in front of it
+  // a second photo of the same panel sits a little down and to the right of the first, and in front of it.
+  // It opens on a click, not the press — a modal opening under a drag would swallow it — and only
+  // on a tap that did not move, so letting go of a drag over a card opens nothing.
   return (
-    <mesh name={`card:${photo.id}`} position={[stacked * 0.08, -stacked * 0.08, stacked * 0.002]} onPointerDown={onOpen}>
+    <mesh
+      name={`card:${photo.id}`}
+      position={[stacked * 0.08, -stacked * 0.08, stacked * 0.002]}
+      onPointerDown={onOpen && keep}
+      onClick={
+        onOpen &&
+        ((e: ThreeEvent<MouseEvent>) => {
+          e.stopPropagation()
+          if (e.delta <= 2) onOpen()
+        })
+      }
+    >
       <planeGeometry args={[SIZE, SIZE]} />
       <meshBasicMaterial map={tex} toneMapped={false} />
     </mesh>
@@ -72,13 +88,7 @@ export function PhotoCards({ body, photos, onOpen }: { body: Vehicle; photos: Ca
           <Card
             photo={photo}
             stacked={stacked}
-            onOpen={
-              onOpen &&
-              ((e) => {
-                e.stopPropagation()
-                onOpen(photo, zone)
-              })
-            }
+            onOpen={onOpen && (() => onOpen(photo, zone))}
           />
         </Billboard>
       </group>

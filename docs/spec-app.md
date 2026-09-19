@@ -1377,13 +1377,17 @@ listens on its canvas and takes only that type. The drop point is cast from the 
 against the body alone (the car's primitive is named `car`, so pins and cards never catch it),
 the hit goes back to kit units with `toModel`, and `nearestZone` names the panel for the same
 `tagPhoto` the photo-first suggestions use. While the drag is over the car the panel under it is
-tinted, the same tint as a hover. Under each thumbnail a select names the panel it shows — the
+tinted, the same tint as a hover, and the turntable stops the moment a drag enters the car, as it
+does at the first touch, so the panel under the pointer holds still. Under each thumbnail a select names the panel it shows — the
 same `tagPhoto` for a keyboard or a phone, where HTML drag is not reliable. A tagged photograph
 can be dropped again on another panel; nothing un-tags one. `shows` is still set only by
 `tagPhoto`, still **absent** from the document when unset, and nothing else in `claim/1` moves.
 
-**Tapping a card.** `store.face(point)` sets `facing` — a new object every time, so a second tap
-on the same card after an orbit aims again — and closes whatever the picker had open; the
+**Tapping a card.** A card opens on a click that did not move (`e.delta ≤ 2`), not on the press
+a pin uses: a modal opening under a drag would swallow the drag, and a drag that merely starts
+on a card should turn the car. The press is still the card's, so the body behind it is not
+picked. `store.face(point)` sets `facing` — a new object every time, so a second tap on the same
+card after an orbit aims again — and closes whatever the picker had open; the
 camera rig has a second effect for it beside the pin's, both through `cameraFor` at the current
 distance, and both give up the moment the user drags. The photograph opens in a native modal
 `<dialog>` (`PhotoLightbox`), which brings Escape, the focus trap and the top layer with it, and

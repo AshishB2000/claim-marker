@@ -153,7 +153,8 @@ export function DamageMarker({
   )
 
   return (
-    <div className={themeClass(theme, className)} style={style} onPointerDownCapture={() => setIdle(false)}>
+    // the turntable stops at the first touch, or when a photo is dragged over the car to be dropped on a panel
+    <div className={themeClass(theme, className)} style={style} onPointerDownCapture={() => setIdle(false)} onDragEnterCapture={() => setIdle(false)}>
       <Scene
         store={store}
         modelUrl={modelUrl}
