@@ -44,29 +44,43 @@ function photoTexture(dataUrl: string, loaded: () => void) {
 /** the press is the card's, so the body behind it is not picked; a drag that starts on the card still turns the car */
 const keep = (e: ThreeEvent<PointerEvent>) => e.stopPropagation()
 
-function Card({ photo, stacked, onOpen }: { photo: CardPhoto; stacked: number; onOpen?: () => void }) {
+/**
+ * One photo on its panel. A second photo of the same panel sits a little down and to the right of
+ * the first, and in front of it, without a second leader. It opens on a click, not the press — a
+ * modal opening under a drag would swallow it — and only on a tap that did not move, so letting
+ * go of a drag over a card opens nothing.
+ */
+function Card({ body, zone, photo, stacked, onOpen }: { body: Vehicle; zone: Zone; photo: CardPhoto; stacked: number; onOpen?: () => void }) {
   const invalidate = useThree((s) => s.invalidate)
   const tex = useMemo(() => photoTexture(photo.dataUrl, () => invalidate()), [photo.dataUrl, invalidate])
   useEffect(() => () => tex.dispose(), [tex])
-  // a second photo of the same panel sits a little down and to the right of the first, and in front of it.
-  // It opens on a click, not the press — a modal opening under a drag would swallow it — and only
-  // on a tap that did not move, so letting go of a drag over a card opens nothing.
+  // the same arrays every render: drei's Line rebuilds its geometry for new points, and the
+  // reconstruction re-renders on every frame of a playback
+  const { position, leader } = useMemo(() => {
+    const { position } = cardPlacement(body, zone)
+    return { position, leader: [toWorld(body, zone.anchor), position] }
+  }, [body, zone])
   return (
-    <mesh
-      name={`card:${photo.id}`}
-      position={[stacked * 0.08, -stacked * 0.08, stacked * 0.002]}
-      onPointerDown={onOpen && keep}
-      onClick={
-        onOpen &&
-        ((e: ThreeEvent<MouseEvent>) => {
-          e.stopPropagation()
-          if (e.delta <= 2) onOpen()
-        })
-      }
-    >
-      <planeGeometry args={[SIZE, SIZE]} />
-      <meshBasicMaterial map={tex} toneMapped={false} />
-    </mesh>
+    <group>
+      {stacked === 0 && <Line points={leader} color={LEADER} lineWidth={1.5} />}
+      <Billboard position={position}>
+        <mesh
+          name={`card:${photo.id}`}
+          position={[stacked * 0.08, -stacked * 0.08, stacked * 0.002]}
+          onPointerDown={onOpen && keep}
+          onClick={
+            onOpen &&
+            ((e: ThreeEvent<MouseEvent>) => {
+              e.stopPropagation()
+              if (e.delta <= 2) onOpen()
+            })
+          }
+        >
+          <planeGeometry args={[SIZE, SIZE]} />
+          <meshBasicMaterial map={tex} toneMapped={false} />
+        </mesh>
+      </Billboard>
+    </group>
   )
 }
 
@@ -79,19 +93,7 @@ export function PhotoCards({ body, photos, onOpen }: { body: Vehicle; photos: Ca
   return photos.map((photo, i) => {
     const zone = zoneById(body, photo.shows)
     if (!zone) return null
-    const { position } = cardPlacement(body, zone)
     const stacked = photos.slice(0, i).filter((p) => p.shows === photo.shows).length
-    return (
-      <group key={photo.id}>
-        {stacked === 0 && <Line points={[toWorld(body, zone.anchor), position]} color={LEADER} lineWidth={1.5} />}
-        <Billboard position={position}>
-          <Card
-            photo={photo}
-            stacked={stacked}
-            onOpen={onOpen && (() => onOpen(photo, zone))}
-          />
-        </Billboard>
-      </group>
-    )
+    return <Card key={photo.id} body={body} zone={zone} photo={photo} stacked={stacked} onOpen={onOpen && (() => onOpen(photo, zone))} />
   })
 }
