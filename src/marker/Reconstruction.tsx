@@ -107,7 +107,7 @@ export function Reconstruction({
         // drawn when something changes — a drag, a playback frame, a car arriving — not sixty times a second on a page that is read
         frameloop="demand"
         dpr={[1, 2]}
-        camera={{ position: VIEW.clone().multiplyScalar(view.distance).toArray(), fov: 35, near: 0.1, far: view.distance * 8 }}
+        camera={{ position: VIEW.clone().multiplyScalar(view.distance).toArray(), fov: 35, near: 0.5, far: view.distance * 4 }}
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, outputColorSpace: THREE.SRGBColorSpace }}
         onCreated={({ gl, camera, scene }) => {
           // for the smoke: where a car stands on this canvas, in its pixels
