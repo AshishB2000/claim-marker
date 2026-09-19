@@ -97,11 +97,11 @@ watches what happened instead of reading coordinates.
 <table>
   <tr>
     <td width="50%"><img src="docs/replay.png" alt="The replay tilted behind the customer's car: two cars at the moment of impact, a white shockwave ring around them, city blocks standing at the edges of the frame"></td>
-    <td width="50%"><img src="docs/night.png" alt="The same junction chased at night: both cars dark, the other vehicle's headlights on"></td>
+    <td width="50%"><img src="docs/night.png" alt="The same two cars chased across a drawn parking lot at night: the paint almost black, headlights on, a pool of light under each car"></td>
   </tr>
   <tr>
     <td align="center"><sub><b>Watch it</b> — the map tilts to 55°, the blocks around the junction stand up from the same public map the road came from, and the shockwave spreads from where the two cars met</sub></td>
-    <td align="center"><sub><b>Lit as it was</b> — the same junction with the hour moved to half past nine at night. The paint goes dark and the headlights come on; the only thing that changed is the record of when it happened</sub></td>
+    <td align="center"><sub><b>Lit as it was</b> — the same accident at half past nine at night, drawn on the parking-lot ground a covered car park gets. The paint goes dark, the headlights come on and each car throws its own pool of light; the only thing changed is the hour in the record</sub></td>
   </tr>
 </table>
 
@@ -160,11 +160,18 @@ watches what happened instead of reading coordinates.
   </tr>
 </table>
 
-<p align="center">
-  <img src="docs/marked-car.png" alt="The customer's red car in the damage studio, a dent on its hood, and a photograph standing on a small card beside the door it shows" width="80%">
-  <br>
-  <sub><b>The damage step</b> — the marks are in the paint rather than pinned over it, and each photograph stands beside the panel it shows. Before / after blends the two, and the severity map colours every panel at once</sub>
-</p>
+<br>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/marked-car.png" alt="The customer's red car in the damage studio: a scratch torn across the rear door, a dent on the front door, and a photograph of the real car standing on a small card beside the front fender"></td>
+    <td width="50%"><img src="docs/severity-map.png" alt="The same car with the severity map on: the paint replaced by a cold blue, with the two marked panels warm"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>In the paint, not over it</b> — a dent dishes the panel, a scratch bares the metal under it, and each photograph stands beside the panel it shows. <i>Before / after</i> runs the car back to how it was</sub></td>
+    <td align="center"><sub><b>The severity map</b> — the paint swapped for what each panel is carrying, so a whole side reads at a glance. A dent in bright paint is quiet by design; this is the view that is not</sub></td>
+  </tr>
+</table>
 
 <br>
 
@@ -274,18 +281,18 @@ Three things sit beside that list, and none of them is an opinion about a report
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/desk-map.png" alt="The claims desk with its map open: pins in New York, Los Angeles and London, a cluster of four over the Atlantic, and the same reports listed underneath"></td>
-    <td width="50%"><img src="docs/desk-compare.png" alt="Two accounts of one accident on one map, with one scrubber carrying two impact ticks, a Swap button, and the line: the two accounts' impacts are 5 m and 1.7 s apart"></td>
+    <td width="50%"><img src="docs/desk-map.png" alt="The claims desk with its map open: pins in New York, Los Angeles and London, a cluster of six over the Atlantic, and the same reports listed underneath"></td>
+    <td width="50%"><img src="docs/desk-compare.png" alt="Two accounts of one accident on one map, with one scrubber carrying two impact ticks, a Swap button, and the line: the two accounts' impacts are 6 m and 1.7 s apart"></td>
   </tr>
   <tr>
     <td align="center"><sub><b>The map of everything</b> — a pin per report in the colour of its status, clustered as it zooms out, with a heat layer for volume and “only what's on the map” to make the list follow the view</sub></td>
     <td align="center"><sub><b>Two accounts, one clock</b> — both drivers' cars on one scrubber with an impact tick each, “Swap” to ride with the other one, and a video of the pair to save. It says how far apart the two accounts are and nothing about who is right</sub></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="docs/desk-reconstruction.png" alt="The reconstruction tab: both cars standing where the map put them, in their own paint, with a Play button and a scrubber underneath" width="70%"></td>
+    <td colspan="2" align="center"><img src="docs/desk-reconstruction.png" alt="The reconstruction tab, held at the moment the two cars are nearest: a red sedan and a black SUV in a studio, with Play and a scrubber underneath" width="70%"></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><sub><b>The reconstruction</b> — a tab beside the report: every car on the diagram stood where the map put it, in its own paint and with its own damage, to walk round and play through. A small copy of it sits under the map on the customer's own review page</sub></td>
+    <td colspan="2" align="center"><sub><b>The reconstruction</b> — a tab beside the report: every car on the diagram stood where the map put it, in its own paint and with its own damage, to walk round and play through. Held here at the moment the two are nearest. A small copy of it sits under the map on the customer's own review page</sub></td>
   </tr>
 </table>
 
