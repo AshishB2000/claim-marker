@@ -1056,7 +1056,9 @@ and the clock are different.
 that does not ask is unchanged. In `'cinematic'` mode, and only while `poses` is set, it raises
 `maxPitch` to 60 on the live map instance, drives the camera with `jumpTo` every frame, and on
 the last frame — or a Stop pressed mid-chase — jumps back to the view it captured at the first
-frame, drops `maxPitch` to 0 and clears its decoration, *before* the markers return. So the
+frame, drops `maxPitch` to 0 and clears its decoration, *before* the markers return — the
+cinematic effect is declared above the poses effect, so that holds when a run's natural end
+runs both in one flush. So the
 DOM-marker interaction, whose maths assumes a flat map, never meets a pitch; the desk's
 read-only map (`interactive={false}`) gets the same treatment, which is why `maxPitch` is set at
 playback start rather than at construction.
@@ -1117,57 +1119,6 @@ the reference frame (one shot, one camera); the pitch and bearing must be exactl
 and every car marker's screen position must be within a pixel of where it was before. Then it
 presses it again on the review's read-only map, which is the component the desk renders, and
 checks the tilt and the return there too.
-
-## The desk's map of everything (v9)
-
-An inbox is a list because that is the order reports arrive in, which is the one thing an
-adjuster already knows. What they do not know from a list is that four of this morning's reports
-are the same junction, or that a street has had eleven in a month. The desk's map answers that
-and nothing else: it is a second way of reading the list it sits above, not a second screen.
-
-**The place rides on the receipt, as one more thing the summary carries.** `summarise()` in the
-claim server adds `lng` and `lat` beside the address. `GET /claims` stays receipts only — the
-desk never loads nine documents to draw nine points — and a receipt filed before that line
-existed simply has no place and is not on the map. It is still in the list, like a report of a
-kind that was never diagrammed; the map is a view of the inbox, never a filter on it.
-
-**One clustered source, and the pin says what the row says.** `src/adjuster/DeskMap.tsx` is one
-MapLibre map on the same keyless street basemap the customer's page uses, with one GeoJSON
-source and `cluster: true`. A point is coloured by its status in the colours the inbox rows
-already wear — brand blue new, amber in review, slate closed — grows when someone was hurt or
-the car cannot be driven, and wears a red ring when the server has seen a photograph, a VIN or a
-plate on it before. Nothing on it is an opinion: every one of those is a fact already on the
-receipt, and the pin is the same sentence as the row, drawn where it happened.
-
-**Which is why the map is fed the rows and not the receipts.** The two accounts of one accident
-stand in the same place — the other driver's page is seeded with the first one's — so handing
-`DeskMap` the receipts draws them as two points on top of each other, which clusters into a grey
-"2" at every zoom the clustering reaches and loses the status, the size and the ring for exactly
-the linked case. `inboxRows(...).map((row) => row.lead)` is the same grouping the list uses, so
-one accident is one row and one pin, in the colour of the account that leads it.
-
-**The heat layer is the other question.** Volume over a region rather than one report at a
-time, weighted by `point_count` so a cluster stands for the reports inside it instead of
-thinning out as the map zooms away from them.
-
-**The clusters are DOM markers, not a symbol layer.** A cluster's count is text, and text on a
-MapLibre style needs a glyph server — another host in the served page's CSP, and another thing
-to be down, for a number a `div` can hold. This is the same answer the scenario map gives:
-interaction and labels are DOM, the canvas draws.
-
-**"Only what's on the map" is the one place the map narrows the list.** The map and the list
-show the same reports — the status chips, the date chips (today, 7 days, 30 days) and the search
-all apply to both — and only that toggle makes the list follow the view. The filtering is pure
-(`src/adjuster/pins.ts`: `pins`, `inRange`, `inView`), which is where the two things that would
-otherwise be found by hand are pinned down: "today" is the desk's day from midnight rather than
-the last twenty-four hours, and a view that crosses the antimeridian has a west greater than its
-east and still holds its points.
-
-**The map is told only when the points change.** The desk hands down a fresh array on every
-render, including the render its own `onBounds` causes; `DeskMap` compares the drawn collection
-before calling `setData` and refitting, or `fitBounds` would answer its own `moveend` for ever.
-That is the whole reason the bounds live in the desk's state and the data does not depend on
-them.
 
 ## The moment, lit as it was (v10)
 
@@ -1250,7 +1201,7 @@ The light as it was is proved on its own seeded pages instead — the same tiles
 cars six metres either side of the impact, facing each other — under four lights. Rain after
 dark: the open road ten metres south must read darker than in plain view (the tiles never
 change, so the difference is the layer's), the ground ahead of A's nose brighter than behind
-its tail, and the canvas the export captures a picture. The same night on a street the record
+its tail, and the map's canvas, sampled directly, a picture. The same night on a street the record
 says is lit: six metres from the incident, inside the pool and outside every headlight, must
 read brighter than the same spot unlit. A clear sun on the horizon: the ground between the
 cars must read darker than plain — the shadow — while the open road reads the same, so it is
@@ -1279,21 +1230,32 @@ measured. `parseBuildings` is pure and separate, so a fixture can be held agains
 every closed `building` way becomes a polygon carrying the height to extrude it to — the
 `height` tag in metres when the building has one, unit and all, else `building:levels` at
 3.2 m a storey, else 8 m, and absurd values (a negative height, a thousand storeys) count as
-no answer rather than as geometry. Open ways are left out: an
+no answer rather than as geometry. Roofs a car drives under are left out — `building=roof` (a
+fuel station's canopy), `carport`, `parking`, `garage`, `garages` — because those are where
+accidents happen, and a solid block drawn over the cars would hide the thing the diagram is of.
+Open ways are left out too: an
 open `building` way is a mapping error or one wall of a multipolygon whose other parts are not
 in the answer, and half a building drawn as a solid is worse than none. `parseRoad` hands the
 collection out beside `ways`, and the store keeps it beside `roadWays` — not in `claim/1`, not
 persisted, for exactly the reason the road geometry is not: it is public map data, cheap to ask
 for again, and a cache of it can only go stale.
 
-**On the map it is one `fill-extrusion` layer**, added first of everything `style.load` adds,
-so the road, the travel paths, the cars and the shockwave are all drawn over it, and — like the
-road — visible on `satellite` and `streets` only, because there is no real city around a drawn
-parking lot. While the map is flat, which is every view the customer edits in, an extrusion
-draws as its own flat footprint — painted **over** the satellite's picture of that same block,
-at 0.85, so the blocks read as pale shapes and the streets between them stay as they were.
-That is the editing surface and it is what `compose()` puts in `attachments.scene`, so it is
-asserted flat as well as tilted. It becomes a city only when the replay tilts the camera.
+**On the map it is two layers of one source**, added first of everything `style.load` adds,
+so the road, the travel paths, the cars and the shockwave are all drawn over them, and — like
+the road — visible on `satellite` and `streets` only, because there is no real city around a
+drawn parking lot. While the map is flat, which is every view the customer edits in, the
+buildings are a plain `fill` (`buildings-flat`) — painted **over** the satellite's picture of
+that same block, at 0.85, so the blocks read as pale shapes and the streets between them stay as
+they were. That is the editing surface and it is what `compose()` puts in `attachments.scene`,
+so it is asserted flat as well as tilted. The `fill-extrusion` (`buildings`) sits at opacity 0
+and becomes the city only while the replay tilts the camera: `standCity` swaps the two
+opacities where `maxPitch` is raised and dropped, in `MapScene` and in the recorder. It is not
+drawn flat because MapLibre draws an extrusion with a depth pass that the car layer and every
+line are then tested against: on a flat map a car under a roof would simply not be there. At
+opacity 0 an extrusion is skipped entirely, and a `fill` writes no depth. The smoke puts a 60 m
+block round car A on the flat map and reads A's paint through it, and asserts the tilted
+layer's height is `['get', 'height']` and its opacity above 0 on the frames it reads a wall
+from, and 0 again once the map is back.
 
 **Who gets the city.** The diagram step and the review page, both from the store — the review
 page's map is the one the replay is recorded off, so the video an adjuster watches is the scene
@@ -1302,7 +1264,7 @@ buildings as props for exactly that reason: the claims desk renders the same com
 have neither, because `claim/1` carries the road in words and the buildings not at all. A
 report read on the desk is therefore flat ground with cars on it, as it always was. The grey is light but deliberately short of white: the
 shockwave, the flow line along each travel path and the labels are all white, and at 0.85 over
-the brightest imagery there is, no channel of this colour reaches 200, so a wall never passes
+the brightest imagery there is, this colour stays at about 200, so a wall never passes
 for one of them.
 
 **The honest limits.** Coverage is whatever OpenStreetMap has for that corner: dense in cities,
@@ -1360,8 +1322,8 @@ through the map's matrix that direction comes out 1e-7 long.
 **What each kind does.** A *dent* (bodywork: paint, trim, plastic) is a cosine dish scaled by the
 mark's weight: the normal tilts toward the centre, the albedo darkens 15 % toward it, the
 clearcoat is cut to a fifth so the reflection breaks, the roughness rises. And it is lit from
-above whatever the scene does — the upper lip darkens and the lower brightens in the albedo
-itself — because the studio's environment map is near-uniform at the angles a door reflects,
+above whatever the scene does — the upper wall's shadow is baked into the albedo; the lower
+rim's highlight comes from the tilted normal — because the studio's environment map is near-uniform at the angles a door reflects,
 and a tilted normal alone under it barely showed. A *scratch* (bodywork) is three ragged
 streaks of different lengths along the panel's own horizontal — across a hood or a roof, along
 everything else — hashed for their edges and gaps, bare metal (grey, roughness 0.6, metallic) in
@@ -1402,6 +1364,197 @@ through the store — there is no slider there, which is also asserted — and o
 answered from the document just sent, the same rise, with the slider and the severity map
 present. The unit test pins the packing: a dent at its own point in the body's metres, a
 missing part at its zone's anchor and reach, the wheel's own code, the cap at twelve.
+
+## The reconstruction in your hands (v10)
+
+The map is a diagram seen from above, and the marked-up car is one car alone in a studio. An
+adjuster reading a collision wants the two together: the cars standing where they stopped, in
+their own paint, with their own damage, and a way to walk round them. The reconstruction is
+that — every vehicle on the diagram stood in the damage marker's studio where the map put it,
+orbitable, and nothing else. It is a third tab on the desk, and a small version under the map
+on the customer's review page, because it is one component.
+
+**One placement, the map's.** `placeVehicles(vehicles, impact)` in `src/marker/place.ts` is
+pure and gives each car `{ id, position, rotationY }` in the studio's frame — three's y-up,
+metres, the impact at the origin, **east +x and north −z**. The offset is the map layer's own:
+the `mercator` difference from the origin that `vehicleMatrix` translates by, divided by the
+metre at the impact (`metresToMercator`), so a car stands exactly where the diagram drew it;
+mercator runs (east, south) and so does the studio's (x, z). The heading is the same compass
+bearing: the body's nose is +Z, three's rotation-y turns +Z to (sin r, 0, cos r), and the nose
+must point at (sin h, 0, −cos h), so `rotationY = π − h`. The map needs `CAR_BASIS`, with its
+determinant of −1, because mercator's (east, south, up) labelling is left-handed; the studio's
+frame is right-handed like the body's, so here a plain rotation puts the car's left on its
+left. `test/place.test.ts` pins two cars at known offsets, the four compass points, and — for
+four cars at arbitrary offsets and headings — the offset, the nose and the car's left against
+`vehicleMatrix` itself, so the two scenes cannot drift apart.
+
+**The studio is shared, not copied.** `src/marker/Studio.tsx` is what `Scene.tsx` used to
+build inline: the photographic environment, the key and fill lights (with the moment's
+`lighting` from `lightingFor`, floored by `studioLight` as the marker's is), the reflector
+floor, the grid and the contact shadows, with the cars under the same `Suspense` as the
+environment. Two props differ between the scenes: `keyAt`, because the marker's body frame has
+its nose north and the reconstruction has north at −z, so each turns the sun into its own
+frame; and `reach`, how far out the floor, the grid's fade and the shadows must look right —
+sixteen metres for one car, a little past the camera's distance here. The single-car marker keeps its
+picking, its pins, its store and its camera rig untouched. Each car's materials are cloned and
+patched by `patchInstance` in `damageShader.ts`, the loop `Car.tsx` had and now shares, so
+Task 3's dents, scratches, cracks and cavities are on both cars, from the same packing.
+
+**The origin and the framing come from where the cars came to rest.** The origin is the
+impact; without one, the middle of the resting positions — never the poses', or a playback
+would slide the floor along with the cars. The camera is placed once, from the south-east and
+above, 2.2 times a radius that reaches the farthest resting car plus half a car (at least five
+and a half metres), and may zoom out to twice that. A playback's cars drive in from beyond that frame and
+meet in it, which is the point of the view; zooming out shows the approach.
+
+**Read-only, and never exported.** Nothing in the scene has a pointer handler: `OrbitControls`
+is the only input, and nothing reaches the store or the document. The canvas renders on demand
+(`frameloop="demand"`) — a drag, a playback frame, a body arriving — and keeps no drawing
+buffer, because nothing reads it back: it is not the review's export, not in `attachments`, not
+in `claim/1`. Each car is a group named `car:<id>` in its body's own metres, nose +Z and left +X,
+so anything that belongs to a car — a photo card pinned to a panel — can stand in that group.
+
+**The desk's tab.** `ReportView` holds a tab — Report, Compare (only with two accounts),
+Reconstruction (only when the diagram placed a vehicle) — defaulting to Compare and reading as
+Report until there is a second account to compare, so a report without one opens as it always
+did and one with one opens on the comparison, with no effect to reset between reports. The
+reconstruction's own `usePlayback` drives it: "Play" runs the same `posesAt` on the same clock
+as the map's playback; the scrubber is `seek(ms)` over the drive, and a scrub holds its frame
+— the hook keeps `playing` true and stops its loop — so the view tracks that in its own `held`
+state and offers Play again rather than a Stop with nothing to stop. At rest the scrubber sits
+at the end, which is where the cars are. Under it, each car's paint swatch and name in the
+desk's voice. The desk stays English (`lang="en"`).
+
+**The review page's small version.** Under the map figure, 240 px tall, only on the
+customer's own review (`edit`) and only when a vehicle has a position. It takes the map's
+`play.poses`, so pressing Play on the map drives the cars here too. The wheel does not zoom it
+(`zoom={false}`) and it takes no pointer below 640 px, so a wheel or a thumb scrolling the
+review over it scrolls the page — the review page's other scenes are read-only for the same
+reason. It is **mounted only once it comes within a screen of the view** (`WhenNear`, an
+`IntersectionObserver` with a one-screen `rootMargin`), its 240 px reserved meanwhile so
+nothing jumps. It is below the map figure, not in the export and not in the document, and a
+fourth WebGL context with its programs cost the page's readiness about 7 s under software GL —
+and the send-time recording shares that main thread. The desk's tab is unaffected: it mounts
+when its tab is chosen. The smoke scrolls to it before it reads it.
+
+**What the smoke proves.** On the desk (`integration-smoke.mjs`, the policyholder's report with
+its red Camry and black SUV): the tab's screenshot has red paint round where the scene's DEV
+probe says the red car stands and dark paint round the black one; a mouse drag changes at
+least 5 000 more pixels against the resting frame than a second screenshot 800 ms later does
+without one (that second screenshot is the baseline, not asserted identical), and moves the red car hundreds on screen; "Play" takes both cars metres up their routes and
+brings them back to rest to the centimetre; a scrub to the start holds them there, with Play
+offered. On the review page (`smoke.mjs`, both languages): car A's paint where the probe says A
+stands, and the map's Play moving A metres in the reconstruction and back. Screenshots, not
+`toDataURL`, because the canvas keeps no buffer; movement in the scene's metres through the
+probe, not on screen, because a car driving at the camera barely moves there.
+
+## Photos pinned to the car (v10)
+
+`Photo.shows` already tied a photograph to a panel, and the report put it beside the mark in the
+list. On the car it was nowhere. Now every photograph that shows a panel stands beside that
+panel in the studio as a small framed card with a thin leader line back to it — on the damage
+step, on the review page's marked-up car (and so in the PNG sent with the report), on the
+desk's, and on each car in the desk's reconstruction. Tapping a card turns the camera to the
+panel and opens the photograph large.
+
+**Where a card stands is pure.** `cardPlacement(body, zone)` in `src/marker/cards.ts` returns
+`{ position, normal }` in the body's own metres — nose +Z, up +Y, the car's left +X. The zone's
+anchor is in the kit's units, like everything `claim-marker/1` stores, so it goes through
+`toWorld` first and the 0.6 m is a real 0.6 m on every body. The outward normal runs from the
+middle of the body's footprint on the floor — the kit's origin, where it stands every body —
+out through the anchor. Measured from there every normal leans upward: a wheel's or a bumper's
+card rises beside it instead of sinking into the floor, a door's stands out at about the height
+of its glass, the roof's above it. `test/cards.test.ts` pins one card to hand-computed metres,
+the directions to the frame (the left door's card at +X, the nose's at +Z, the roof's up), and
+for every zone of every body a unit normal, a card exactly 0.6 m from its anchor, never lower
+than it and farther from the middle than the panel. Several photographs of one panel stack,
+each a little down and to the right of the one before.
+
+**A texture, not `Html`.** The card is a plane on a drei `Billboard` with the photograph drawn
+into a canvas texture — cropped square, in a white frame with a grey edge so it reads against
+the pale studio and against paint — because drei's `Html` is DOM laid over the canvas and would
+be missing from the export. The texture is white until the image decodes, then asks for a frame
+(`invalidate`), which is what the reconstruction's on-demand loop needs to show it at all. The
+leader is a plain one-pixel `lineSegments`, not drei's `Line`: that is a fat-line shader to
+compile in every canvas a card is in, for a line meant to be thin anyway. Each card's placement
+is memoised, because the reconstruction re-renders on every frame of a playback.
+
+**Tagging by dragging.** Beside the car, the damage step lists this vehicle's photographs. Each
+thumbnail is `draggable` with the photo's place on the claim as `PHOTO_DRAG` data; the marker
+listens on its canvas and takes only that type. The drop point is cast from the studio camera
+against the body alone (the car's primitive is named `car`, so pins and cards never catch it),
+the hit goes back to kit units with `toModel`, and `nearestZone` names the panel for the same
+`tagPhoto` the photo-first suggestions use. While the drag is over the car the panel under it is
+tinted, the same tint as a hover, and the turntable stops the moment a drag enters the car, as it
+does at the first touch, so the panel under the pointer holds still. Under each thumbnail a select names the panel it shows — the
+same `tagPhoto` for a keyboard or a phone, where HTML drag is not reliable. A tagged photograph
+can be dropped again on another panel; nothing un-tags one. `shows` is still set only by
+`tagPhoto`, still **absent** from the document when unset, and nothing else in `claim/1` moves.
+
+**Tapping a card.** A card opens on a click that did not move (`e.delta ≤ 2`), not on the press
+a pin uses: a modal opening under a drag would swallow the drag, and a drag that merely starts
+on a card should turn the car. The press is still the card's, so the body behind it is not
+picked. `store.face(zone)` sets `facing` and closes whatever the picker had open; the camera rig
+eases to it through `cameraFor` at the current distance and gives up the moment the user drags.
+The photograph opens in a native modal `<dialog>` (`PhotoLightbox`), which brings Escape, the
+focus trap and the top layer with it, and takes `lang` as a prop because the desk renders it too.
+
+**The panel the camera faces has its cards stand aside.** `cameraFor` puts the camera on the
+azimuth through the point it faces, and a card stands on that same azimuth, 0.6 m out along the
+panel's normal — so seen from where a tap takes the camera, a card covers its own panel: the
+pin behind it is hidden by depth, the card takes the press meant for the pin, and tapping the pin
+of a panel with a photo ended with the photo over the damage. The placement stays; the rule is
+that **while the camera faces a panel, that panel's cards are not drawn and take no taps**.
+`facing` in the marker store is `{ point, zone }` — what the camera was last turned to face — set
+by a pin's selection (`select`, and `commit`, which selects the new mark) and by a card's tap
+(`face`); a new object each time, so a second tap on the same pin or card after a turn aims
+again, and it is also the camera rig's one trigger. It is cleared when the selection clears
+(`select(null)`, `pick`, `remove`, `load`) and by the rig the moment the customer drags the
+camera round — the same moment the rig gives up its goal — so the cards come back as soon as the
+view is the customer's own again. `PhotoCards` takes the zone as `faced` and reads it in render:
+the cards stay mounted, `visible={false}` with no handlers, so the photograph is not decoded
+again when they return. After a card's tap the card stands aside too, which is right: the
+lightbox is showing the photograph.
+
+**A pin's release is the pin's.** A pin's press selects it and the camera starts turning on the
+next frame, so a finger or a slow click comes up after the pin has moved out from under it — the
+reviewer measured 27–49 px in a 100–150 ms hold, against a tap target of about 29. On the
+customer's marker the body catches that release; on the desk's read-only copy nothing does, and a
+click that hits nothing is r3f's `onPointerMissed`, which cleared the selection it had just made
+and so brought the card back over the pin. `Scene` keeps a `pinPressed` ref: every press resets it
+(`onPointerDownCapture` on the canvas's wrapper, which runs before r3f sees the press), a pin's
+press sets it, and `onPointerMissed` leaves the selection alone when it is set. It is a ref written
+in handlers, not state.
+
+**The desk's copy can be turned; the review's cannot.** `ReportDocument`'s marked-up cars are
+now `readOnly`: the body takes no tap and tints nothing, there is no picker or hint, and the
+wheel scrolls the page instead of zooming. On the desk the wrapper takes pointer events, so an
+adjuster can walk round the car, tap a pin to face it, and tap a card to open the photograph.
+The customer's review copy keeps `pointer-events-none`: its canvas is the evidence exported at
+send, and it goes as it is framed.
+
+**The reconstruction** stands each car's cards inside that car's `car:<id>` group, which is in
+the body's own metres, so the same `cardPlacement` puts them in the same place and they drive
+in with the car during a playback. Nothing there can be tapped. The desk's tab shows them; the
+review page's 240-px copy leaves them out. A card there is about fifteen pixels, and timed on
+the smoke's software GL the damage-to-review step took the same eighteen seconds to show the
+review either way, but with the card in that canvas the page stayed busy for about five
+seconds more afterwards — on the page that records the replay at send.
+
+**What the smoke proves.** On the damage step (both languages) the photograph of A is dragged
+from its thumbnail onto the left front door where the camera faces it, and the draft says it
+shows `left_front_door`; before the drop the probe reports no card for it, and after it the
+frame `export()` takes (`toDataURL`) has at least 150 green pixels round where the DEV probe (`card(id)`) projects the card — the
+smoke's photograph is green because nothing else in the studio is. The car is then turned away
+by a drag from an empty corner, the card is clicked where it now is, and the camera's azimuth
+(`azimuth()`) comes back to within 5° of the door while the dialog named "Left front door" shows
+that photograph; Escape closes it. While the camera faces the door the card's green is gone from
+the frame, and the next drag brings it back. Then the door's own pin is clicked where it stands:
+it is selected, the camera turns to the door, the pin's violet dot is on the frame at its projected
+point, and there is no green within 40 px of it. On the desk, a tap on the car opens no picker;
+after `face(door)` and a turn off it, the card on the door opens the photograph; the door's pin,
+held down for 150 ms from a turned view and let go off it, is still selected once the camera has
+come round, with no green round it; and the Reconstruction tab's screenshot has the card's green by A.
 
 ## Two accounts, one moment (v10)
 
@@ -1518,191 +1671,56 @@ video check above, with no non-GET request sent while it does. The desk shows th
 two documents under it), so `window.__map` is whichever map was created last. Each map
 therefore also hangs its DEV handle on its own element, `.maplibregl-map.__map`.
 
-## The reconstruction in your hands (v10)
+## The desk's map of everything (v9)
 
-The map is a diagram seen from above, and the marked-up car is one car alone in a studio. An
-adjuster reading a collision wants the two together: the cars standing where they stopped, in
-their own paint, with their own damage, and a way to walk round them. The reconstruction is
-that — every vehicle on the diagram stood in the damage marker's studio where the map put it,
-orbitable, and nothing else. It is a third tab on the desk, and a small version under the map
-on the customer's review page, because it is one component.
+An inbox is a list because that is the order reports arrive in, which is the one thing an
+adjuster already knows. What they do not know from a list is that four of this morning's reports
+are the same junction, or that a street has had eleven in a month. The desk's map answers that
+and nothing else: it is a second way of reading the list it sits above, not a second screen.
 
-**One placement, the map's.** `placeVehicles(vehicles, impact)` in `src/marker/place.ts` is
-pure and gives each car `{ id, position, rotationY }` in the studio's frame — three's y-up,
-metres, the impact at the origin, **east +x and north −z**. The offset is the map layer's own:
-the `mercator` difference from the origin that `vehicleMatrix` translates by, divided by the
-metre at the impact (`metresToMercator`), so a car stands exactly where the diagram drew it;
-mercator runs (east, south) and so does the studio's (x, z). The heading is the same compass
-bearing: the body's nose is +Z, three's rotation-y turns +Z to (sin r, 0, cos r), and the nose
-must point at (sin h, 0, −cos h), so `rotationY = π − h`. The map needs `CAR_BASIS`, with its
-determinant of −1, because mercator's (east, south, up) labelling is left-handed; the studio's
-frame is right-handed like the body's, so here a plain rotation puts the car's left on its
-left. `test/place.test.ts` pins two cars at known offsets, the four compass points, and — for
-four cars at arbitrary offsets and headings — the offset, the nose and the car's left against
-`vehicleMatrix` itself, so the two scenes cannot drift apart.
+**The place rides on the receipt, as one more thing the summary carries.** `summarise()` in the
+claim server adds `lng` and `lat` beside the address. `GET /claims` stays receipts only — the
+desk never loads nine documents to draw nine points — and a receipt filed before that line
+existed simply has no place and is not on the map. It is still in the list, like a report of a
+kind that was never diagrammed; the map is a view of the inbox, never a filter on it.
 
-**The studio is shared, not copied.** `src/marker/Studio.tsx` is what `Scene.tsx` used to
-build inline: the photographic environment, the key and fill lights (with the moment's
-`lighting` from `lightingFor`, floored by `studioLight` as the marker's is), the reflector
-floor, the grid and the contact shadows, with the cars under the same `Suspense` as the
-environment. Two props differ between the scenes: `keyAt`, because the marker's body frame has
-its nose north and the reconstruction has north at −z, so each turns the sun into its own
-frame; and `reach`, how far out the floor, the grid's fade and the shadows must look right —
-sixteen metres for one car, a little past the camera's distance here. The single-car marker keeps its
-picking, its pins, its store and its camera rig untouched. Each car's materials are cloned and
-patched by `patchInstance` in `damageShader.ts`, the loop `Car.tsx` had and now shares, so
-Task 3's dents, scratches, cracks and cavities are on both cars, from the same packing.
+**One clustered source, and the pin says what the row says.** `src/adjuster/DeskMap.tsx` is one
+MapLibre map on the same keyless street basemap the customer's page uses, with one GeoJSON
+source and `cluster: true`. A point is coloured by its status in the colours the inbox rows
+already wear — brand blue new, amber in review, slate closed — grows when someone was hurt or
+the car cannot be driven, and wears a red ring when the server has seen a photograph, a VIN or a
+plate on it before. Nothing on it is an opinion: every one of those is a fact already on the
+receipt, and the pin is the same sentence as the row, drawn where it happened.
 
-**The origin and the framing come from where the cars came to rest.** The origin is the
-impact; without one, the middle of the resting positions — never the poses', or a playback
-would slide the floor along with the cars. The camera is placed once, from the south-east and
-above, 2.2 times a radius that reaches the farthest resting car plus half a car (at least five
-and a half metres), and may zoom out to twice that. A playback's cars drive in from beyond that frame and
-meet in it, which is the point of the view; zooming out shows the approach.
+**Which is why the map is fed the rows and not the receipts.** The two accounts of one accident
+stand in the same place — the other driver's page is seeded with the first one's — so handing
+`DeskMap` the receipts draws them as two points on top of each other, which clusters into a grey
+"2" at every zoom the clustering reaches and loses the status, the size and the ring for exactly
+the linked case. `inboxRows(...).map((row) => row.lead)` is the same grouping the list uses, so
+one accident is one row and one pin, in the colour of the account that leads it.
 
-**Read-only, and never exported.** Nothing in the scene has a pointer handler: `OrbitControls`
-is the only input, and nothing reaches the store or the document. The canvas renders on demand
-(`frameloop="demand"`) — a drag, a playback frame, a body arriving — and keeps no drawing
-buffer, because nothing reads it back: it is not the review's export, not in `attachments`, not
-in `claim/1`. Each car is a group named `car:<id>` in its body's own metres, nose +Z and left +X,
-so anything that belongs to a car — a photo card pinned to a panel — can stand in that group.
+**The heat layer is the other question.** Volume over a region rather than one report at a
+time, weighted by `point_count` so a cluster stands for the reports inside it instead of
+thinning out as the map zooms away from them.
 
-**The desk's tab.** `ReportView` holds a tab — Report, Compare (only with two accounts),
-Reconstruction (only when the diagram placed a vehicle) — defaulting to Compare and reading as
-Report until there is a second account to compare, so a report without one opens as it always
-did and one with one opens on the comparison, with no effect to reset between reports. The
-reconstruction's own `usePlayback` drives it: "Play" runs the same `posesAt` on the same clock
-as the map's playback; the scrubber is `seek(ms)` over the drive, and a scrub holds its frame
-— the hook keeps `playing` true and stops its loop — so the view tracks that in its own `held`
-state and offers Play again rather than a Stop with nothing to stop. At rest the scrubber sits
-at the end, which is where the cars are. Under it, each car's paint swatch and name in the
-desk's voice. The desk stays English (`lang="en"`).
+**The clusters are DOM markers, not a symbol layer.** A cluster's count is text, and text on a
+MapLibre style needs a glyph server — another host in the served page's CSP, and another thing
+to be down, for a number a `div` can hold. This is the same answer the scenario map gives:
+interaction and labels are DOM, the canvas draws.
 
-**The review page's small version.** Under the map figure, 240 px tall, only on the
-customer's own review (`edit`) and only when a vehicle has a position. It takes the map's
-`play.poses`, so pressing Play on the map drives the cars here too. The wheel does not zoom it
-(`zoom={false}`) and it takes no pointer below 640 px, so a wheel or a thumb scrolling the
-review over it scrolls the page — the review page's other scenes are read-only for the same
-reason.
+**"Only what's on the map" is the one place the map narrows the list.** The map and the list
+show the same reports — the status chips, the date chips (today, 7 days, 30 days) and the search
+all apply to both — and only that toggle makes the list follow the view. The filtering is pure
+(`src/adjuster/pins.ts`: `pins`, `inRange`, `inView`), which is where the two things that would
+otherwise be found by hand are pinned down: "today" is the desk's day from midnight rather than
+the last twenty-four hours, and a view that crosses the antimeridian has a west greater than its
+east and still holds its points.
 
-**What the smoke proves.** On the desk (`integration-smoke.mjs`, the policyholder's report with
-its red Camry and black SUV): the tab's screenshot has red paint round where the scene's DEV
-probe says the red car stands and dark paint round the black one; two screenshots 800 ms apart
-are identical (nothing moves on its own), and a mouse drag changes tens of thousands of pixels
-and moves the red car hundreds on screen; "Play" takes both cars metres up their routes and
-brings them back to rest to the centimetre; a scrub to the start holds them there, with Play
-offered. On the review page (`smoke.mjs`, both languages): car A's paint where the probe says A
-stands, and the map's Play moving A metres in the reconstruction and back. Screenshots, not
-`toDataURL`, because the canvas keeps no buffer; movement in the scene's metres through the
-probe, not on screen, because a car driving at the camera barely moves there.
-
-## Photos pinned to the car (v10)
-
-`Photo.shows` already tied a photograph to a panel, and the report put it beside the mark in the
-list. On the car it was nowhere. Now every photograph that shows a panel stands beside that
-panel in the studio as a small framed card with a thin leader line back to it — on the damage
-step, on the review page's marked-up car (and so in the PNG sent with the report), on the
-desk's, and on each car in the desk's reconstruction. Tapping a card turns the camera to the
-panel and opens the photograph large.
-
-**Where a card stands is pure.** `cardPlacement(body, zone)` in `src/marker/cards.ts` returns
-`{ position, normal }` in the body's own metres — nose +Z, up +Y, the car's left +X. The zone's
-anchor is in the kit's units, like everything `claim-marker/1` stores, so it goes through
-`toWorld` first and the 0.6 m is a real 0.6 m on every body. The outward normal runs from the
-middle of the body's footprint on the floor — the kit's origin, where it stands every body —
-out through the anchor. Measured from there every normal leans upward: a wheel's or a bumper's
-card rises beside it instead of sinking into the floor, a door's stands out at about the height
-of its glass, the roof's above it. `test/cards.test.ts` pins one card to hand-computed metres,
-the directions to the frame (the left door's card at +X, the nose's at +Z, the roof's up), and
-for every zone of every body a unit normal, a card exactly 0.6 m from its anchor, never lower
-than it and farther from the middle than the panel. Several photographs of one panel stack,
-each a little down and to the right of the one before.
-
-**A texture, not `Html`.** The card is a plane on a drei `Billboard` with the photograph drawn
-into a canvas texture — cropped square, in a white frame with a grey edge so it reads against
-the pale studio and against paint — because drei's `Html` is DOM laid over the canvas and would
-be missing from the export. The texture is white until the image decodes, then asks for a frame
-(`invalidate`), which is what the reconstruction's on-demand loop needs to show it at all. The
-leader is a plain one-pixel `lineSegments`, not drei's `Line`: that is a fat-line shader to
-compile in every canvas a card is in, for a line meant to be thin anyway. Each card's placement
-is memoised, because the reconstruction re-renders on every frame of a playback.
-
-**Tagging by dragging.** Beside the car, the damage step lists this vehicle's photographs. Each
-thumbnail is `draggable` with the photo's place on the claim as `PHOTO_DRAG` data; the marker
-listens on its canvas and takes only that type. The drop point is cast from the studio camera
-against the body alone (the car's primitive is named `car`, so pins and cards never catch it),
-the hit goes back to kit units with `toModel`, and `nearestZone` names the panel for the same
-`tagPhoto` the photo-first suggestions use. While the drag is over the car the panel under it is
-tinted, the same tint as a hover, and the turntable stops the moment a drag enters the car, as it
-does at the first touch, so the panel under the pointer holds still. Under each thumbnail a select names the panel it shows — the
-same `tagPhoto` for a keyboard or a phone, where HTML drag is not reliable. A tagged photograph
-can be dropped again on another panel; nothing un-tags one. `shows` is still set only by
-`tagPhoto`, still **absent** from the document when unset, and nothing else in `claim/1` moves.
-
-**Tapping a card.** A card opens on a click that did not move (`e.delta ≤ 2`), not on the press
-a pin uses: a modal opening under a drag would swallow the drag, and a drag that merely starts
-on a card should turn the car. The press is still the card's, so the body behind it is not
-picked. `store.face(zone)` sets `facing` and closes whatever the picker had open; the camera rig
-eases to it through `cameraFor` at the current distance and gives up the moment the user drags.
-The photograph opens in a native modal `<dialog>` (`PhotoLightbox`), which brings Escape, the
-focus trap and the top layer with it, and takes `lang` as a prop because the desk renders it too.
-
-**The panel the camera faces has its cards stand aside.** `cameraFor` puts the camera on the
-azimuth through the point it faces, and a card stands on that same azimuth, 0.6 m out along the
-panel's normal — so seen from where a tap takes the camera, a card covers its own panel: the
-pin behind it is hidden by depth, the card takes the press meant for the pin, and tapping the pin
-of a panel with a photo ended with the photo over the damage. The placement stays; the rule is
-that **while the camera faces a panel, that panel's cards are not drawn and take no taps**.
-`facing` in the marker store is `{ point, zone }` — what the camera was last turned to face — set
-by a pin's selection (`select`, and `commit`, which selects the new mark) and by a card's tap
-(`face`); a new object each time, so a second tap on the same pin or card after a turn aims
-again, and it is also the camera rig's one trigger. It is cleared when the selection clears
-(`select(null)`, `pick`, `remove`, `load`) and by the rig the moment the customer drags the
-camera round — the same moment the rig gives up its goal — so the cards come back as soon as the
-view is the customer's own again. `PhotoCards` takes the zone as `faced` and reads it in render:
-the cards stay mounted, `visible={false}` with no handlers, so the photograph is not decoded
-again when they return. After a card's tap the card stands aside too, which is right: the
-lightbox is showing the photograph.
-
-**A pin's release is the pin's.** A pin's press selects it and the camera starts turning on the
-next frame, so a finger or a slow click comes up after the pin has moved out from under it — the
-reviewer measured 27–49 px in a 100–150 ms hold, against a tap target of about 29. On the
-customer's marker the body catches that release; on the desk's read-only copy nothing does, and a
-click that hits nothing is r3f's `onPointerMissed`, which cleared the selection it had just made
-and so brought the card back over the pin. `Scene` keeps a `pinPressed` ref: every press resets it
-(`onPointerDownCapture` on the canvas's wrapper, which runs before r3f sees the press), a pin's
-press sets it, and `onPointerMissed` leaves the selection alone when it is set. It is a ref written
-in handlers, not state.
-
-**The desk's copy can be turned; the review's cannot.** `ReportDocument`'s marked-up cars are
-now `readOnly`: the body takes no tap and tints nothing, there is no picker or hint, and the
-wheel scrolls the page instead of zooming. On the desk the wrapper takes pointer events, so an
-adjuster can walk round the car, tap a pin to face it, and tap a card to open the photograph.
-The customer's review copy keeps `pointer-events-none`: its canvas is the evidence exported at
-send, and it goes as it is framed.
-
-**The reconstruction** stands each car's cards inside that car's `car:<id>` group, which is in
-the body's own metres, so the same `cardPlacement` puts them in the same place and they drive
-in with the car during a playback. Nothing there can be tapped. The desk's tab shows them; the
-review page's 240-px copy leaves them out. A card there is about fifteen pixels, and timed on
-the smoke's software GL the damage-to-review step took the same eighteen seconds to show the
-review either way, but with the card in that canvas the page stayed busy for about five
-seconds more afterwards — on the page that records the replay at send.
-
-**What the smoke proves.** On the damage step (both languages) the photograph of A is dragged
-from its thumbnail onto the left front door where the camera faces it, and the draft says it
-shows `left_front_door`; the frame `export()` takes (`toDataURL`) has no green before and
-thousands of green pixels after, round where the DEV probe (`card(id)`) projects the card — the
-smoke's photograph is green because nothing else in the studio is. The car is then turned away
-by a drag from an empty corner, the card is clicked where it now is, and the camera's azimuth
-(`azimuth()`) comes back to within 5° of the door while the dialog named "Left front door" shows
-that photograph; Escape closes it. While the camera faces the door the card's green is gone from
-the frame, and the next drag brings it back. Then the door's own pin is clicked where it stands:
-it is selected, the camera turns to the door, the pin's violet dot is on the frame at its projected
-point, and there is no green within 40 px of it. On the desk, a tap on the car opens no picker;
-after `face(door)` and a turn off it, the card on the door opens the photograph; the door's pin,
-held down for 150 ms from a turned view and let go off it, is still selected once the camera has
-come round, with no green round it; and the Reconstruction tab's screenshot has the card's green by A.
+**The map is told only when the points change.** The desk hands down a fresh array on every
+render, including the render its own `onBounds` causes; `DeskMap` compares the drawn collection
+before calling `setData` and refitting, or `fitBounds` would answer its own `moveend` for ever.
+That is the whole reason the bounds live in the desk's state and the data does not depend on
+them.
 
 ## Tell us everything, once (v9)
 

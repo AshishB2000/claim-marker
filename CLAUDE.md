@@ -41,7 +41,9 @@ unpacked as a video file, the desk's map (three reports at three places as three
 status colours, a cluster when it zooms out, a pin tapped open, the list narrowed to the view),
 and the demo portal (a second, shorter walk against the
 **built** page the claim server serves). Run it for anything touching `src/config.ts`,
-`src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`, `server/` or `src/adjuster/`.
+`src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`, `server/`, `src/adjuster/`,
+`src/map/record.ts` or `src/marker/Reconstruction.tsx` (`src/adjuster/Compare.tsx` is in the
+desk).
 
 Two end-to-end scripts need `npm run dev` running in another shell and reach the internet
 (map tiles, the geocoder):
@@ -50,6 +52,9 @@ Two end-to-end scripts need `npm run dev` running in another shell and reach the
 node scripts/smoke.mjs     # the whole flow: search, vehicles, drag a car and its heading, damage, send
 node scripts/shoot.mjs     # regenerates docs/*.png and asserts the attachments aren't blank frames
 ```
+
+`scripts/smoke.mjs` imports `../src/zones.ts` directly, so it needs a Node that strips types
+without a flag: 22.18+ or 23.6+ (22.6 has the stripping only behind `--experimental-strip-types`).
 
 `node scripts/assist-smoke.mjs` starts its own stub endpoint and its own dev server on **ports
 it finds free** (several of these scripts run side by side on this machine), so it needs no API
@@ -246,7 +251,7 @@ the receipt (`summarise()` adds `lng`/`lat`; `GET /claims` stays receipts only),
 without one — every report filed before that line — is simply not on the map while staying in
 the list. `src/adjuster/DeskMap.tsx` is one MapLibre instance (`import '../map/worker'` first,
 the same `STREETS` basemap) with one clustered GeoJSON source; the filtering is pure in
-`src/adjuster/pins.ts`. Five things there are easy to undo: the map is fed `inboxRows(...)`'
+`src/adjuster/pins.ts`. Five things there are easy to undo: the map is fed `inboxRows(...)`'s
 leads, never the receipts, because the two accounts of one accident stand in the same place and
 are one row and one pin; the clusters are **DOM markers**,
 because a count is text and text needs a glyph server — one more host in the CSP for a number a
@@ -313,7 +318,8 @@ the compare map from its own element (`.maplibregl-map.__map`, DEV) and the shar
 **The map tilts only inside a cinematic playback, and never with a marker in reach.**
 `MapScene` is still built `pitch 0, maxPitch 0`; `mode="cinematic"` raises `maxPitch` on the
 live instance at the first playback frame and drops it to 0 — after jumping back to the view
-it captured — on the last, or on a Stop, before the markers return. The DOM-marker maths
+it captured — on the last, or on a Stop, before the markers return (the cinematic effect is
+declared above the poses effect so that holds when both run in one flush at a run's end). The DOM-marker maths
 assumes a flat map; keep it that way. The playback clock is the hook's own (`usePlayback`
 holds it in a ref and advances it by wall delta × `rate`), not `performance.now()`; `seek`
 and slow motion depend on that. `seek(ms)` is a moment on that clock — past the drive, into
@@ -359,16 +365,25 @@ layer). The blob stays only for a ghost, or when there is no sun to throw a real
 — pure, tested against the recorded fixture — turns every **closed** building way into a
 polygon with a `height`: the `height` tag in metres, else `building:levels` × 3.2, else 8 m,
 with absurd values treated as no answer — the query asks for **every** building, not only the
-tagged ones, which is what the default is for. `parseRoad` hands them out beside `ways`, so a
+tagged ones, which is what the default is for. It **skips** `building=roof`, `carport`,
+`parking`, `garage` and `garages`: a fuel station's canopy or a parking structure is where
+accidents happen, and a block drawn over the cars would hide them. `parseRoad` hands them out beside `ways`, so a
 place with no road has no result to hang them on. The store keeps `buildings` beside `roadWays` and
-**persists neither**. `MapScene` draws them as one `fill-extrusion` layer added **first** of
+**persists neither**. `MapScene` draws them from one source as two layers added **first** of
 everything `style.load` adds — so the road, the paths, the cars and the shockwave are over it —
-and visible on `satellite` and `streets` only, like the road (`onRealGround` governs both). The
-grey stops short of white on purpose: at 0.85 over the brightest imagery no channel reaches
-200, so a wall never reads as the shockwave, the flow line or a label. Flat map, flat
-footprints **over** the satellite's own rooftops — which is the editing surface and what
-`compose()` puts in `attachments.scene`, so the smoke asserts it flat as well as tilted; it is
-a city only while a cinematic replay is tilting the camera. The diagram step and the review
+and visible on `satellite` and `streets` only, like the road (`onRealGround` governs both): a
+flat `buildings-flat` **`fill`** and a `buildings` **`fill-extrusion`** at opacity 0. `standCity`
+(`record.ts`) swaps their opacities where `maxPitch` is raised and dropped — the cinematic
+effect's first frame and `flatten`, and the recorder's cinematic run — with the opacity
+transitions at 0. That looks like one layer too many and is not: MapLibre draws an extrusion
+with a **depth pass** the car layer and every line are then tested against, so on a flat map a
+car under a roof vanishes; at opacity 0 the extrusion is not drawn at all, and a `fill` writes no
+depth. The smoke puts a 60 m block round car A and checks it is still red. The grey stops short
+of white on purpose: at 0.85 over the brightest imagery it stays at about 200, so a wall never
+reads as the shockwave, the flow line or a label. Flat map, flat footprints **over** the
+satellite's own rooftops — which is the editing surface and what `compose()` puts in
+`attachments.scene`, so the smoke asserts it flat as well as tilted (and that the tilted layer's
+height is `['get', 'height']`); it is a city only while a cinematic replay is tilting the camera. The diagram step and the review
 page both pass it from the store — the review page's map is the one the replay is recorded
 off — and `ReportDocument` takes `roads`/`buildings` as **props** because the desk renders it
 too and must have neither (`claim/1` carries the road in words and the buildings not at all).
@@ -500,9 +515,9 @@ packed by `src/marker/damageUniforms.ts` — pure, no value imports of three, so
 `test/damageUniforms.test.ts` runs in plain node). Points are body metres (`toWorld` of the
 kit's units) read from a varying `vCmBody = (transformed + nodeOffset) × PROPORTION`, so the
 same uniforms draw the same marks in the studio and on the map, wherever the car stands.
-Four things that look wrong and are not: the dent's shading is **baked into the albedo** —
-top-lit lip and dark lip — because the studio environment is near-uniform and a tilted normal
-alone did not show; the tilt's direction goes through a `mat3(modelViewMatrix)` varying and is
+Four things that look wrong and are not: the upper wall's shadow is **baked into the albedo**
+— the lower rim's highlight comes from the tilted normal — because the studio environment is
+near-uniform and a tilted normal alone did not show; the tilt's direction goes through a `mat3(modelViewMatrix)` varying and is
 **renormalised**, since through the map's matrix it is 1e-7 long; a missing part is an **unlit
 cavity colour, not a discard** — the shells have no floor and a discarded hood on the map shows
 the road through the car; and a missing **wheel** is its own kind code, or a missing fender
@@ -530,7 +545,11 @@ through a DEV `__probe` (`where(id)` in metres, `project(id)` in canvas pixels).
 marker exports. Each car is a group named `car:<id>` in its body's metres, for anything that
 belongs to a car to stand in. On the desk it is the third tab (`ReportView`); on the review
 page a small copy under the map plays along with the map's `play.poses`, with `zoom={false}`
-and no pointer under 640 px so the page still scrolls over it.
+and no pointer under 640 px so the page still scrolls over it. That copy is **mounted only once
+it is within a screen of the view** (`WhenNear` in `ReportDocument`, an `IntersectionObserver`
+with its 240 px held meanwhile): it is not in the export or the document, and a fourth WebGL
+context and its programs cost the review page's readiness and the send-time recording about
+7 s under software GL. The smoke scrolls to it before reading it.
 
 **Photos pinned to the car are cards in the WebGL frame, placed in metres**
 (`src/marker/cards.ts`, drawn by `PhotoCards.tsx`). `cardPlacement(body, zone)` is pure: the
@@ -542,7 +561,7 @@ fat-line shader compiled in every canvas). The desk's reconstruction shows the c
 page's small copy does not (15 px there, and seconds of main thread on the page that records
 the replay). Tagging by drag is `PHOTO_DRAG` data (the photo's index on the
 claim) dropped on the canvas, cast against the body alone (the car's primitive is named `car`),
-then `toModel` → `nearestZone` → `tagPhoto`; the select under each thumbnail is the same call.
+then `toModel` → `nearestZone` → `tagPhoto` (only for this vehicle's own photos); the select under each thumbnail is the same call, and its "Not one panel" clears a mis-dropped tag (`''` leaves `shows` out of the document).
 A card opens on a still click, not the press (a modal under a drag swallows it), through
 `store.face(zone)` and a `<dialog>` lightbox that takes `lang`. **The panel the camera faces
 has its cards stand aside** — not drawn, no handlers — because `cameraFor` and the card share
