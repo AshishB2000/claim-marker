@@ -1024,9 +1024,21 @@ both sets of cars from one clock so the two versions move together on one map �
 clock is `usePlayback`'s own, with a scrubber under it; see "Two accounts, one moment".
 
 **What the smoke proves.** Not that a file came back, which a recorder of a black rectangle
-also manages, but that the frame in the middle of the video is a real picture: it decodes the
-attachment into a `<video>`, seeks to half way, draws it to a canvas and counts distinct colours
-exactly as it does for the PNGs.
+also manages, but that the video shows the replay. `scripts/video-check.mjs` decodes it into a
+`<video>` in the page and checks four things. It must last at least 3 s. Its middle frame must
+have at least 40 distinct colours, the same count the PNGs are held to. The frames at ¼ and ¾
+must differ on at least 5 % of sampled pixels, a pixel counting as different when its channels
+differ by more than 48 in total. And the file must be at least 8 kB, which only guards against
+an empty file. The same check runs on the send-time replay (`smoke.mjs`), on the copy the server
+unpacks and on the desk's "Save video" (`integration-smoke.mjs`).
+
+Since v10 it is **not** a byte count. Measured on the same walks, a file's size follows how many
+distinct frames reached the encoder, and a loaded machine sends fewer. Full-length, moving,
+many-coloured replays came out between 40 and 84 kB, so the old 50 kB gate failed good ones.
+A recorder temporarily made to repaint one frozen frame for the whole run produced a file of
+243 kB with 475 colours. It passed both old byte gates (20 kB and 50 kB), and the motion check
+failed it at 0.0 % of pixels changed (0.7 % on the send-time walk). Real replays changed 10–37 %
+on the same measure.
 
 ## Watch it: the cinematic replay (v10)
 
@@ -1187,10 +1199,13 @@ beside the first. Each has its own `Timeline`, because each side's drive is as l
 routes, and at any moment of the one clock both sets are that many milliseconds into their own
 drive: the shorter drive holds its last pose (`frameAt` clamps) while the longer one keeps
 going. Stretching the shorter drive to the longer one's length would move both sets in step and
-make the comparison meaningless. `sharedTimeline(own, other)` is the one place that works out
-the clock they share: the first account's impact, over the longer of the two drives. The
-hook, `MapScene` and the recorder all read it, so the chase lasts until both sets have
-stopped and the scrubber runs across both. Earlier, each built this from the policyholder's
+make the comparison meaningless. `sharedTimeline(vehicles, ghosts, follow)` is the one place
+that works out the clock they share. Its length is the longer of the two drives. Its moment of
+impact is taken from the account the camera follows: the policyholder's by default, the other
+driver's after "Swap". If the followed account has nothing driving, it has no moment of its own,
+so the moment comes from the other account; `lead` records which account that is. The hook,
+`MapScene` and the recorder all read it, so the chase lasts until both sets have stopped, the
+scrubber runs across both, and all three agree where the slow-motion is. Earlier, each built this from the policyholder's
 drive alone, and the camera went back to the overhead while the other account's cars were still
 moving. The smoke found that. The frame carries `ghostPoses` beside `poses`, and `MapScene`
 takes it as a prop, so the ghosts' dashed routes are pushed once and only the bodies move per
@@ -1199,7 +1214,11 @@ frame.
 **The scrubber and the two ticks.** Under the compare map: one `<input type="range">` over
 the whole clock (`duration`: the longer drive plus the hold) driving `seek(ms)`, with each
 account's `impactMs` drawn as a tick on it. Dark for the policyholder, pale for the other
-driver, the same distinction the ghosts have on the map.
+driver, the same distinction the ghosts have on the map. An account with nothing driving gets no
+tick, on the scrubber or on the video's bar (`impactTickOf`). Its `impactMs` is only the clock's
+floor, `durationOf`'s 1.5 s at "the end", and a tick there would show a moment beside a headline
+saying the account has none. `hasReplay` (now in `playback.ts`) is the one test for "something
+drives", shared by the recorder, the headline and the ticks.
 
 **The headline.** `impactApart(a, b)` in `compare.ts` is the table's caption: "The two
 accounts' impacts are N m and S s apart." The metres are between each account's own point of
@@ -1217,11 +1236,14 @@ car. `MapScene` takes a `follow` prop, a vehicle id, and the chase goes behind t
 sets it to the other driver's own car (their `insured`), which is a ghost, so `shots` and
 `cameraAt` are given both accounts' vehicles and poses in one list. The two accounts usually
 both call their own car "a", so `Compare` prefixes the ghosts' ids (`other:a`); `CarLayer`
-already kept the two sets apart. The documents are not touched. A Swap mid-playback rebuilds
-the shot list, which cuts to the other car. The slow-motion and the shockwave stay with the
-first account's impact, because that is where the ring is drawn. Following the other car
-through it shows where that car was at the policyholder's moment, which is the disagreement
-this view exists to show.
+already kept the two sets apart. The documents are not touched. The moment moves with the
+car. After Swap the slow-motion is at the other driver's own impact, and the ring is drawn at
+their point of impact: `ghostImpact`, which `Compare` resolves with the same `impactPointOf`
+the headline measures from. Otherwise the swapped chase would reach the followed car's impact at
+full speed with no ring, which is the moment an adjuster swapped to see. A Swap mid-playback
+rebuilds the hook's run list and `MapScene`'s shot list together, so the rate and the camera
+stay in agreement. A video saved after a Swap records the same run: `record()` passes `follow`
+and `ghostImpact` through.
 
 **The recording is cinematic, and fits in seven seconds.** `MediaRecorder` records wall time,
 and a cinematic playback takes more wall time than the drive: the overhead, the ease into
@@ -1259,7 +1281,9 @@ colleague, and that should not change what the server holds.
 **What proves it.** `test/playback.test.ts`: two sets scrub in lockstep, each along its own
 route, and neither goes backwards; the shorter drive holds while the longer continues; the
 two impact ticks are ordered, and the gap between them equals the difference between the two
-drives; `sharedTimeline` keeps the chase going until the longer drive has ended; `follow` picks
+drives; `sharedTimeline` keeps the chase going until the longer drive has ended, and after a
+Swap slows into the followed account's impact unless that account has nothing driving; an
+account with `path: []` gets no tick; `follow` picks
 the chased car across both accounts, and an unknown id falls back to the reporter's own;
 `wallMsOf` charges the slow-motion window four times over. `test/record.test.ts`:
 `recordRate` leaves a short run alone, fits a long one exactly, and brings a real 40 m
@@ -1270,9 +1294,11 @@ that impact against `window.__play`, the two ticks against both timelines, and t
 seconds against their difference. It scrubs from 0.3 s to 2 s and requires both sets to have
 moved more than a metre. It presses "Watch both", seeks to the later impact, reads the compare
 map's bearing, presses "Swap", and reads it again. The two cars were built to set off in
-opposite directions, so the bearing goes from 0° to 180°. It presses Stop and checks the map
-is flat again. Last, "Save video" must hand over a `-both-accounts` file of more than 50 kB,
-with no non-GET request sent while it does. The desk shows three maps (the comparison and the
+opposite directions, so the bearing goes from 0° to 180°. At each account's tick it also reads
+the hook's rate and the map's light-trail width. Before Swap only the policyholder's tick is
+slow (rate 0.25, 7 px trails); after Swap only the other driver's is. It presses Stop and checks
+the map is flat again. Last, "Save video" must hand over a `-both-accounts` file that passes the
+video check above, with no non-GET request sent while it does. The desk shows three maps (the comparison and the
 two documents under it), so `window.__map` is whichever map was created last. Each map
 therefore also hangs its DEV handle on its own element, `.maplibregl-map.__map`.
 

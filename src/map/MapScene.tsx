@@ -20,7 +20,7 @@ import { translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
 import { SIZE } from '../vehicles/bodies'
 import { CarLayer, shockRing, type CarPose } from './carLayer'
-import { MAX_PITCH, cameraAt, ringAt, sharedTimeline, shotAt, shots, timelineOf, type Camera, type PlaybackMode, type Shot, type Timeline } from './playback'
+import { MAX_PITCH, cameraAt, ringAt, sharedTimeline, shotAt, shots, type Camera, type PlaybackMode, type SharedTimeline, type Shot } from './playback'
 import { damageCount, paintOverlay, recordPlayback, type OverlayLabel } from './record'
 import { reducedMotion } from './usePlayback'
 import { styleFor, type MapStyle } from './styles'
@@ -87,6 +87,8 @@ export type MapSceneProps = {
   ghosts?: ClaimVehicle[] | null
   /** the ghosts at a moment of the same playback; without it they stand where they came to rest */
   ghostPoses?: CarPose[] | null
+  /** the second account's point of impact: where the shockwave rings once `follow` has made the moment that account's */
+  ghostImpact?: LngLat | null
   /**
    * The vehicle the cinematic camera chases, by id — a ghost's id as readily as one of
    * `vehicles`, which is how the desk swaps to the other driver's car. Unset follows the
@@ -204,7 +206,7 @@ type Cinematic = {
   shots: Shot[]
   /** the id the shot list was built to chase, so a Swap mid-playback re-cuts it */
   follow: string | undefined
-  timeline: Timeline
+  timeline: SharedTimeline
   /** the view the customer left, restored exactly at the end */
   home: Camera
   ring: ReturnType<typeof shockRing>
@@ -625,27 +627,28 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       flatten(s)
       return
     }
-    if (!s.cine) {
+    // the chase, cut for the car it follows: whose moment it slows into (`sharedTimeline`, the
+    // same rule `usePlayback` sets the rate by) and the shots behind that car. The ghosts are in
+    // the list because one of them may be the car it follows.
+    const cut = () => {
       const ghosts = latest.current.ghosts ?? []
-      const timeline = sharedTimeline(timelineOf(latest.current.vehicles), ghosts.length ? timelineOf(ghosts) : null)
+      const timeline = sharedTimeline(latest.current.vehicles, ghosts, follow)
+      return { follow, timeline, shots: shots([...latest.current.vehicles, ...ghosts], timeline, follow) }
+    }
+    if (!s.cine) {
       s.cine = {
-        shots: [],
-        follow: undefined,
-        timeline,
+        ...cut(),
         home: { center: fromLL(map.getCenter()), zoom: map.getZoom(), pitch: 0, bearing: 0 },
         ring: shockRing(),
         step: 0,
         slow: false,
       }
       map.setMaxPitch(MAX_PITCH)
+    } else if (s.cine.follow !== follow) {
+      // "Swap" mid-playback: the chase moves to the other car, and the moment moves with it
+      Object.assign(s.cine, cut())
     }
     const c = s.cine
-    // built here and not at the start of the run, so "Swap" mid-playback re-cuts the chase onto
-    // the other car; the ghosts are in the list because one of them may be the car it follows
-    if (c.shots.length === 0 || c.follow !== follow) {
-      c.follow = follow
-      c.shots = shots([...latest.current.vehicles, ...(latest.current.ghosts ?? [])], c.timeline, follow)
-    }
     const cam = cameraAt(c.shots, clock, [...poses, ...(ghostPoses ?? [])], c.home)
     map.jumpTo({ center: ll(cam.center), zoom: cam.zoom, pitch: cam.pitch, bearing: cam.bearing })
     // slow motion: the travel paths brighten into light trails, their dashes racing
@@ -659,8 +662,9 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     }
     c.slow = slow
     // the shockwave: a ring out from the impact, decoration the document never sees
+    // — at the point of impact of whichever account the moment is
     const ring = ringAt(c.timeline, clock)
-    const impact = latest.current.impact
+    const impact = c.timeline.lead === 'own' ? latest.current.impact : (latest.current.ghostImpact ?? null)
     if (ring && impact) {
       c.ring.material.opacity = ring.opacity
       cars.setDecor([{ object: c.ring, at: impact, metres: ring.metres }])
@@ -712,6 +716,7 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
           vehicles: latest.current.vehicles,
           ghosts: latest.current.ghosts ?? [],
           impact: latest.current.impact,
+          ghostImpact: latest.current.ghostImpact ?? null,
           lang: latest.current.lang ?? 'en',
           mode: mode === 'cinematic' && !reducedMotion() ? 'cinematic' : 'diagram',
           follow: latest.current.follow,

@@ -16,7 +16,7 @@
 import { cap, conditionLabels, deskVoice, driverName, vehicleName } from './describe'
 import { KIND_INFO, instantOf, type Claim, type ClaimVehicle, type Incident, type Location, type Role } from './schema'
 import { bearing, distance, normalizeBearing, type LngLat } from '../geo'
-import { impactPlaceOf, lengthOf, routeOf, timelineOf } from '../map/playback'
+import { hasReplay, impactPlaceOf, timelineOf } from '../map/playback'
 import { zoneById } from '../zones'
 
 /** one thing the two accounts both speak to */
@@ -134,15 +134,12 @@ function matchVehicles(a: Claim, b: Claim): { pairs: Pair[]; unmatched: string[]
   return { pairs, unmatched }
 }
 
-/** the account has something driving, so playing it back gives its impact a moment as well as a place */
-const timed = (c: Claim) =>
-  c.vehicles.some((v) => {
-    const route = routeOf(v)
-    return route !== null && lengthOf(route) > 0
-  })
-
-/** where this account puts the impact: the cross its customer placed, or where its own cars meet */
-const impactPointOf = (c: Claim): LngLat | null => c.impact ?? impactPlaceOf(c.vehicles, timelineOf(c.vehicles).impactT)
+/**
+ * Where this account puts the impact: the cross its customer placed, or where its own cars meet.
+ * The headline measures between these, and the desk rings the other account's here once "Swap"
+ * has made the moment that account's — so the two can never be talking about different places.
+ */
+export const impactPointOf = (c: Claim): LngLat | null => c.impact ?? impactPlaceOf(c.vehicles, timelineOf(c.vehicles).impactT)
 
 /**
  * The headline above the comparison: how far apart the two accounts put the impact, and how far
@@ -160,7 +157,7 @@ export function impactApart(a: Claim, b: Claim): string {
   const pb = impactPointOf(b)
   if (!pa || !pb) return `${cap(partyLabel(pa ? b : a))}'s account does not put the impact anywhere on a map.`
   const metres = fmtMetres(distance(pa, pb))
-  const untimed = [timed(a) ? null : partyLabel(a), timed(b) ? null : partyLabel(b)].filter((s): s is string => s !== null)
+  const untimed = [hasReplay(a.vehicles) ? null : partyLabel(a), hasReplay(b.vehicles) ? null : partyLabel(b)].filter((s): s is string => s !== null)
   if (untimed.length > 0) {
     return `The two accounts' impacts are ${metres} apart; ${untimed.map((who) => `${who}'s account`).join(' and ')} ${untimed.length > 1 ? 'have' : 'has'} no route to time it from.`
   }

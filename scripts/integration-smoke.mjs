@@ -28,9 +28,10 @@ import { chromium } from 'playwright'
 import { readFileSync as readDictionary } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { sign } from '../server/session.mjs'
+import { describeVideo, readVideo, videoProblem } from './video-check.mjs'
 import { createServer } from 'node:http'
 import { createHmac } from 'node:crypto'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -336,10 +337,14 @@ const replayFile = files.find((f) => /^replay\.(webm|mp4)$/.test(f))
 if (!replayFile) fail(`the replay was not unpacked; have ${files.join(', ')}`)
 const replayRes = await fetch(`http://localhost:${API_PORT}/claims/${shown}/files/${replayFile}`, desk)
 if (replayRes.status !== 200 || !/^video\/(webm|mp4)$/.test(replayRes.headers.get('content-type') ?? '')) fail(`the replay is served as ${replayRes.status} ${replayRes.headers.get('content-type')}`)
-if ((await replayRes.arrayBuffer()).byteLength < 20_000) fail('the replay file is suspiciously small')
+// judged on what it shows once decoded, not on its size, which follows the machine's load
+const replayBody = Buffer.from(await replayRes.arrayBuffer())
+const servedReplay = await readVideo(page, `data:${replayRes.headers.get('content-type')};base64,${replayBody.toString('base64')}`)
+const servedWrong = videoProblem(servedReplay, replayBody.length)
+if (servedWrong) fail(`the replay the server unpacked is not a real recording: ${servedWrong}`)
 const png = await fetch(`http://localhost:${API_PORT}/claims/${shown}/files/scene.png`, desk)
 if (png.headers.get('content-type') !== 'image/png' || (await png.arrayBuffer()).byteLength < 10000) fail('the scene PNG is not served as a real image')
-ok(`server: filed as ${shown} with ${files.length} files, the diagram served as image/png`)
+ok(`server: filed as ${shown} with ${files.length} files, the diagram served as image/png, the replay as ${replayFile} (${describeVideo(servedReplay, replayBody.length)})`)
 
 if ((await fetch(`http://localhost:${API_PORT}/claims`)).status !== 401) fail('the desk API answered without a token')
 const anon = await fetch(`http://localhost:${API_PORT}/claims`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
@@ -597,20 +602,28 @@ ok(`desk: scrubbing 0.3 s → 2 s moves both sets — the policyholder's cars ${
 
 // "Watch both" chases the policyholder's car; "Swap" chases the other driver's. The chase looks
 // the way the car it follows set off, and the two were built to set off opposite ways, so the
-// camera's bearing says which car it is behind — no need to guess from where it is.
+// camera's bearing says which car it is behind — no need to guess from where it is. And the
+// moment goes with the car: the slow-motion is at the followed account's own tick and not at
+// the other's, 1.7 s away — asked of the hook (the rate it plays that moment at) and of the map
+// (the light trails it lights for slow motion), because both cut a shot list and must agree.
 await deskPage.getByRole('button', { name: 'Watch both' }).click()
 await deskPage.locator('[data-compare] .maplibregl-map.mk-playing').waitFor({ timeout: 5000 }).catch(() => fail('"Watch both" did not start'))
 const chased = () =>
   deskPage.evaluate(async () => {
-    const p = window.__play
-    // the later of the two impacts: the chase has to last until both drives are over, not
-    // hand the camera back while the other account's cars are still on their way
-    p.seek(Math.max(p.timeline.impactMs, p.ghostTimeline.impactMs))
-    await new Promise((r) => setTimeout(r, 400))
     // the compare view's own map: the two documents under it have one each, and `window.__map`
     // is whichever of the three was made last
     const map = document.querySelector('[data-compare] .maplibregl-map').__map
-    return { pitch: map.getPitch(), bearing: map.getBearing(), follow: document.querySelector('[data-compare]').dataset.follow }
+    const at = async (ms) => {
+      window.__play.seek(ms)
+      await new Promise((r) => setTimeout(r, 400))
+      return { rate: window.__play.rate, trail: map.getPaintProperty('paths-flow', 'line-width'), pitch: map.getPitch(), bearing: map.getBearing() }
+    }
+    const p = window.__play
+    const atMine = await at(p.timeline.impactMs)
+    // the later of the two impacts, last: the chase has to last until both drives are over, not
+    // hand the camera back while the other account's cars are still on their way
+    const atTheirs = await at(p.ghostTimeline.impactMs)
+    return { ...atTheirs, atMine, atTheirs, follow: document.querySelector('[data-compare]').dataset.follow }
   })
 const angle = (b) => Math.abs(((((b % 360) + 540) % 360) - 180))
 const mineChase = await chased()
@@ -621,6 +634,10 @@ if (mineChase.pitch < 40 || theirChase.pitch < 40) fail(`the chase did not tilt 
 if (angle(mineChase.bearing - 0) > 5) fail(`"Watch both" is not behind the policyholder's car, which set off north: bearing ${mineChase.bearing.toFixed(0)}°`)
 if (angle(theirChase.bearing - 180) > 5) fail(`"Swap" is not behind the other driver's car, which set off south: bearing ${theirChase.bearing.toFixed(0)}°`)
 if (mineChase.follow !== '' || !theirChase.follow.startsWith('other:')) fail(`the followed car did not change: ${mineChase.follow || '(default)'} → ${theirChase.follow}`)
+const slowAt = (c) => (c.atMine.rate < 1 && c.atMine.trail > 3 ? 'mine' : '') + (c.atTheirs.rate < 1 && c.atTheirs.trail > 3 ? 'theirs' : '')
+const momentSaid = (c) => `rate ${c.atMine.rate} / trail ${c.atMine.trail} px at the policyholder's tick, rate ${c.atTheirs.rate} / trail ${c.atTheirs.trail} px at the other driver's`
+if (slowAt(mineChase) !== 'mine') fail(`"Watch both" does not slow into the policyholder's impact alone: ${momentSaid(mineChase)}`)
+if (slowAt(theirChase) !== 'theirs') fail(`after "Swap" the slow-motion did not move to the other driver's impact: ${momentSaid(theirChase)}`)
 await deskPage.getByRole('button', { name: 'Stop' }).click()
 await deskPage.waitForTimeout(500)
 const deskHome = await deskPage.evaluate(() => {
@@ -628,7 +645,9 @@ const deskHome = await deskPage.evaluate(() => {
   return { pitch: map.getPitch(), bearing: map.getBearing() }
 })
 if (deskHome.pitch !== 0 || deskHome.bearing !== 0) fail(`the desk's map came back tilted (pitch ${deskHome.pitch}, bearing ${deskHome.bearing})`)
-ok(`desk: "Watch both" chases the policyholder's car (bearing ${mineChase.bearing.toFixed(0)}°), "Swap" the other driver's (${theirChase.bearing.toFixed(0)}°), and Stop hands the map back flat`)
+ok(
+  `desk: "Watch both" chases the policyholder's car (bearing ${mineChase.bearing.toFixed(0)}°) and slows into its impact (${momentSaid(mineChase)}); "Swap" chases the other driver's (${theirChase.bearing.toFixed(0)}°) and the slow-motion moves with it (${momentSaid(theirChase)}); Stop hands the map back flat`,
+)
 
 // "Save video" runs the same recorder over both accounts and hands the file over; nothing is uploaded
 const uploads = []
@@ -637,12 +656,14 @@ deskPage.on('request', watchUploads)
 const [download] = await Promise.all([deskPage.waitForEvent('download', { timeout: 30000 }), deskPage.getByRole('button', { name: 'Save video' }).click()]).catch(() => [null])
 deskPage.off('request', watchUploads)
 if (!download) fail('"Save video" did not hand over a file')
-const saved = await download.path()
-const savedBytes = statSync(saved).size
-if (!/-both-accounts\.(webm|mp4)$/.test(download.suggestedFilename())) fail(`the saved video is called ${download.suggestedFilename()}`)
-if (savedBytes < 50_000) fail(`the saved video of both accounts is only ${savedBytes} bytes`)
+const savedName = download.suggestedFilename()
+if (!/-both-accounts\.(webm|mp4)$/.test(savedName)) fail(`the saved video is called ${savedName}`)
 if (uploads.length) fail(`saving the video sent something: ${uploads.join(', ')}`)
-ok(`desk: "Save video" recorded both accounts to ${download.suggestedFilename()} (${(savedBytes / 1024).toFixed(0)} kB) and uploaded nothing`)
+const savedBody = await readFile(await download.path())
+const savedVideo = await readVideo(deskPage, `data:video/${savedName.endsWith('.mp4') ? 'mp4' : 'webm'};base64,${savedBody.toString('base64')}`)
+const savedWrong = videoProblem(savedVideo, savedBody.length)
+if (savedWrong) fail(`the saved video of both accounts is not a real recording: ${savedWrong}`)
+ok(`desk: "Save video" recorded both accounts to ${savedName} (${describeVideo(savedVideo, savedBody.length)}) and uploaded nothing`)
 if (otherErrors.length) fail(`the other driver's page threw: ${otherErrors.join('\n')}`)
 await otherCtx.close()
 

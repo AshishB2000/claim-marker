@@ -27,10 +27,10 @@ import {
   MAX_PITCH,
   cameraAt,
   frameAt,
-  lengthOf,
+  hasReplay,
+  impactTickOf,
   posesAt,
   ringAt,
-  routeOf,
   sharedTimeline,
   shotAt,
   shots,
@@ -78,21 +78,6 @@ export const MIME_CANDIDATES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8'
 /** the first codec `isSupported` accepts, or null when none of them are — never throws */
 export function pickMimeType(isSupported: (type: string) => boolean): string | null {
   return MIME_CANDIDATES.find(isSupported) ?? null
-}
-
-// ── is there anything to play ────────────────────────────────────────
-
-/**
- * Nothing to record: every vehicle that made it onto the map sits exactly where it started, so
- * a "playback" would just hold on one frame for several seconds. `durationOf` cannot say this
- * by itself — it always clamps to at least `MIN_MS`, even for a route with zero length — so
- * this looks at the routes directly instead, the same way `usePlayback`'s own `canPlay` does.
- */
-export function hasReplay(vehicles: ClaimVehicle[]): boolean {
-  return vehicles.some((v) => {
-    const route = routeOf(v)
-    return route !== null && lengthOf(route) > 0
-  })
 }
 
 // ── geometry: fitting the map canvas, the progress bar, the caption ────
@@ -202,6 +187,8 @@ export type RecordDeps = {
   /** a second account of the same accident, drawn as ghosts and driven by the same clock */
   ghosts?: ClaimVehicle[]
   impact: LngLat | null
+  /** the second account's point of impact: where the ring goes once `follow` has swapped the moment to that account */
+  ghostImpact?: LngLat | null
   lang: Lang
   /** `cinematic` drives the shot list — the camera, the slow-motion, the shockwave; anything else records the flat diagram */
   mode?: PlaybackMode
@@ -256,14 +243,18 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
   // the end of the clock: the longer of the two drives, held. A cinematic run's own end is
   // later than this — it eases the camera back to the overhead — and the video does not need
   // that: the last thing it shows is the impact, not the way home.
-  const shared = sharedTimeline(timeline, ghosts.length ? ghostTimeline : null)
+  // whose moment it slows into, and rings, follows the car it chases — the same rule the live
+  // playback keeps, so a video saved after "Swap" is the one the adjuster was watching
+  const shared = sharedTimeline(vehicles, ghosts, deps.follow)
+  const shockAt = shared.lead === 'own' ? impact : (deps.ghostImpact ?? null)
   const end = shared.ms + HOLD_MS
   const list = deps.mode === 'cinematic' ? shots([...vehicles, ...ghosts], shared, deps.follow) : null
   const rate = list ? recordRate(wallMsOf(list, end)) : 1
   const centre = map.getCenter()
   const home: Camera = { center: [centre.lng, centre.lat], zoom: map.getZoom(), pitch: 0, bearing: 0 }
-  // where each account's impact falls on the shared clock, as notches on the bar
-  const ticks = [timeline.impactMs / end, ...(ghosts.length ? [ghostTimeline.impactMs / end] : [])]
+  // where each account's impact falls on the shared clock, as notches on the bar — none for an
+  // account with nothing driving, which has no moment to mark
+  const ticks = [impactTickOf(vehicles, timeline), impactTickOf(ghosts, ghostTimeline)].filter((ms): ms is number => ms !== null).map((ms) => ms / end)
 
   const draw = (poses: CarPose[], t: number) => {
     ctx.fillStyle = '#0f172a'
@@ -325,10 +316,10 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
       if (list) {
         const cam = cameraAt(list, clock, [...poses, ...ghostPoses], home)
         map.jumpTo({ center: cam.center, zoom: cam.zoom, pitch: cam.pitch, bearing: cam.bearing })
-        const shock = ringAt(timeline, clock)
-        if (shock && impact && deps.ring) {
+        const shock = ringAt(shared, clock)
+        if (shock && shockAt && deps.ring) {
           deps.ring.material.opacity = shock.opacity
-          cars.setDecor([{ object: deps.ring, at: impact, metres: shock.metres }])
+          cars.setDecor([{ object: deps.ring, at: shockAt, metres: shock.metres }])
         } else cars.setDecor([])
       }
       draw(poses, clock / end)

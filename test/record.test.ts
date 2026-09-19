@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { newVehicle, type ClaimVehicle } from '../src/claim/schema'
 import { destination, type LngLat } from '../src/geo'
-import { MIME_CANDIDATES, VIDEO_MS, captionBaseline, damageCount, fitContain, hasReplay, pickMimeType, progressBarRect, recordRate } from '../src/map/record'
-import { HOLD_MS, shots, timelineOf, wallMsOf } from '../src/map/playback'
+import { MIME_CANDIDATES, VIDEO_MS, captionBaseline, damageCount, fitContain, pickMimeType, progressBarRect, recordRate } from '../src/map/record'
+import { HOLD_MS, hasReplay, shots, timelineOf, wallMsOf } from '../src/map/playback'
 
 const here: LngLat = [-73.9859, 40.7573]
 const car = (id: string, path: LngLat[], position: LngLat | null): ClaimVehicle => ({ ...newVehicle(id, 'insured', 'sedan', '#b91c1c'), path, position, heading: 0 })

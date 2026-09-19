@@ -268,16 +268,24 @@ impact off. It leaves out the ease back to the overhead. `send()` awaits `mapRef
 before `export()`, because a "Watch it" still running would leave the PNG tilted and fight the
 recorder for the camera. `record()` flattens the map and sets `recording`, so the playback
 effects leave the map alone until it finishes. `attachments.replay` is capped by `isReplay`
-(4 MB of data URL) and not persisted in the draft. The smoke decodes it and counts colours on
-the **middle frame**, because a valid video of a black rectangle is the failure that matters.
+(4 MB of data URL) and not persisted in the draft. The smokes judge a replay by decoding it
+(`scripts/video-check.mjs`), **never by its bytes**. The size follows machine load: real replays
+came out at 40–84 kB, and a frozen still at 243 kB. A replay must last ≥ 3 s, its **middle frame**
+must have ≥ 40 colours (a valid video of a black rectangle is the failure that matters), and ¼ vs
+¾ must differ on ≥ 5 % of pixels, otherwise nothing moves. There is also an 8 kB floor against
+an empty file.
 
 **Two accounts run on one clock, with a timeline each** (`usePlayback(vehicles, ghosts)`, the
 desk's `Compare`). Each account's cars run on their own `timelineOf`. Never stretch one account
 to the other's length, because the gap between the two `impactMs` values is the whole point.
-`sharedTimeline(own, other)` is the one place that works out the shared clock: the first
-account's impact over the longer drive, used for `shots` and the clock's length only. The hook,
-`MapScene` and the recorder all use it, or the chase ends while the other account is still
-moving. Ghosts move via the `ghostPoses` prop (their dashed routes stay static). `follow` names
+`sharedTimeline(vehicles, ghosts, follow)` is the one place that works out the shared clock:
+the longer drive, with the **followed** account's impact. After Swap the slow-motion and the
+ring (at `ghostImpact`) belong to the other driver; an account with nothing driving never leads.
+It is used for `shots`, the ring and the clock's length only. The hook (`usePlayback(…, follow)`,
+which re-cuts its running list on a Swap), `MapScene` and the recorder all use it, or the chase
+ends while the other account is still moving and the rate disagrees with the camera. An account
+with no route gets no impact tick (`impactTickOf`): its `impactMs` is only the clock's floor.
+`hasReplay` in `playback.ts` is the one "something drives" test. Ghosts move via the `ghostPoses` prop (their dashed routes stay static). `follow` names
 the chased car by id, a ghost's as readily as a real car's. That is why `Compare` prefixes the
 ghosts' ids (`other:a`), since both accounts usually call their own car "a"; the documents are
 never touched. The headline is `impactApart` in `compare.ts` (desk English, no verdict). "Save

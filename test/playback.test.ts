@@ -22,6 +22,7 @@ import {
   cameraAt,
   durationOf,
   impactPlaceOf,
+  impactTickOf,
   sharedTimeline,
   ease,
   endOf,
@@ -330,19 +331,51 @@ describe('two accounts on one clock', () => {
     expect(distance(theirs.center, poses.find((p) => p.id === 'other:a')!.position)).toBeCloseTo(BEHIND_M, 1)
   })
 
-  it("the chase lasts until the longer drive is over, and slows into the first account's impact", () => {
+  it("the chase lasts until the longer drive is over, and slows into the followed account's impact", () => {
     // the policyholder's drive is the short one; the other driver's is still going after it ends
+    const theirs = headOn.map((v) => ({ ...v, id: `other:${v.id}` }))
     const mine = timelineOf(shortDrive)
-    const theirs = timelineOf(headOn)
-    const shared = sharedTimeline(mine, theirs)
-    expect(shared.ms).toBe(theirs.ms)
-    expect(shared.impactMs).toBe(mine.impactMs)
-    expect(sharedTimeline(mine, null)).toBe(mine)
-    const list = shots(shortDrive, shared)
+    const other = timelineOf(theirs)
+    const shared = sharedTimeline(shortDrive, theirs)
+    expect(shared).toMatchObject({ ms: other.ms, impactMs: mine.impactMs, lead: 'own' })
+    expect(sharedTimeline(shortDrive, [])).toEqual({ ...mine, lead: 'own' })
+    const list = shots([...shortDrive, ...theirs], shared)
     // still behind the car at the other account's impact, and back overhead only after both drives and the hold
-    expect(shotAt(list, theirs.impactMs).chase).not.toBeNull()
-    expect(list[list.length - 1].at).toBe(theirs.ms + HOLD_MS)
+    expect(shotAt(list, other.impactMs).chase).not.toBeNull()
+    expect(list[list.length - 1].at).toBe(other.ms + HOLD_MS)
     expect(shotAt(list, mine.impactMs).rate).toBe(SLOW_RATE)
+    expect(shotAt(list, other.impactMs).rate).toBe(1)
+  })
+
+  it('after "Swap" the moment is the followed car\'s: the slow-motion moves to its account\'s impact', () => {
+    const theirs = headOn.map((v) => ({ ...v, id: `other:${v.id}` }))
+    const mine = timelineOf(shortDrive)
+    const other = timelineOf(theirs)
+    const swapped = sharedTimeline(shortDrive, theirs, 'other:a')
+    expect(swapped).toMatchObject({ ms: other.ms, impactMs: other.impactMs, lead: 'other' })
+    const list = shots([...shortDrive, ...theirs], swapped, 'other:a')
+    expect(shotAt(list, other.impactMs).rate).toBe(SLOW_RATE)
+    expect(shotAt(list, mine.impactMs).rate).toBe(1)
+    // following one of the policyholder's own cars is not a swap
+    expect(sharedTimeline(shortDrive, theirs, 'a').lead).toBe('own')
+  })
+
+  it('an account with nothing driving has no moment to lead with, whichever car is followed', () => {
+    const parked = headOn.map((v) => ({ ...v, id: `other:${v.id}`, path: [] }))
+    expect(sharedTimeline(shortDrive, parked, 'other:a')).toMatchObject({ impactMs: timelineOf(shortDrive).impactMs, lead: 'own' })
+    const stillMine = shortDrive.map((v) => ({ ...v, path: [] }))
+    const theirs = headOn.map((v) => ({ ...v, id: `other:${v.id}` }))
+    expect(sharedTimeline(stillMine, theirs)).toMatchObject({ impactMs: timelineOf(theirs).impactMs, lead: 'other' })
+  })
+
+  it('an account with no route gets no impact tick: its impactMs is only the floor of the clock', () => {
+    const parked = headOn.map((v) => ({ ...v, path: [] }))
+    const tl = timelineOf(parked)
+    // what the tick would have said: `durationOf`'s floor and "the end", which is no moment at all
+    expect(tl).toMatchObject({ ms: MIN_MS, impactT: 1, impactMs: MIN_MS })
+    expect(impactTickOf(parked, tl)).toBeNull()
+    expect(impactTickOf([], timelineOf([]))).toBeNull()
+    expect(impactTickOf(headOn, timelineOf(headOn))).toBe(timelineOf(headOn).impactMs)
   })
 
   it('an account that never placed the cross still has a place: where its two cars meet', () => {

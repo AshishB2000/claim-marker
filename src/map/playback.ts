@@ -33,6 +33,20 @@ export function lengthOf(points: LngLat[]): number {
   return m
 }
 
+/**
+ * Something drives: at least one vehicle on the map has a route with some length. Without that
+ * a playback just holds on one frame, and an account has no moment of impact at all —
+ * `durationOf` still clamps to `MIN_MS` and `impactTimeOf` still says 1, but those are floors,
+ * not an answer. Everything that asks "is there a replay" or "does this account have a moment"
+ * asks this, so the recorder, the headline and the ticks can never disagree about it.
+ */
+export function hasReplay(vehicles: ClaimVehicle[]): boolean {
+  return vehicles.some((v) => {
+    const route = routeOf(v)
+    return route !== null && lengthOf(route) > 0
+  })
+}
+
 /** the point `metres` along the route and the way it is heading there; null bearing for a route with no length */
 export function along(points: LngLat[], metres: number): { position: LngLat; bearing: number | null } {
   let left = Math.max(0, metres)
@@ -142,18 +156,39 @@ export function timelineOf(vehicles: ClaimVehicle[]): Timeline {
   return { ms, impactT, impactMs: impactT * ms }
 }
 
+/** the clock two accounts share, and whose moment of impact it slows into */
+export type SharedTimeline = Timeline & { lead: 'own' | 'other' }
+
 /**
- * The timeline two accounts share on the desk: the first account's impact — the slow-motion and
- * the shockwave are its — over the longer of the two drives, so a cinematic camera stays in the
- * chase until both sets have come to rest and a scrubber runs the whole of both. For the shot
- * list and the length of the clock only: each account's own cars still run on its own
- * `timelineOf`, or the shorter drive would be stretched to the longer one's pace.
+ * The timeline two accounts share on the desk: as long as the longer of the two drives — so a
+ * cinematic camera stays in the chase until both sets have come to rest and a scrubber runs the
+ * whole of both — and slowing into the moment of the account the camera follows. `follow`
+ * naming one of `ghosts` makes that the other account's: after "Swap" the slow-motion and the
+ * shockwave are the followed car's own story, not the one it was swapped away from. An account
+ * with nothing driving has no moment (`hasReplay`), so then it is the other's; `lead` says whose.
+ *
+ * For the shot list, the ring and the length of the clock only: each account's own cars still
+ * run on its own `timelineOf`, or the shorter drive would be stretched to the longer one's pace.
+ * With no ghosts it is `timelineOf(vehicles)`, which is every caller on the customer's page.
  */
-export function sharedTimeline(own: Timeline, other: Timeline | null): Timeline {
-  if (!other) return own
+export function sharedTimeline(vehicles: ClaimVehicle[], ghosts: ClaimVehicle[], follow?: string): SharedTimeline {
+  const own = timelineOf(vehicles)
+  if (ghosts.length === 0) return { ...own, lead: 'own' }
+  const other = timelineOf(ghosts)
+  const wanted = follow !== undefined && ghosts.some((v) => v.id === follow) ? 'other' : 'own'
+  const lead = hasReplay(wanted === 'own' ? vehicles : ghosts) ? wanted : wanted === 'own' ? 'other' : 'own'
   const ms = Math.max(own.ms, other.ms)
-  return { ms, impactMs: own.impactMs, impactT: own.impactMs / ms }
+  const impactMs = (lead === 'own' ? own : other).impactMs
+  return { ms, impactMs, impactT: impactMs / ms, lead }
 }
+
+/**
+ * Where an account's impact is marked on the shared clock — a tick on the desk's scrubber, a
+ * notch on the video's bar — or null for an account with nothing driving, whose `impactMs` is
+ * only `durationOf`'s floor: a tick there would put a moment on screen that the account never
+ * gave, beside a headline saying it has none.
+ */
+export const impactTickOf = (vehicles: ClaimVehicle[], timeline: Timeline): number | null => (hasReplay(vehicles) ? timeline.impactMs : null)
 
 // ── the clock ─────────────────────────────────────────────────────────
 

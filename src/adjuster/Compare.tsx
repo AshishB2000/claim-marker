@@ -11,7 +11,7 @@
  * on the same terms: not in the code, not in a message, not in a comment, this one included.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { compare, impactApart, type Row } from '../claim/compare'
+import { compare, impactApart, impactPointOf, type Row } from '../claim/compare'
 import { deskVoice } from '../claim/describe'
 import { findings, type Finding } from '../claim/plausibility'
 import { distance, type LngLat } from '../geo'
@@ -19,6 +19,7 @@ import type { Claim, ClaimVehicle } from '../claim/schema'
 import type { Lang } from '../i18n'
 import { Icon } from '../app/icons'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
+import { impactTickOf } from '../map/playback'
 import { usePlayback } from '../map/usePlayback'
 import { ReportDocument } from '../app/ReportDocument'
 import type { Receipt } from './Desk'
@@ -125,8 +126,9 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
   const ghosts = useMemo(() => (reports.length >= 2 ? orderPair(reports)[1].claim.vehicles.map((v) => ({ ...v, id: GHOST + v.id })) : NO_VEHICLES), [reports])
   // one clock, two accounts: each side drives its own routes over its own duration, and the
   // moment of impact on that shared clock is what the two ticks under the map compare
-  const play = usePlayback(pair?.[0].claim.vehicles ?? NO_VEHICLES, ghosts)
   const [follow, setFollow] = useState<string | null>(null)
+  // the followed car's account is also whose moment the cinematic run slows into and rings
+  const play = usePlayback(pair?.[0].claim.vehicles ?? NO_VEHICLES, ghosts, follow ?? undefined)
   const [saving, setSaving] = useState(false)
   const [unsaved, setUnsaved] = useState(false)
   const map = useRef<MapSceneHandle>(null)
@@ -145,10 +147,12 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
   const rightLoc = right.claim.incident.location
   const center: LngLat | null = leftLoc ? [leftLoc.lng, leftLoc.lat] : rightLoc ? [rightLoc.lng, rightLoc.lat] : null
   const theirCar = ghosts.find((v) => v.role === 'insured' && v.position)
+  // a tick only for an account with something driving: one without has no moment, and the
+  // headline above the table says so — a tick at `durationOf`'s floor would contradict it
   const ticks = [
-    { at: play.timeline.impactMs, color: '#0f172a', who: "the policyholder's account" },
-    ...(ghosts.length > 0 ? [{ at: play.ghostTimeline.impactMs, color: '#94a3b8', who: "the other driver's account" }] : []),
-  ]
+    { at: impactTickOf(left.claim.vehicles, play.timeline), color: '#0f172a', who: "the policyholder's account" },
+    { at: impactTickOf(ghosts, play.ghostTimeline), color: '#94a3b8', who: "the other driver's account" },
+  ].flatMap((tick) => (tick.at === null ? [] : [{ ...tick, at: tick.at }]))
 
   /** the same recorder the customer's page runs at send time, over both accounts; nothing leaves the desk */
   const save = async () => {
@@ -183,6 +187,7 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
               vehicles={left.claim.vehicles}
               ghosts={ghosts}
               ghostPoses={play.ghostPoses}
+              ghostImpact={impactPointOf(right.claim)}
               impact={left.claim.impact}
               selected={null}
               interactive={false}

@@ -23,8 +23,12 @@ const NO_GHOSTS: ClaimVehicle[] = []
  * one clock: at any moment both sets are that many milliseconds into their own drive, and the
  * shorter one holds its last pose (`frameAt` clamps) while the longer one keeps going. That is
  * what makes the two impact moments comparable at all — they are two marks on one ruler.
+ *
+ * `follow` is the car the cinematic camera chases, as `MapScene` is told; the run slows into
+ * that car's account's impact (`sharedTimeline`), so the hook needs it to set the rate by the
+ * same shot list the camera is cut from — before a run and, after a "Swap", during one.
  */
-export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | null) {
+export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | null, follow?: string) {
   const [frame, setFrame] = useState<Frame | null>(null)
   const others = ghosts ?? NO_GHOSTS
   const timeline = useMemo(() => timelineOf(vehicles), [vehicles])
@@ -35,8 +39,8 @@ export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | 
   const base = useRef(1)
   const run = useRef<{ list: Shot[] | null; end: number } | null>(null)
 
-  /** the clock both accounts share: the first account's impact over the longer of the two drives */
-  const shared = useMemo(() => sharedTimeline(timeline, others.length ? ghostTimeline : null), [timeline, ghostTimeline, others])
+  /** the clock both accounts share: the longer of the two drives, slowing into the followed account's impact */
+  const shared = useMemo(() => sharedTimeline(vehicles, others, follow), [vehicles, others, follow])
   /** the whole clock a scrubber runs across: the longer drive plus the hold on the last frame */
   const duration = shared.ms + HOLD_MS
 
@@ -62,7 +66,7 @@ export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | 
   const start = useCallback(
     (mode: PlaybackMode = 'diagram') => {
       cancelAnimationFrame(raf.current)
-      const list = mode === 'cinematic' && !reducedMotion() ? shots([...vehicles, ...others], shared) : null
+      const list = mode === 'cinematic' && !reducedMotion() ? shots([...vehicles, ...others], shared, follow) : null
       const r = { list, end: Math.max(list ? endOf(list) : 0, duration) }
       run.current = r
       clock.current = 0
@@ -77,8 +81,16 @@ export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | 
       }
       raf.current = requestAnimationFrame(tick)
     },
-    [vehicles, others, shared, duration, show, stop],
+    [vehicles, others, shared, follow, duration, show, stop],
   )
+
+  // "Swap" mid-run: the moment moves with the followed car, so the running cinematic list —
+  // which sets the rate — is re-cut with it, exactly as `MapScene` re-cuts the camera's. Its end
+  // does not move: that is the longer drive's, whichever car is followed.
+  useEffect(() => {
+    const r = run.current
+    if (r?.list) r.list = shots([...vehicles, ...others], shared, follow)
+  }, [vehicles, others, shared, follow])
 
   /**
    * Hold the playback at one moment on its own clock, in ms — the clock `clock` reports, which
@@ -91,7 +103,9 @@ export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | 
       cancelAnimationFrame(raf.current)
       // the clock `ms` on from zero at rate 1: the same clamp the run itself advances under
       clock.current = advance(0, ms, 1, run.current?.end ?? duration)
-      show(base.current)
+      // the rate this moment plays at, slow-motion included, so a held frame reports it as a running one would
+      const list = run.current?.list
+      show(base.current * (list ? shotAt(list, clock.current).rate : 1))
     },
     [duration, show],
   )

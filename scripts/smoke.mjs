@@ -14,6 +14,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { stampExif } from './exif-write.mjs'
+import { describeVideo, readVideo, videoProblem } from './video-check.mjs'
 import { chromium } from 'playwright'
 
 const args = process.argv.slice(2)
@@ -945,44 +946,16 @@ ok('sent: the whole report — kind, conditions, VIN, the other driver and their
 ok(`sent: ${doc.reference}, scene ${sceneKb} kB, damage PNG ${Math.round(doc.attachments.damage.a.length / 1024)} kB`)
 
 // ── the replay, recorded at send time ─────────────────────────────────
-// A video data URL of a real size, and — the part that matters — a real frame inside it: the
-// same distinct-colour count the PNGs get, on a frame seeked out of the middle of the video.
-// A recorder that captured a canvas before three.js had drawn anything makes a perfectly
-// valid file of a black rectangle, and only reading the pixels back catches that.
+// Judged on what it shows, not on its size, which follows the machine's load: decoded in the
+// page, it has to last, have a real picture in its middle frame, and move between its first
+// and last quarters (scripts/video-check.mjs has the thresholds and why).
 const replay = doc.attachments.replay
 if (!/^data:video\/(webm|mp4)(;[^,]*)?;base64,/.test(replay ?? '')) fail(`no replay was attached: ${String(replay).slice(0, 40)}`)
-const replayKb = Math.round(replay.length / 1024)
-// decoded before the size is judged, so a small file says what it holds: a short run, or a long
-// one of empty frames, are two different failures
-const frame = await page.evaluate(async (src) => {
-  const v = document.createElement('video')
-  v.muted = true
-  v.src = src
-  await new Promise((ok, no) => {
-    v.onloadeddata = ok
-    v.onerror = () => no(new Error('the replay does not decode'))
-  })
-  // a MediaRecorder webm often reports an infinite duration until it has been read to the end
-  if (!Number.isFinite(v.duration)) {
-    v.currentTime = 1e9
-    await new Promise((ok) => (v.ontimeupdate = ok))
-  }
-  const middle = v.duration / 2
-  v.currentTime = middle
-  await new Promise((ok) => (v.onseeked = ok))
-  const c = document.createElement('canvas')
-  c.width = v.videoWidth
-  c.height = v.videoHeight
-  const ctx = c.getContext('2d')
-  ctx.drawImage(v, 0, 0)
-  const px = ctx.getImageData(0, 0, c.width, c.height).data
-  const seen = new Set()
-  for (let i = 0; i < px.length; i += 4 * 499) seen.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2])
-  return { colours: seen.size, width: c.width, height: c.height, seconds: Math.round(v.duration * 10) / 10 }
-}, replay)
-if (replayKb < 50) fail(`the replay is suspiciously small (${replayKb} kB: ${frame.seconds} s at ${frame.width}×${frame.height}, ${frame.colours} colours in its middle frame)`)
-if (frame.colours < 40) fail(`the middle of the replay is a blank frame (${frame.colours} colours)`)
-ok(`sent: a ${replayKb} kB replay, ${frame.seconds} s at ${frame.width}×${frame.height}, and its middle frame is a real picture (${frame.colours} colours)`)
+const replayBytes = Math.round((replay.length - replay.indexOf(',') - 1) * 0.75)
+const replayVideo = await readVideo(page, replay)
+const replayWrong = videoProblem(replayVideo, replayBytes)
+if (replayWrong) fail(`the replay is not a real recording: ${replayWrong}`)
+ok(`sent: a replay of ${describeVideo(replayVideo, replayBytes)}`)
 
 // ── a refresh lands on the confirmation, not the first step ────────────
 await page.reload({ waitUntil: 'networkidle' })
