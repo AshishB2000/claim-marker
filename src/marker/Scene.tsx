@@ -13,7 +13,7 @@ import { ORBIT_TARGET, cameraFor } from './camera'
 import { toWorld } from '../vehicles/bodies'
 import type { Lighting } from '../scene/lighting'
 import type { V3 } from '../zones'
-import { MAX_MARKS } from './damageUniforms'
+import { MAX_MARKS, renders } from './damageUniforms'
 import { Studio } from './Studio'
 
 /**
@@ -95,7 +95,11 @@ function Pin({
   )
 }
 
-/** `dots`: a mark the shader renders shrinks to a dot; past `MAX_MARKS` the pin keeps its number */
+/**
+ * `dots`: a mark the shader draws — one of the first `MAX_MARKS`, of a kind its zone's surface
+ * takes (`renders`) — shrinks to a dot; every other pin keeps its number, so a crack on a
+ * bumper or a scratch on a windshield, which the paint does not show, never fades from view.
+ */
 function Markers({ store, accent, dots }: { store: MarkerStore; accent: string; dots: boolean }) {
   const vehicle = useStore(store, (s) => s.vehicle)
   const damages = useStore(store, (s) => s.damages)
@@ -109,7 +113,7 @@ function Markers({ store, accent, dots }: { store: MarkerStore; accent: string; 
           at={toWorld(vehicle, d.point)}
           color={SEVERITY_COLOR[d.severity]}
           label={String(i + 1)}
-          dot={dots && i < MAX_MARKS}
+          dot={dots && i < MAX_MARKS && renders(d, vehicle)}
           ring={i === selected ? accent : undefined}
           onPick={(e) => {
             e.stopPropagation()
