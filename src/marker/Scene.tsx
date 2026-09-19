@@ -334,14 +334,14 @@ export function Scene({
         // for the smoke: the store behind this canvas, where a point in the kit's units lands on it,
         // where a photo's card is on it (null until it is in the scene), and which way round the camera stands
         if (import.meta.env.DEV) {
-          const onCanvas = (v: THREE.Vector3) => [((v.x + 1) / 2) * gl.domElement.width, ((1 - v.y) / 2) * gl.domElement.height]
+          const pixels = (v: THREE.Vector3) => [((v.x + 1) / 2) * gl.domElement.width, ((1 - v.y) / 2) * gl.domElement.height]
           Object.assign(gl.domElement, {
             __probe: {
               store,
-              project: (p: V3) => onCanvas(new THREE.Vector3(...toWorld(store.getState().vehicle, p)).project(camera)),
+              project: (p: V3) => pixels(new THREE.Vector3(...toWorld(store.getState().vehicle, p)).project(camera)),
               card: (id: number) => {
                 const card = scene.getObjectByName(`card:${id}`)
-                return card ? onCanvas(card.getWorldPosition(new THREE.Vector3()).project(camera)) : null
+                return card ? pixels(card.getWorldPosition(new THREE.Vector3()).project(camera)) : null
               },
               azimuth: () => Math.atan2(camera.position.x, camera.position.z),
             },
