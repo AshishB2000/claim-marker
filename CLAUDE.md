@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 583 tests across 36 files
+npm test               # vitest, 593 tests across 37 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -35,7 +35,7 @@ prefill, the offline outbox, the server, the rate limit, the served page's CSP, 
 signature, the desk, retention, the reuse signals (the same photograph and VIN under two
 customers), **both drivers** (the scene step's QR invite, a second browser as the other driver
 seeing nothing of the first report, their account filed once, both side by side on the desk),
-the replay unpacked as a video file, and the demo portal (a second, shorter walk against the
+the desk's 3D reconstruction tab (both paints, an orbit, a play and a scrub), the replay unpacked as a video file, and the demo portal (a second, shorter walk against the
 **built** page the claim server serves). Run it for anything touching `src/config.ts`,
 `src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`, `server/` or `src/adjuster/`.
 
@@ -443,6 +443,24 @@ persisted, never in `claim/1`; `ReportDocument` passes `tools` only off the cust
 because the review canvas is the send-time export. `CarPose.damages` must be filled by every
 pose source (`posesOf`, `posesAt`), or a replay strips the marks.
 
+**The reconstruction is the map's placement read in metres, and read-only**
+(`src/marker/Reconstruction.tsx`, placed by `src/marker/place.ts`). The studio's frame is
+three's y-up with **east +x and north −z**, the impact at the origin; the offset is the same
+`mercator` difference `vehicleMatrix` uses, divided by `metresToMercator` at the impact, and
+`rotationY = π − heading`. No `CAR_BASIS` here: the studio is right-handed like the body, so a
+plain rotation keeps the car's left on its left — `test/place.test.ts` checks nose and left
+against `vehicleMatrix`. The origin and the camera come from the **resting** vehicles, never
+the playback's poses, or the floor slides with the cars. `Studio.tsx` is the marker's studio
+shared by both scenes; its `keyAt` is per scene because the marker's frame has the nose north
+and the reconstruction has north at −z. The canvas renders on demand and keeps no drawing
+buffer — it is never exported — so the smokes read it by **screenshot**, and find the cars
+through a DEV `__probe` (`where(id)` in metres, `project(id)` in canvas pixels). Its wrapper is
+`[data-reconstruction]`, **not** `.cm-root`: the smoke indexes `.cm-root canvas` for the
+marker exports. Each car is a group named `car:<id>` in its body's metres, for anything that
+belongs to a car to stand in. On the desk it is the third tab (`ReportView`); on the review
+page a small copy under the map plays along with the map's `play.poses`, with `zoom={false}`
+and no pointer under 640 px so the page still scrolls over it.
+
 **drei `<Html>` paints over the marker's canvas** regardless of 3D depth; anything that must
 appear above it has to be `<Html>` too with a higher `zIndexRange`.
 
@@ -484,7 +502,7 @@ public/sw.js      the offline shell; its precache list is patched in by vite.con
 src/map/          MapLibre scene, the three.js car layer, the transform maths, styles
 src/scene/        what the place and the time say for themselves: the weather, the sun, the road
 src/vehicles/     model loading + paint re-authoring, body previews, the paint palette
-src/marker/       the 3D damage marker
+src/marker/       the 3D damage marker, and the reconstruction that stands every car in its studio
 src/assist/       the optional assistant: the wire contract and its parsers, the metric frame, the client
 src/zones.ts models.ts schema.ts geo.ts geocode.ts   shared
 server/           the reference claim server, its session tokens, retention and reuse signals (no dependencies)
