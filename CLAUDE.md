@@ -34,7 +34,8 @@ starts its own claim server, webhook receiver and host page and proves sessions,
 prefill, the offline outbox, the server, the rate limit, the served page's CSP, the webhook
 signature, the desk, retention, the reuse signals (the same photograph and VIN under two
 customers), **both drivers** (the scene step's QR invite, a second browser as the other driver
-seeing nothing of the first report, their account filed once, both side by side on the desk),
+seeing nothing of the first report, their account filed once, both side by side on the desk,
+on one clock: the two impact ticks where they were built, "Swap" moving the chase, "Save video"),
 the replay unpacked as a video file, and the demo portal (a second, shorter walk against the
 **built** page the claim server serves). Run it for anything touching `src/config.ts`,
 `src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`, `server/` or `src/adjuster/`.
@@ -258,10 +259,31 @@ the **receipt's** `party` (set by the server from the token), never the document
 **The replay is recorded at send time and never holds a report up** (`src/map/record.ts`,
 `MapSceneHandle.record()`). It shares the PNG export's hand-painting of the DOM-only pills and
 impact cross, drives the cars through the same `poses` as the on-screen playback, picks VP9 →
-VP8 → WebM → MP4 by `isTypeSupported`, and races an 8-second ceiling in `Review.tsx`; any
-failure sends without it. `attachments.replay` is capped by `isReplay` (4 MB of data URL) and
-not persisted in the draft. The smoke decodes it and counts colours on the **middle frame**,
-because a valid video of a black rectangle is the failure that matters.
+VP8 → WebM → MP4 by `isTypeSupported`, and `Review.tsx` waits `VIDEO_MS` + 3 s for it; any
+failure sends without it. It is the **cinematic** run (`record('cinematic')`; reduced motion
+records the flat one): `MediaRecorder` records wall time, so the recorder plays the whole clock
+at `recordRate(wallMsOf(shots, end))`, which fits the drive, the slow-motion and the hold into
+`VIDEO_MS` (7 s) and is never below 1. Do not simply cap the recording's length: that cuts the
+impact off. It leaves out the ease back to the overhead. `send()` awaits `mapRef.stop()`
+before `export()`, because a "Watch it" still running would leave the PNG tilted and fight the
+recorder for the camera. `record()` flattens the map and sets `recording`, so the playback
+effects leave the map alone until it finishes. `attachments.replay` is capped by `isReplay`
+(4 MB of data URL) and not persisted in the draft. The smoke decodes it and counts colours on
+the **middle frame**, because a valid video of a black rectangle is the failure that matters.
+
+**Two accounts run on one clock, with a timeline each** (`usePlayback(vehicles, ghosts)`, the
+desk's `Compare`). Each account's cars run on their own `timelineOf`. Never stretch one account
+to the other's length, because the gap between the two `impactMs` values is the whole point.
+`sharedTimeline(own, other)` is the one place that works out the shared clock: the first
+account's impact over the longer drive, used for `shots` and the clock's length only. The hook,
+`MapScene` and the recorder all use it, or the chase ends while the other account is still
+moving. Ghosts move via the `ghostPoses` prop (their dashed routes stay static). `follow` names
+the chased car by id, a ghost's as readily as a real car's. That is why `Compare` prefixes the
+ghosts' ids (`other:a`), since both accounts usually call their own car "a"; the documents are
+never touched. The headline is `impactApart` in `compare.ts` (desk English, no verdict). "Save
+video" downloads the recording and uploads nothing. The desk has three maps, so the smoke reads
+the compare map from its own element (`.maplibregl-map.__map`, DEV) and the shared clock from
+`window.__play`, not from `window.__map`.
 
 **The map tilts only inside a cinematic playback, and never with a marker in reach.**
 `MapScene` is still built `pitch 0, maxPitch 0`; `mode="cinematic"` raises `maxPitch` on the
