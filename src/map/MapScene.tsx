@@ -19,6 +19,7 @@ import { bearing, destination, type LngLat } from '../geo'
 import { translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
 import { SIZE } from '../vehicles/bodies'
+import type { Lighting } from '../scene/lighting'
 import { CarLayer, shockRing, type CarPose } from './carLayer'
 import { MAX_PITCH, cameraAt, ringAt, sharedTimeline, shotAt, shots, type Camera, type PlaybackMode, type SharedTimeline, type Shot } from './playback'
 import { damageCount, paintOverlay, recordPlayback, type OverlayLabel } from './record'
@@ -97,6 +98,13 @@ export type MapSceneProps = {
   follow?: string
   /** the playback running on this map should stop: `export()` and `record()` say so before they take the map over */
   onPlaybackStop?: () => void
+  /**
+   * The moment's light, from `lightingFor(incident.context)`: the sun where it stood, real
+   * shadows, the weather, headlights after dark. Absent or null is the fixed light the map has
+   * always had — the desk's `Compare` and every other caller that does not ask are unchanged.
+   * Decoration only: nothing in it moves a car, a mark or the impact.
+   */
+  lighting?: Lighting | null
   onSelect?: (id: string | null) => void
   /** a car was picked up, is being dragged, was let go */
   onGrab?: (id: string) => void
@@ -603,6 +611,12 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     s.cars.setGhosts(ghostPoses ?? posesOf(ghosts ?? []))
   }, [ghosts, ghostPoses])
 
+  // ── the light as it was: decoration on the layer, never on the document ──
+  const lighting = props.lighting ?? null
+  useEffect(() => {
+    live.current?.cars.setLighting(lighting)
+  }, [lighting])
+
   // ── playback: the cars follow the frame, the handles step aside ─────
   const { poses } = props
   useEffect(() => {
@@ -780,7 +794,7 @@ function removeHandles(h: Handles) {
 const posesOf = (vehicles: ClaimVehicle[]): CarPose[] =>
   vehicles
     .filter((v) => v.position)
-    .map((v) => ({ id: v.id, body: v.body, color: v.color, position: v.position!, heading: v.heading }))
+    .map((v) => ({ id: v.id, body: v.body, color: v.color, position: v.position!, heading: v.heading, damages: v.damages }))
 
 /** the travel paths and their arrowheads, as GeoJSON the style layers draw */
 function pushGeometry(map: MapLibreMap, vehicles: ClaimVehicle[]) {

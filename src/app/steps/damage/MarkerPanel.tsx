@@ -38,6 +38,7 @@ export function MarkerPanel({ v, afterPhotos = false, children }: { v: ClaimVehi
             value={{ schema: SCHEMA, vehicle: v.body, damages: v.damages }}
             onChange={(next) => setDamages(v.id, next.damages)}
             lang={lang}
+            dots
           />
         </div>
 

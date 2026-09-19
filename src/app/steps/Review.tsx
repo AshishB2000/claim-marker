@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useClaim, type Step } from '../../claim/store'
 import { isReplay, makeReference, toDocument } from '../../claim/schema'
 import type { MapSceneHandle } from '../../map/MapScene'
@@ -12,6 +12,7 @@ import { ReportDocument } from '../ReportDocument'
 import { assistOn, checkReport } from '../../assist/client'
 import type { Check } from '../../assist/schema'
 import { useLang, useT } from '../../i18n/useT'
+import { lightingFor } from '../../scene/lighting'
 
 /**
  * A person will wait this long for a video that is not the point of the report, and no longer.
@@ -135,6 +136,9 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
   // page the customer reads before signing — is the scene they built, not a bare basemap
   const roadWays = useClaim((s) => s.roadWays)
   const buildings = useClaim((s) => s.buildings)
+  const plainView = useClaim((s) => s.plainView)
+  const context = claim.incident.context
+  const lighting = useMemo(() => (plainView ? null : lightingFor(context)), [plainView, context])
   const map = useRef<MapSceneHandle>(null)
   const markers = useRef(new Map<string, DamageMarkerHandle>())
   const [busy, setBusy] = useState(false)
@@ -186,7 +190,7 @@ export function Review({ onSubmitted }: { onSubmitted: () => void }) {
 
   return (
     <div className="space-y-5">
-      <ReportDocument claim={claim} edit lang={lang} mapRef={map} markers={markers} roads={roadWays} buildings={buildings} />
+      <ReportDocument claim={claim} edit lang={lang} lighting={lighting} mapRef={map} markers={markers} roads={roadWays} buildings={buildings} />
 
       {/* ── who to contact ───────────────────────────────────────── */}
       <div className="card p-6">

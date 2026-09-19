@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 556 tests across 34 files
+npm test               # vitest, 583 tests across 36 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -313,6 +313,30 @@ once through `reverseWinding` — and is cleared at the end of playback, so no e
 holds it. The playback rate is `rate` in code, never "speed": the words fault, liability,
 blame, speed and cost stay out of anything the customer or the desk reads.
 
+**The scene is lit from the record, and the light is decoration** (`src/scene/lighting.ts`).
+`lightingFor(incident.context)` — pure, no value imports of three or maplibre, so
+`test/lighting.test.ts` runs in plain node — gives one `Lighting` both scenes read: the sun as
+a unit vector in the map layer's frame (x east, y south, z up), its intensity and colour, the
+hemisphere colours (orange below 10°, blue below −6°), how much environment shows, and
+`rain`/`snow`/`fog`/`night`/`lit`; `lightingFor(null)` is `DEFAULT_LIGHTING`, the fixed light
+the map always had. `CarLayer.setLighting`, `MapScene`'s and `DamageMarker`'s `lighting` prop
+and `ReportDocument`'s carry it; the customer's page memoises it from the store (`plainView`
+makes it null everywhere on that page — store state, never `claim/1`), the desk from the
+receipt's document; a caller that passes nothing is unchanged. Nothing in it moves a car, a
+mark or the impact. Real shadows inside a MapLibre custom layer, three things that look wrong
+and are not: **everything sized in scene units is in mercator units** — the shadow camera's
+bounds, near and far, the sun's distance, the fog's reach, every lamp's `distance` — set as
+metres × `metresToMercator(lat)` and refitted in `fit()` when the origin moves; **the car
+materials' `shadowSide` is `DoubleSide`** — three's shadow pass draws back faces, the kit's
+bodies are open shells with no floor, and from a high sun the depth map held a sliver of door
+lining and no shadow at all; and **`render()` sets three's viewport from the drawing buffer**
+before rendering — the shadow pass restores the viewport three believes the canvas has, its
+size at creation, and MapLibre's own `setBaseState` restores the map's only after the layer.
+The ground planes, the rain and the pool are built in a body's y-up metres frame and placed by
+`vehicleMatrix` like a car, wound once through `reverseWinding`; the lamps decay in mercator
+units, where 1/d² clamps to its ceiling and only the cutoff shapes the pool (`ponytail:` in the
+layer). The blob stays only for a ghost, or when there is no sun to throw a real shadow.
+
 **The city is one more thing the same Overpass answer carries.** `roadQuery` asks for
 `way[building]` within `BUILDING_RADIUS` (150 m) alongside the road's 60, and `parseBuildings`
 — pure, tested against the recorded fixture — turns every **closed** building way into a
@@ -453,6 +477,25 @@ customer's selects sit beside it in the document and must never be shown under t
 guarantee `export → load → export` is byte-identical, which is why coordinates round on the way
 in. Adding a field is fine; changing or removing one means a new schema version. `parseClaim`
 throws on structural nonsense but drops individual bad vehicles.
+
+**The damage is a shader, compared in the body's own frame** (`src/marker/damageShader.ts`,
+packed by `src/marker/damageUniforms.ts` — pure, no value imports of three, so
+`test/damageUniforms.test.ts` runs in plain node). Points are body metres (`toWorld` of the
+kit's units) read from a varying `vCmBody = (transformed + nodeOffset) × PROPORTION`, so the
+same uniforms draw the same marks in the studio and on the map, wherever the car stands.
+Four things that look wrong and are not: the dent's shading is **baked into the albedo** —
+top-lit lip and dark lip — because the studio environment is near-uniform and a tilted normal
+alone did not show; the tilt's direction goes through a `mat3(modelViewMatrix)` varying and is
+**renormalised**, since through the map's matrix it is 1e-7 long; a missing part is an **unlit
+cavity colour, not a discard** — the shells have no floor and a discarded hood on the map shows
+the road through the car; and a missing **wheel** is its own kind code, or a missing fender
+blacks out the tyre beside it. `patchDamage` composes over any `onBeforeCompile` already on the
+material (the studio's tint) and patches **only cloned materials** — `CarLayer.ownMaterials`
+clones every role per car for that reason; `instanceBody` alone shares the glass. `MAX_MARKS`
+is 12; the rest keep numbered pins. `strength` and `heatmap` are `MarkerStore` state, never
+persisted, never in `claim/1`; `ReportDocument` passes `tools` only off the customer's voice,
+because the review canvas is the send-time export. `CarPose.damages` must be filled by every
+pose source (`posesOf`, `posesAt`), or a replay strips the marks.
 
 **drei `<Html>` paints over the marker's canvas** regardless of 3D depth; anything that must
 appear above it has to be `<Html>` too with a higher `zIndexRange`.

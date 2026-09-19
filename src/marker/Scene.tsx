@@ -12,7 +12,9 @@ import { translate, type Key, type Lang } from '../i18n'
 import { ORBIT_TARGET, cameraFor } from './camera'
 import { STUDIO } from '../vehicles/BodyPreview'
 import { toWorld } from '../vehicles/bodies'
+import { studioLight, type Lighting } from '../scene/lighting'
 import type { V3 } from '../zones'
+import { MAX_MARKS, renders } from './damageUniforms'
 
 /**
  * A digit drawn into a texture, one per label, shared by every pin and every instance.
@@ -41,23 +43,27 @@ function digitTexture(text: string) {
  * Camera-facing pin at the exact hit point. polygonOffset lifts it off the bodywork, and the
  * wide white halo is what keeps a severity colour legible on paint of the same hue — an
  * orange dent marker on an orange car is otherwise invisible. The number matches the row in
- * the host's list.
+ * the host's list. A `dot` is the same pin at a third the size and without its number, for a
+ * mark whose damage the paint itself now shows.
  */
 function Pin({
   at,
   color,
   label,
   ring,
+  dot = false,
   onPick,
 }: {
   at: V3
   color: string
   label?: string
   ring?: string
+  dot?: boolean
   onPick?: (e: ThreeEvent<PointerEvent>) => void
 }) {
   const lift = { polygonOffset: true, polygonOffsetFactor: -4 }
-  const tex = useMemo(() => (label ? digitTexture(label) : null), [label])
+  const tex = useMemo(() => (label && !dot ? digitTexture(label) : null), [label, dot])
+  const size = dot ? 0.4 : 1
   return (
     <Billboard position={at}>
       {/* generous invisible tap target — the visible pin is small on a phone */}
@@ -66,11 +72,11 @@ function Pin({
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <mesh onPointerDown={onPick}>
-        <circleGeometry args={[0.125, 32]} />
+        <circleGeometry args={[0.125 * size, 32]} />
         <meshBasicMaterial color="#ffffff" toneMapped={false} {...lift} polygonOffsetUnits={-40} />
       </mesh>
       <mesh position-z={0.0005} onPointerDown={onPick}>
-        <circleGeometry args={[0.093, 32]} />
+        <circleGeometry args={[0.093 * size, 32]} />
         <meshBasicMaterial color={color} toneMapped={false} {...lift} polygonOffsetUnits={-44} />
       </mesh>
       {tex && (
@@ -89,7 +95,12 @@ function Pin({
   )
 }
 
-function Markers({ store, accent }: { store: MarkerStore; accent: string }) {
+/**
+ * `dots`: a mark the shader draws — one of the first `MAX_MARKS`, of a kind its zone's surface
+ * takes (`renders`) — shrinks to a dot; every other pin keeps its number, so a crack on a
+ * bumper or a scratch on a windshield, which the paint does not show, never fades from view.
+ */
+function Markers({ store, accent, dots }: { store: MarkerStore; accent: string; dots: boolean }) {
   const vehicle = useStore(store, (s) => s.vehicle)
   const damages = useStore(store, (s) => s.damages)
   const selected = useStore(store, (s) => s.selected)
@@ -102,6 +113,7 @@ function Markers({ store, accent }: { store: MarkerStore; accent: string }) {
           at={toWorld(vehicle, d.point)}
           color={SEVERITY_COLOR[d.severity]}
           label={String(i + 1)}
+          dot={dots && i < MAX_MARKS && renders(d, vehicle)}
           ring={i === selected ? accent : undefined}
           onPick={(e) => {
             e.stopPropagation()
@@ -191,6 +203,8 @@ export function Scene({
   theme,
   idle,
   lang,
+  lighting = null,
+  dots = false,
   onCanvas,
 }: {
   store: MarkerStore
@@ -200,9 +214,22 @@ export function Scene({
   /** turntable until the first touch */
   idle: boolean
   lang: Lang
+  /** pins shrink to dots where the paint shows the damage itself; off, they keep their numbers */
+  dots?: boolean
+  /**
+   * The moment's light, the same `Lighting` the map layer takes, so the marked-up car on the
+   * review page is lit like the map above it: the sun's direction and colour, the sky's tint,
+   * how much of the studio reflects. Null is the studio as it always was.
+   */
+  lighting?: Lighting | null
   onCanvas: (canvas: HTMLCanvasElement) => void
 }) {
   const t = THEME[theme]
+  // the sun in the body's own frame — the map's (east, south, up) is the body's (−left, up, −nose),
+  // nose north as `CAR_BASIS` has it — standing eight metres out like the studio's own key light
+  const key: V3 = lighting ? [-lighting.sun[0] * 8, lighting.sun[2] * 8, -lighting.sun[1] * 8] : [4, 6.5, 3]
+  // the same sun, floored: this render is the evidence, and a claim filed at night must stay legible
+  const studio = lighting ? studioLight(lighting) : { key: 1, environment: 1 }
   return (
     <Canvas
       dpr={[1, 2]}
@@ -214,19 +241,33 @@ export function Scene({
         toneMapping: THREE.ACESFilmicToneMapping,
         outputColorSpace: THREE.SRGBColorSpace,
       }}
-      onCreated={({ gl }) => onCanvas(gl.domElement)}
+      onCreated={({ gl, camera }) => {
+        onCanvas(gl.domElement)
+        // for the smoke: the store behind this canvas, and where a point in the kit's units lands on it
+        if (import.meta.env.DEV)
+          Object.assign(gl.domElement, {
+            __probe: {
+              store,
+              project: (p: V3) => {
+                const v = new THREE.Vector3(...toWorld(store.getState().vehicle, p)).project(camera)
+                return [((v.x + 1) / 2) * gl.domElement.width, ((1 - v.y) / 2) * gl.domElement.height]
+              },
+            },
+          })
+      }}
       onPointerMissed={() => store.getState().select(null)}
     >
       <color attach="background" args={[t.bg]} />
 
       <Suspense fallback={null}>
         {/* a real photographic studio, served with the page, is what makes paint look like paint */}
-        <Environment files={STUDIO} environmentIntensity={0.9} />
+        <Environment files={STUDIO} environmentIntensity={0.9 * studio.environment} />
         <Car store={store} paint={paint} modelUrl={modelUrl} />
       </Suspense>
 
-      <directionalLight position={[4, 6.5, 3]} intensity={1.1} />
-      <directionalLight position={[-5, 3, -4]} intensity={0.3} color="#dce7ff" />
+      <directionalLight position={key} intensity={1.1 * studio.key} color={lighting?.sunColor ?? '#ffffff'} />
+      <directionalLight position={[-5, 3, -4]} intensity={0.3} color={lighting?.sky ?? '#dce7ff'} />
+      {lighting && <hemisphereLight args={[lighting.sky, lighting.ground, lighting.skyIntensity]} />}
 
       {/* a polished floor under the car; the grid sits just above it as a measuring surface */}
       {/* wide enough that its edge never enters the frame at any orbit distance */}
@@ -260,7 +301,7 @@ export function Scene({
       />
       <ContactShadows position={[0, 0.001, 0]} opacity={0.5} scale={16} blur={2.6} far={4} resolution={1024} color={t.shadow} />
 
-      <Markers store={store} accent={t.accent} />
+      <Markers store={store} accent={t.accent} dots={dots} />
       <HoverLabel store={store} lang={lang} />
       <Picker store={store} lang={lang} />
       <CameraRig store={store} />

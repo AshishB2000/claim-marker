@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useClaim, othersOf } from '../../claim/store'
 import { assistOn, buildDiagram, writeStatement } from '../../assist/client'
 import { config } from '../../config'
@@ -10,10 +10,12 @@ import type { Key } from '../../i18n'
 import { useLang, useT } from '../../i18n/useT'
 import { MapScene, type MapSceneHandle, type TapMode } from '../../map/MapScene'
 import { usePlayback } from '../../map/usePlayback'
+import { lightingFor } from '../../scene/lighting'
 import { alignToRoad } from '../../scene/road'
 import { zoneById } from '../../zones'
 import { Describe } from '../Describe'
 import { Icon } from '../icons'
+import { PlainViewChip } from '../PlainView'
 
 type Tap = { kind: 'waypoint'; id: string } | { kind: 'impact' } | null
 /** a suggestion offered after a drop: turn this vehicle to this bearing to line it up with the road */
@@ -33,6 +35,10 @@ export function Diagram() {
   const autoDamage = useClaim((s) => s.autoDamage)
   const roadWays = useClaim((s) => s.roadWays)
   const buildings = useClaim((s) => s.buildings)
+  const plainView = useClaim((s) => s.plainView)
+  // the moment's light, from what the record said; memoised so the layer is not re-lit on every drag frame
+  const context = claim.incident.context
+  const lighting = useMemo(() => (plainView ? null : lightingFor(context)), [plainView, context])
   // only the policyholder invites, only when there is somebody to invite, and only when there
   // is a server to make the link: the other driver's own page must never offer this
   const canInvite = !!config.submitUrl && claim.reporter.party === 'policyholder' && othersOf(claim).length > 0
@@ -176,6 +182,7 @@ export function Diagram() {
           vehicles={claim.vehicles}
           roads={roadWays}
           buildings={buildings}
+          lighting={lighting}
           impact={claim.impact}
           selected={selected}
           lang={lang}
@@ -226,6 +233,7 @@ export function Diagram() {
             <button className="chip" onClick={() => map.current?.recentre()}>
               <Icon.target /> {t('scene.recentre')}
             </button>
+            <PlainViewChip lang={lang} />
           </div>
         </div>
 

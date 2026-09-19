@@ -6,6 +6,7 @@ import { translate, type Lang } from '../i18n'
 import { injectStyle } from '../style'
 import { themeClass, type Theme } from '../theme'
 import { Scene } from './Scene'
+import type { Lighting } from '../scene/lighting'
 import type { Vehicle } from '../zones'
 
 export type ExportResult = {
@@ -32,6 +33,12 @@ export type DamageMarkerProps = {
   theme?: Theme
   /** the language of the marker's own words; English unless the page says otherwise */
   lang?: Lang
+  /** the moment's light, as the map layer has it; absent or null is the plain studio */
+  lighting?: Lighting | null
+  /** pins shrink to dots where the paint shows the damage itself (the customer's marker); off, they keep their numbers (the desk's) */
+  dots?: boolean
+  /** the before/after slider and the severity map over the canvas; view state only, never in the document */
+  tools?: boolean
   className?: string
   style?: CSSProperties
   ref?: Ref<DamageMarkerHandle>
@@ -42,6 +49,33 @@ function Hint({ store, lang }: { store: ReturnType<typeof createMarkerStore>; la
   return empty ? <div className="cm-hint">{translate(lang, 'scene.marker.hint')}</div> : null
 }
 
+/** before/after, and the severity map — shown once there is a mark to blend */
+function Tools({ store, lang }: { store: ReturnType<typeof createMarkerStore>; lang: Lang }) {
+  const any = useStore(store, (s) => s.damages.length > 0)
+  const strength = useStore(store, (s) => s.strength)
+  const heatmap = useStore(store, (s) => s.heatmap)
+  if (!any) return null
+  return (
+    <div className="cm-tools" onPointerDown={(e) => e.stopPropagation()}>
+      <label className="cm-tool">
+        <span>{translate(lang, 'scene.marker.strength')}</span>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={strength}
+          aria-label={translate(lang, 'scene.marker.strength')}
+          onChange={(e) => store.getState().setStrength(Number(e.target.value))}
+        />
+      </label>
+      <button className="cm-tool" aria-pressed={heatmap} onClick={() => store.getState().setHeatmap(!heatmap)}>
+        {translate(lang, 'scene.marker.heatmap')}
+      </button>
+    </div>
+  )
+}
+
 export function DamageMarker({
   vehicle = 'sedan',
   value,
@@ -50,6 +84,9 @@ export function DamageMarker({
   paint = '#b9bec6',
   theme = 'light',
   lang = 'en',
+  lighting = null,
+  dots = false,
+  tools = true,
   className,
   style,
   ref,
@@ -104,8 +141,9 @@ export function DamageMarker({
 
   return (
     <div className={themeClass(theme, className)} style={style} onPointerDownCapture={() => setIdle(false)}>
-      <Scene store={store} modelUrl={modelUrl} paint={paint} theme={theme} idle={idle} lang={lang} onCanvas={setCanvas} />
+      <Scene store={store} modelUrl={modelUrl} paint={paint} theme={theme} idle={idle} lang={lang} lighting={lighting} dots={dots} onCanvas={setCanvas} />
       <Hint store={store} lang={lang} />
+      {tools && <Tools store={store} lang={lang} />}
     </div>
   )
 }

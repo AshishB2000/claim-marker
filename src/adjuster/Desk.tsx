@@ -4,7 +4,7 @@
  * status the desk can move along. It reads the reference server's API; a claims system with
  * its own inbox would render `ReportDocument` from wherever it keeps the JSON.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { KIND_INFO, parseClaim, toDocument, type Claim, type Party } from '../claim/schema'
 import { findings, type Finding } from '../claim/plausibility'
 import { deskVoice } from '../claim/describe'
@@ -13,6 +13,7 @@ import { Icon } from '../app/icons'
 import { ReportDocument } from '../app/ReportDocument'
 import { Compare } from './Compare'
 import { inboxRows } from './inbox'
+import { lightingFor } from '../scene/lighting'
 
 /**
  * The claims server: `?api=` for a desk pointed at another one, then the build-time default,
@@ -147,6 +148,9 @@ const StatusPill = ({ status }: { status: Status }) => (
 function ReportView({ showing, linked, onOpen }: { showing: { receipt: Receipt; claim: Claim }; linked: { receipt: Receipt; claim: Claim }[] | null; onOpen: (reference: string) => void }) {
   const [compareOpen, setCompareOpen] = useState(true)
   const comparing = !!linked && compareOpen
+  // the moment's light, from what the record in this document said
+  const context = showing.claim.incident.context
+  const lighting = useMemo(() => lightingFor(context), [context])
   return (
     <>
       {linked && (
@@ -163,7 +167,7 @@ function ReportView({ showing, linked, onOpen }: { showing: { receipt: Receipt; 
         </div>
       )}
       {!comparing && <WorthALook claim={showing.claim} signals={showing.receipt.signals ?? []} onOpen={onOpen} />}
-      {comparing && linked ? <Compare reports={linked} /> : <ReportDocument claim={showing.claim} voice={deskVoice(showing.receipt.party)} badge={<StatusPill status={showing.receipt.status} />} />}
+      {comparing && linked ? <Compare reports={linked} /> : <ReportDocument claim={showing.claim} voice={deskVoice(showing.receipt.party)} lighting={lighting} badge={<StatusPill status={showing.receipt.status} />} />}
     </>
   )
 }

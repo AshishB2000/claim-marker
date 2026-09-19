@@ -18,6 +18,10 @@ export type MarkerState = {
   pending: Pending | null
   /** zone under the cursor, for the pre-tap tint */
   hovered: Zone | null
+  /** how much of the rendered damage shows, 0 (the car as it was) to 1; view state, never in the document */
+  strength: number
+  /** the severity map: paint replaced by a blue-to-red gradient of accumulated damage */
+  heatmap: boolean
 
   pick: (point: V3) => void
   commit: (severity: Severity) => void
@@ -25,6 +29,8 @@ export type MarkerState = {
   remove: (index: number) => void
   select: (index: number | null) => void
   hover: (zone: Zone | null) => void
+  setStrength: (strength: number) => void
+  setHeatmap: (heatmap: boolean) => void
   load: (value: ClaimValue) => void
   value: () => ClaimValue
 }
@@ -38,6 +44,8 @@ export function createMarkerStore(initial: ClaimValue = emptyValue()) {
     selected: null,
     pending: null,
     hovered: null,
+    strength: 1,
+    heatmap: false,
 
     pick: (point) => set({ pending: { zone: nearestZone(get().vehicle, point), point }, selected: null }),
     commit: (severity) => {
@@ -55,6 +63,8 @@ export function createMarkerStore(initial: ClaimValue = emptyValue()) {
       set({ damages: get().damages.filter((_, i) => i !== index), selected: null }),
     select: (index) => set({ selected: index, pending: null }),
     hover: (zone) => set({ hovered: zone }),
+    setStrength: (strength) => set({ strength: Math.min(1, Math.max(0, strength)) }),
+    setHeatmap: (heatmap) => set({ heatmap }),
     load: (value) => set({ vehicle: value.vehicle, damages: value.damages, selected: null, pending: null }),
     value: () => ({ schema: SCHEMA, vehicle: get().vehicle, damages: get().damages }),
   }))

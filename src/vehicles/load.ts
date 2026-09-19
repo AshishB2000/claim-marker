@@ -50,7 +50,7 @@ export function loadBody(body: Vehicle, url: string = MODELS[body]): Promise<THR
 }
 
 /** the roles of a mesh's material slots, parallel to `mesh.material` */
-const roles = (mesh: THREE.Mesh): Role[] => (mesh.userData.roles as Role[] | undefined) ?? []
+export const roles = (mesh: THREE.Mesh): Role[] => (mesh.userData.roles as Role[] | undefined) ?? []
 
 /** a fresh copy with its own paint material in `hex` */
 export function instanceBody(template: THREE.Group, hex: string): THREE.Group {

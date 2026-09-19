@@ -1118,6 +1118,97 @@ and every car marker's screen position must be within a pixel of where it was be
 presses it again on the review's read-only map, which is the component the desk renders, and
 checks the tilt and the return there too.
 
+## The moment, lit as it was (v10)
+
+The cinematic replay tilts the map and chases the car, and a tilted map lit by a fixed
+studio light from the east-north-east, at noon, in any weather, looks like a diagram with a
+camera on it. The record already says where the sun stood, what the weather was doing and
+whether the street was lit — `incident.context`, looked up from the place and the time. So
+the scene lights itself from those facts: the sun where it was, real shadows on the ground
+that lengthen into the evening, a wet road and rain when it rained, snow, fog, headlights and a
+warm pool under a street light after dark. Long evening shadows are what sell the time of day.
+
+**One pure function, two scenes.** `lightingFor(context)` in `src/scene/lighting.ts` turns a
+`SceneContext` into a `Lighting`: the sun as a unit vector in the map layer's frame (x east,
+y south, z up — `[cos alt · sin az, −cos alt · cos az, sin alt]`), whether it is up under a
+sky clear enough to cast a shadow, its intensity (the map's own 1.5 from 25° up, falling to a
+quarter at the horizon, off once set, and dimmed by rain, snow, fog or overcast), its colour,
+the hemisphere sky and ground colours and intensity in three buckets — day, orange below 10°,
+blue below −6°, the same line `lightFrom` draws for "dark" — how much of the environment map
+shows, and five booleans: `rain`, `snow`, `fog` (through `weatherOfCode`, the one table for WMO
+codes), `night`, and `lit` (night on a road the record says is lit). `lightingFor(null)` is
+`DEFAULT_LIGHTING`: exactly the fixed light the map has always had, and the file has no value
+imports of three or maplibre, so `test/lighting.test.ts` runs in plain node. The car layer
+(`CarLayer.setLighting`) and the damage studio (`Scene`'s `lighting` prop, through
+`DamageMarker`) both read it — the studio's `Environment` intensity and its two directionals
+take the same sun and weather, with the sun turned into the body's frame, so the marked-up car
+on the review page is lit like the map above it — with a floor. That render is the evidence:
+`attachments.damage` is exported from it at send time and the desk reads it, and a claim filed
+at night must not ship a black car. `studioLight(l)` keeps the studio's key at no less than
+0.45 of its own 1.1 and the environment at no less than 0.4 of its 0.9, whatever the record
+says; the map has no floor, because the map is the moment. `MapScene` and `ReportDocument` take the
+prop; the customer's page memoises it from the store, the desk from the receipt's document,
+and every caller that does not ask — the desk's `Compare`, the damage step's marker — is
+unchanged.
+
+**Real shadows, inside MapLibre's context.** The layer had no ground for a shadow to land on
+and faked one with a soft disc. Now a `ShadowMaterial` plane at 0.35 opacity lies under
+everything, the directional light casts a 2048² PCF shadow map, and every real car's meshes
+cast; the blob stays only for a ghost, and for whenever there is no sun to throw a real one.
+Three things about doing this in a custom layer are easy to get wrong, and are in `CLAUDE.md`:
+the scene is in mercator units, so the shadow camera's bounds, near and far, the light's
+distance, the fog's reach and every lamp's throw are set in metres times
+`metresToMercator(lat)` and refitted when the origin moves (`fit()`); the shadow pass renders
+back faces by default and the kit's bodies are open shells with no floor, so from a high sun
+the depth map held a sliver of door lining and no shadow at all until the car materials'
+`shadowSide` was set to `DoubleSide`; and the shadow pass restores the viewport three believes
+the canvas has — its size at creation — so `render()` sets three's viewport from the drawing
+buffer before rendering, or a resized map draws the cars in the wrong corner. MapLibre restores
+its own viewport after the layer (`setBaseState`); this is for three's main pass, which draws
+straight after the shadow pass with no other reset in between.
+
+**Everything at ground level is one group in a body's frame.** The shadow ground, the wet
+road, the fog sheet, the street-light pool and the rain are built in the same y-up metres frame
+as a car and placed at the incident by the same `vehicleMatrix`, so one unit is a metre there
+too and the map's mirrored projection is answered once, by `reverseWinding`, exactly as a body
+is. The wet road is a dark, near-mirror (`roughness 0.05`), translucent plane under the cars,
+so the sky and the lamps reflect in it; the rain is six hundred short vertical lines in one
+`LineSegments`, scattered through a box twice the fall height and slid down by up to one height
+each frame, so the visible band is always full — snow is the same lines a quarter as long, white,
+at a sixth of the rate; fog is `scene.fog` on the cars plus a white sheet at 30 % over the
+ground, in the layer rather than the DOM, so the export and the recorder get it for free and the
+DOM pills stay legible. After dark each real car has two `SpotLight` headlights at the corners
+of its nose, always on — whether a car faces the camera is not worth a check — and a street-lit
+road adds a warm additive pool and a warm `PointLight` over the incident. Those lights decay in
+mercator units, where 1/d² clamps to its ceiling everywhere inside the throw and only the
+distance cutoff shapes the pool: flat with a soft edge, which is what a headlight on wet tarmac
+looks like anyway; the intensities are tuned to that ceiling and say so.
+
+**All of it is decoration.** Nothing here moves a car, a heading, a mark or the impact, and
+nothing reaches the document: `export()` captures the canvas, so the PNGs and the replay hold
+the light as it was, and that is the whole of it. "Plain view" is one chip on the diagram step
+and the review page, `plainView` in the persisted store — how the customer is looking, like
+the language, never in `claim/1` — and while it is on every scene on that page is lit as it
+always was.
+
+**What the smoke proves.** The main walk presses "Plain view" the moment it reaches the
+diagram: its pixel gates — the path's blue, the car's red, the shockwave's white — sample a
+map that would otherwise be lit by the live record, the sun at eight that morning under that
+day's weather, and a build gate must not depend on the season or on somebody else's answer.
+The light as it was is proved on its own seeded pages instead — the same tiles, the same two
+cars six metres either side of the impact, facing each other — under four lights. Rain after
+dark: the open road ten metres south must read darker than in plain view (the tiles never
+change, so the difference is the layer's), the ground ahead of A's nose brighter than behind
+its tail, and the canvas the export captures a picture. The same night on a street the record
+says is lit: six metres from the incident, inside the pool and outside every headlight, must
+read brighter than the same spot unlit. A clear sun on the horizon: the ground between the
+cars must read darker than plain — the shadow — while the open road reads the same, so it is
+the shadow and not a veil; and with A's body hidden for a moment, the tiles under it read bare
+there and darker in plain view, where the faked shadow is back. Then "Plain view" must bring
+the road back, be in the draft, and still be pressed after a reload. The unit test pins the sun vector by quadrant and length,
+the intensities at 60°, 25°, 12.5°, 2°, 0° and below, the three sky buckets by channel order,
+which codes mean rain, snow and fog, and when the street counts as lit.
+
 ## A city around the crash (v10)
 
 A camera tilted to 55° behind a car looks out at the horizon, and until now the horizon was
@@ -1186,6 +1277,80 @@ frame rate is not evidence. That column has to
 be the extrusion's own flat grey and not the satellite's picture of the same block, because a
 layer that validates, queries and paints nothing is exactly the failure this page has had
 before.
+
+## Real damage on the car (v10)
+
+A mark on the car used to be a pin: a numbered disc at the tap, the paint under it untouched.
+The report said "dent, left front door" and the picture showed a perfect door with a badge on
+it. Now the paint shows the damage: a dent is a dish in the bodywork, a scratch bares the metal,
+a crack spreads across the glass, and a missing part is a hole into the dark. The same car, marked
+the same way, in the studio, on the review page, on the desk and on the map.
+
+**Not geometry.** The kit's bodies are a few thousand triangles, and pushing vertices into a
+dent makes a pyramid. The precedent is the zone tint in `Car.tsx` — a world-space radial
+falloff patched into the material with `onBeforeCompile` — and the damage is the same idea per
+mark: `src/marker/damageUniforms.ts` packs the marks as flat typed arrays (twelve at most —
+`MAX_MARKS`; the rest keep their pins), and `src/marker/damageShader.ts` patches every material
+of one body instance to read them. The packing is pure and has no value import of three, so
+`test/damageUniforms.test.ts` runs in plain node; the shader module is the only thing that
+turns it into GPU state, and it composes over whatever `onBeforeCompile` a material already has,
+which is how it stacks on the studio's tint without either knowing about the other.
+
+**One frame for both scenes.** The marks are compared in the body's own frame — metres, nose
++Z, up +Y — carried from the vertex shader as `vCmBody = (transformed + offset) × PROPORTION`,
+where `offset` is where the mesh sits in its body (a wheel at its arch; the kit's nodes carry
+translations only). In the studio, world *is* that frame. On the map the car stands anywhere,
+mirrored by `CAR_BASIS` and 1e-7 to the metre, and none of that reaches the shader: the same
+uniforms draw the same damage wherever the car goes, with nothing to update when it moves. The
+one place the frames meet is the dent's normal tilt, a direction in body metres that has to
+become a view-space one — through `mat3(modelViewMatrix)`, a varying, and renormalised, because
+through the map's matrix that direction comes out 1e-7 long.
+
+**What each kind does.** A *dent* (bodywork: paint, trim, plastic) is a cosine dish scaled by the
+mark's weight: the normal tilts toward the centre, the albedo darkens 15 % toward it, the
+clearcoat is cut to a fifth so the reflection breaks, the roughness rises. And it is lit from
+above whatever the scene does — the upper lip darkens and the lower brightens in the albedo
+itself — because the studio's environment map is near-uniform at the angles a door reflects,
+and a tilted normal alone under it barely showed. A *scratch* (bodywork) is three ragged
+streaks of different lengths along the panel's own horizontal — across a hood or a roof, along
+everything else — hashed for their edges and gaps, bare metal (grey, roughness 0.6, metallic) in
+the streak and a darker groove beside it so it shows on light paint and dark. A *crack* (glass,
+headlights, taillights) is Voronoi cells and a few spokes spreading from the point in the panel's
+tangent plane, their edges emissive and rough, fading by the radius. A *missing* part is the
+whole zone — its measured anchor and reach from `zones.ts`, the same data `probe-zones.ts`
+proves, not the tap — painted an unlit cavity colour after tone mapping, darkening to a third
+toward the centre with a torn rim. **Not a discard**: the kit's shells have no floor, so a
+discarded hood seen from the map shows the road through the car. A missing *wheel* is its own
+code on the wire (`KIND_MISSING_WHEEL`), taken by the wheel's materials and no other, so a
+missing fender leaves the tyre beside it alone.
+
+**Before/after, and the severity map.** `strength` blends every effect from none to full and
+`heatmap` swaps the paint for a blue-to-red gradient of accumulated weight; both are
+`MarkerStore` state, defaulting to full and off, never persisted and never in the document.
+`DamageMarker` shows them as chips over its canvas (`tools`); the customer's damage step and
+the desk have them, the customer's review page does not — that canvas is exported as
+`attachments.damage` at send, and a slider left at zero would ship the car unmarked. On the
+map the layer draws at full strength with no map, because a diagram is not a place to argue with.
+
+**The pins.** Where the paint shows the damage, the customer's marker (`dots`) shrinks the pin
+to a dot without its number; from the thirteenth mark on it keeps the numbered pin, since the
+shader has stopped. The desk's and the review's pins stay numbered beside their numbered lists.
+
+**The map clones everything.** `instanceBody` gave every car its own paint and shared the rest
+of the template's materials; a uniform patched into a shared glass material would crack every
+windscreen on the map. `CarLayer` now clones every material once per car (`ownMaterials`),
+dresses it, fades it if it is a ghost's, and patches it; `CarPose.damages` carries the marks,
+`posesOf` and `posesAt` both fill it, so a replay of a dented car is a dented car.
+
+**What the smoke proves.** On the damage step it blends the dent away through the real slider
+and reads a ring round the mark — lighter without the dent than with it — and diffs the frame
+the export takes against the unmarked car's by more than the pin. It marks the left front door
+missing at its own anchor and reads the cavity just below the dot: dark, and warmer than glass
+or a tyre. On the review page the missing door's cavity pixels rise with the strength set
+through the store — there is no slider there, which is also asserted — and on the desk, its API
+answered from the document just sent, the same rise, with the slider and the severity map
+present. The unit test pins the packing: a dent at its own point in the body's metres, a
+missing part at its zone's anchor and reach, the wheel's own code, the cap at twelve.
 
 ## Two accounts, one moment (v10)
 
