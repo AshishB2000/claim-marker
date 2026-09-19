@@ -1349,8 +1349,8 @@ probe, not on screen, because a car driving at the camera barely moves there.
 list. On the car it was nowhere. Now every photograph that shows a panel stands beside that
 panel in the studio as a small framed card with a thin leader line back to it — on the damage
 step, on the review page's marked-up car (and so in the PNG sent with the report), on the
-desk's, and on each car in the reconstruction. Tapping a card turns the camera to the panel and
-opens the photograph large.
+desk's, and on each car in the desk's reconstruction. Tapping a card turns the camera to the
+panel and opens the photograph large.
 
 **Where a card stands is pure.** `cardPlacement(body, zone)` in `src/marker/cards.ts` returns
 `{ position, normal }` in the body's own metres — nose +Z, up +Y, the car's left +X. The zone's
@@ -1369,7 +1369,10 @@ each a little down and to the right of the one before.
 into a canvas texture — cropped square, in a white frame with a grey edge so it reads against
 the pale studio and against paint — because drei's `Html` is DOM laid over the canvas and would
 be missing from the export. The texture is white until the image decodes, then asks for a frame
-(`invalidate`), which is what the reconstruction's on-demand loop needs to show it at all.
+(`invalidate`), which is what the reconstruction's on-demand loop needs to show it at all. The
+leader is a plain one-pixel `lineSegments`, not drei's `Line`: that is a fat-line shader to
+compile in every canvas a card is in, for a line meant to be thin anyway. Each card's placement
+is memoised, because the reconstruction re-renders on every frame of a playback.
 
 **Tagging by dragging.** Beside the car, the damage step lists this vehicle's photographs. Each
 thumbnail is `draggable` with the photo's place on the claim as `PHOTO_DRAG` data; the marker
@@ -1402,7 +1405,11 @@ send, and it goes as it is framed.
 
 **The reconstruction** stands each car's cards inside that car's `car:<id>` group, which is in
 the body's own metres, so the same `cardPlacement` puts them in the same place and they drive
-in with the car during a playback. Nothing there can be tapped.
+in with the car during a playback. Nothing there can be tapped. The desk's tab shows them; the
+review page's 240-px copy leaves them out. A card there is about fifteen pixels, and timed on
+the smoke's software GL the damage-to-review step took the same eighteen seconds to show the
+review either way, but with the card in that canvas the page stayed busy for about five
+seconds more afterwards — on the page that records the replay at send.
 
 **What the smoke proves.** On the damage step (both languages) the photograph of A is dragged
 from its thumbnail onto the left front door where the camera faces it, and the draft says it

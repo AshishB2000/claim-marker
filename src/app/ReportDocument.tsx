@@ -558,20 +558,12 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
             </figcaption>
           </figure>
         )}
-        {/* the same moment in 3D, small, for the customer: it plays along with the map above and is never exported — the desk has it as a tab */}
+        {/* the same moment in 3D, small, for the customer: it plays along with the map above and is never exported — the desk has it as a tab.
+            It leaves out the photo cards the desk's tab stands on the cars: fifteen pixels here, for a slower first render of the page that records the replay */}
         {edit && center && info.diagram && claim.vehicles.some((v) => v.position) && (
           <figure className="mt-3 overflow-hidden rounded-xl ring-1 ring-slate-900/10 print:hidden">
             {/* a phone's swipe over it scrolls the page, and a wheel here scrolls it too */}
-            <Reconstruction
-              vehicles={claim.vehicles}
-              impact={claim.impact}
-              poses={play.poses}
-              photos={photos}
-              lang={lang}
-              lighting={lighting}
-              zoom={false}
-              className="h-60 bg-slate-100 max-sm:pointer-events-none"
-            />
+            <Reconstruction vehicles={claim.vehicles} impact={claim.impact} poses={play.poses} lang={lang} lighting={lighting} zoom={false} className="h-60 bg-slate-100 max-sm:pointer-events-none" />
             <figcaption className="bg-slate-50 px-4 py-2 text-xs text-slate-600">{t('scene.doc.reconstruction')}</figcaption>
           </figure>
         )}

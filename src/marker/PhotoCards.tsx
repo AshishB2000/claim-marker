@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { useThree, type ThreeEvent } from '@react-three/fiber'
-import { Billboard, Line } from '@react-three/drei'
+import { Billboard } from '@react-three/drei'
 import { toWorld } from '../vehicles/bodies'
 import { zoneById, type Vehicle, type Zone } from '../zones'
 import { cardPlacement, type CardPhoto } from './cards'
@@ -54,15 +54,22 @@ function Card({ body, zone, photo, stacked, onOpen }: { body: Vehicle; zone: Zon
   const invalidate = useThree((s) => s.invalidate)
   const tex = useMemo(() => photoTexture(photo.dataUrl, () => invalidate()), [photo.dataUrl, invalidate])
   useEffect(() => () => tex.dispose(), [tex])
-  // the same arrays every render: drei's Line rebuilds its geometry for new points, and the
-  // reconstruction re-renders on every frame of a playback
+  // placed once per panel, not per render: the reconstruction re-renders on every frame of a playback
   const { position, leader } = useMemo(() => {
     const { position } = cardPlacement(body, zone)
-    return { position, leader: [toWorld(body, zone.anchor), position] }
+    return { position, leader: new Float32Array([...toWorld(body, zone.anchor), ...position]) }
   }, [body, zone])
   return (
     <group>
-      {stacked === 0 && <Line points={leader} color={LEADER} lineWidth={1.5} />}
+      {/* a plain one-pixel line: drei's fat Line is a heavy shader to compile, in every canvas the card is in */}
+      {stacked === 0 && (
+        <lineSegments>
+          <bufferGeometry>
+            <bufferAttribute attach="attributes-position" args={[leader, 3]} />
+          </bufferGeometry>
+          <lineBasicMaterial color={LEADER} />
+        </lineSegments>
+      )}
       <Billboard position={position}>
         <mesh
           name={`card:${photo.id}`}

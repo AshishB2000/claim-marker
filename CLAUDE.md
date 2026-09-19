@@ -466,7 +466,10 @@ and no pointer under 640 px so the page still scrolls over it.
 kit-unit anchor through `toWorld`, the normal from the **footprint centre on the floor** (the
 kit's origin) out through it, the card 0.6 m along — so every normal leans up and no card sinks
 into the floor; `test/cards.test.ts` pins it. A canvas texture on a `Billboard`, **never
-`Html`**, or the export loses it. Tagging by drag is `PHOTO_DRAG` data (the photo's index on the
+`Html`**, or the export loses it; the leader is a plain `lineSegments`, not drei's `Line` (a
+fat-line shader compiled in every canvas). The desk's reconstruction shows the cards, the review
+page's small copy does not (15 px there, and seconds of main thread on the page that records
+the replay). Tagging by drag is `PHOTO_DRAG` data (the photo's index on the
 claim) dropped on the canvas, cast against the body alone (the car's primitive is named `car`),
 then `toModel` → `nearestZone` → `tagPhoto`; the select under each thumbnail is the same call.
 A card opens on a still click, not the press (a modal under a drag swallows it), through
