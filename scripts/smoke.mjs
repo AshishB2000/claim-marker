@@ -719,7 +719,9 @@ ok(`map: ${city.length} building footprints on the map, the tallest ${Math.max(.
 
 // a car under a roof — a canopy the lookup kept, a block the customer parked beside — is still
 // drawn on the flat map. An extrusion there writes depth the car layer is tested against and
-// the car vanishes, so the flat map must draw footprints flat. A 60 m block is put round A.
+// the car vanishes, so the flat map must draw footprints flat. A 6 m canopy is put round A —
+// low on purpose: at street zoom the camera is only about 55 m up, and a taller roof passes
+// over it and is clipped, which would prove nothing.
 const roofed = await page.evaluate(async () => {
   const map = window.__map
   const src = map.getSource('buildings')
@@ -729,15 +731,15 @@ const roofed = await page.evaluate(async () => {
   const { lng, lat } = map.unproject([r.left + r.width / 2 - cr.left, r.top + r.height / 2 - cr.top])
   const d = 0.0004
   const ring = [[lng - d, lat - d], [lng + d, lat - d], [lng + d, lat + d], [lng - d, lat + d], [lng - d, lat - d]]
-  src.setData({ ...window.__city, features: [...window.__city.features, { type: 'Feature', properties: { height: 60 }, geometry: { type: 'Polygon', coordinates: [ring] } }] })
+  src.setData({ ...window.__city, features: [...window.__city.features, { type: 'Feature', properties: { height: 6 }, geometry: { type: 'Polygon', coordinates: [ring] } }] })
   await new Promise((done) => setTimeout(done, 1500))
   return map.queryRenderedFeatures([r.left + r.width / 2 - cr.left, r.top + r.height / 2 - cr.top], { layers: ['buildings-flat'] }).length
 })
 const redUnderRoof = await redAroundA()
 await page.evaluate(() => window.__map.getSource('buildings').setData(window.__city))
-if (!roofed) fail('the block put round car A is not on the map, so nothing is proved')
+if (!roofed) fail('the canopy put round car A is not on the map, so nothing is proved')
 if (redUnderRoof < 0.08) fail(`car A inside a building footprint is not drawn on the flat map (${(redUnderRoof * 100).toFixed(0)}% red round it, ${(redShare * 100).toFixed(0)}% in the open)`)
-ok(`map: car A inside a 60 m block's footprint is still drawn on the flat map (${(redUnderRoof * 100).toFixed(0)}% red round it)`)
+ok(`map: car A under a 6 m canopy's footprint is still drawn on the flat map (${(redUnderRoof * 100).toFixed(0)}% red round it)`)
 
 // watch it: the camera opens up and chases, the shockwave rings the impact, and the diagram
 // comes back exactly as it was — flat, north-up, every marker where it stood. The ring lives

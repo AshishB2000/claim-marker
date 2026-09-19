@@ -1252,8 +1252,9 @@ and becomes the city only while the replay tilts the camera: `standCity` swaps t
 opacities where `maxPitch` is raised and dropped, in `MapScene` and in the recorder. It is not
 drawn flat because MapLibre draws an extrusion with a depth pass that the car layer and every
 line are then tested against: on a flat map a car under a roof would simply not be there. At
-opacity 0 an extrusion is skipped entirely, and a `fill` writes no depth. The smoke puts a 60 m
-block round car A on the flat map and reads A's paint through it, and asserts the tilted
+opacity 0 an extrusion is skipped entirely, and a `fill` writes no depth. The smoke puts a 6 m
+canopy round car A on the flat map and reads A's paint through it (drawn as an extrusion, it
+leaves 0 % of A's red — a taller block would pass over the street-zoom camera, about 55 m up), and asserts the tilted
 layer's height is `['get', 'height']` and its opacity above 0 on the frames it reads a wall
 from, and 0 again once the map is back.
 

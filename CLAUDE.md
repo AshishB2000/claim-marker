@@ -378,7 +378,7 @@ effect's first frame and `flatten`, and the recorder's cinematic run — with th
 transitions at 0. That looks like one layer too many and is not: MapLibre draws an extrusion
 with a **depth pass** the car layer and every line are then tested against, so on a flat map a
 car under a roof vanishes; at opacity 0 the extrusion is not drawn at all, and a `fill` writes no
-depth. The smoke puts a 60 m block round car A and checks it is still red. The grey stops short
+depth. The smoke puts a 6 m canopy round car A and checks it is still red (not taller: the street-zoom camera is about 55 m up, and a roof above it is clipped and proves nothing). The grey stops short
 of white on purpose: at 0.85 over the brightest imagery it stays at about 200, so a wall never
 reads as the shockwave, the flow line or a label. Flat map, flat footprints **over** the
 satellite's own rooftops — which is the editing surface and what `compose()` puts in
