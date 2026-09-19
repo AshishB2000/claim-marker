@@ -110,18 +110,19 @@ export function Reconstruction({
         camera={{ position: VIEW.clone().multiplyScalar(view.distance).toArray(), fov: 35, near: 0.5, far: view.distance * 4 }}
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, outputColorSpace: THREE.SRGBColorSpace }}
         onCreated={({ gl, camera, scene }) => {
-          // for the smoke: where a car stands on this canvas, in its pixels
-          if (import.meta.env.DEV)
+          // for the smoke: where a car stands in the scene, in metres, and on this canvas, in its pixels — null until it has loaded
+          if (import.meta.env.DEV) {
+            const at = (id: string) => scene.getObjectByName(`car:${id}`)?.getWorldPosition(new THREE.Vector3()) ?? null
             Object.assign(gl.domElement, {
               __probe: {
+                where: (id: string) => at(id)?.toArray() ?? null,
                 project: (id: string) => {
-                  const car = scene.getObjectByName(`car:${id}`)
-                  if (!car) return null
-                  const v = car.getWorldPosition(new THREE.Vector3()).setY(0.7).project(camera)
-                  return [((v.x + 1) / 2) * gl.domElement.width, ((1 - v.y) / 2) * gl.domElement.height]
+                  const v = at(id)?.setY(0.7).project(camera)
+                  return v ? [((v.x + 1) / 2) * gl.domElement.width, ((1 - v.y) / 2) * gl.domElement.height] : null
                 },
               },
             })
+          }
         }}
       >
         <Studio theme="light" lighting={lighting} keyAt={key} reach={view.radius * 2.4}>

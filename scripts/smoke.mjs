@@ -932,10 +932,12 @@ await noEnglish('the review')
 
 // the review can play it back too: the insurer sees what happened, not a still — and the
 // reconstruction under the map plays along, A driving in there too and coming back to rest
-const reconRest = await reconA()
+// measured in the scene's metres, not on screen, where a car driving at the camera barely moves
+const reconWhere = () => page.evaluate((sel) => document.querySelector(sel).__probe.where('a'), RECON)
+const reconRest = await reconWhere()
 const reconAway = async () => {
-  const [x, y] = await reconA()
-  return Math.hypot(x - reconRest[0], y - reconRest[1])
+  const [x, , z] = await reconWhere()
+  return Math.hypot(x - reconRest[0], z - reconRest[2])
 }
 await page.getByRole('button', { name: N.playBack }).click()
 await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
@@ -947,9 +949,9 @@ for (let i = 0; i < 240 && (await page.evaluate(() => document.querySelector('.m
 await page.waitForFunction(() => !document.querySelector('.maplibregl-map').classList.contains('mk-playing'), null, { timeout: 12000 })
 ok('review: playback ran on the review map')
 const reconBack = await reconAway()
-if (reconDrove < 20) fail(`the review's reconstruction did not play along with the map (A moved ${reconDrove.toFixed(0)} px)`)
-if (reconBack > 1) fail(`after the playback, A did not come back to rest in the reconstruction (${reconBack.toFixed(1)} px off)`)
-ok(`review: the reconstruction played along (A drove ${reconDrove.toFixed(0)} px there and came back to rest)`)
+if (reconDrove < 2) fail(`the review's reconstruction did not play along with the map (A moved ${reconDrove.toFixed(2)} m)`)
+if (reconBack > 0.01) fail(`after the playback, A did not come back to rest in the reconstruction (${reconBack.toFixed(2)} m off)`)
+ok(`review: the reconstruction played along (A drove ${reconDrove.toFixed(1)} m there and came back to rest)`)
 
 // and watch it there too: the read-only map — the desk's is this same component — tilts and comes back
 await page.getByRole('button', { name: N.watch }).click()

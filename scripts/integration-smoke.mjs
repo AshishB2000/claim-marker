@@ -639,25 +639,29 @@ const reconDoc = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).cl
 if (JSON.stringify(reconDoc) !== JSON.stringify(policyCars)) fail('orbiting the reconstruction changed the stored vehicles')
 ok(`desk: the reconstruction tab stands both bodies in their paints (${paints.red} red px, ${paints.dark} dark px round each), and a drag orbits it (${turned} px changed, ${still} standing still; the red car moved ${slid.toFixed(0)} px on screen, the document did not)`)
 
-// play drives them in on the same clock as the map, and they come back to rest; a scrub holds a moment
-const restNow = await reconAt([redCar.id, darkCar.id])
-const away = (at) => Math.min(...[redCar.id, darkCar.id].map((id) => Math.hypot(at[id][0] - restNow[id][0], at[id][1] - restNow[id][1])))
-await deskPage.locator('[data-reconstruction-view]').getByRole('button', { name: 'Play' }).click()
+// play drives them in on the same clock as the map, and they come back to rest; a scrub holds a moment.
+// Measured in the scene's metres, not on screen, where a car driving at the camera barely moves
+const reconWhere = () =>
+  deskPage.evaluate(([sel, ids]) => Object.fromEntries(ids.map((id) => [id, document.querySelector(sel).__probe.where(id)])), [RECON, [redCar.id, darkCar.id]])
+const restNow = await reconWhere()
+const away = (at) => Math.min(...[redCar.id, darkCar.id].map((id) => Math.hypot(at[id][0] - restNow[id][0], at[id][2] - restNow[id][2])))
+const view = deskPage.locator('[data-reconstruction-view]')
+await view.getByRole('button', { name: 'Play' }).click()
 let drove = 0
-for (let i = 0; i < 160 && (await deskPage.locator('[data-reconstruction-view]').getByRole('button', { name: 'Stop' }).count()); i++) {
-  drove = Math.max(drove, away(await reconAt([redCar.id, darkCar.id])))
-  await deskPage.waitForTimeout(50)
+for (let i = 0; i < 300 && (await view.getByRole('button', { name: 'Stop' }).count()); i++) {
+  drove = Math.max(drove, away(await reconWhere()))
+  await deskPage.waitForTimeout(30)
 }
-await deskPage.locator('[data-reconstruction-view]').getByRole('button', { name: 'Play' }).waitFor({ timeout: 15000 }).catch(() => fail('the reconstruction never finished playing'))
-const backAt = away(await reconAt([redCar.id, darkCar.id]))
-if (drove < 30) fail(`playing did not move both cars: the lesser moved ${drove.toFixed(0)} px`)
-if (backAt > 1) fail(`after playing, the cars did not come back to rest (${backAt.toFixed(1)} px off)`)
+await view.getByRole('button', { name: 'Play' }).waitFor({ timeout: 15000 }).catch(() => fail('the reconstruction never finished playing'))
+const backAt = away(await reconWhere())
+if (drove < 2) fail(`playing did not move both cars: the lesser moved ${drove.toFixed(2)} m`)
+if (backAt > 0.01) fail(`after playing, the cars did not come back to rest (${backAt.toFixed(2)} m off)`)
 await deskPage.getByRole('slider', { name: 'Moment in the drive' }).fill('0')
 await deskPage.waitForTimeout(500)
-const scrubbed = away(await reconAt([redCar.id, darkCar.id]))
-if (scrubbed < 30) fail(`scrubbing to the start did not take the cars back up their routes (${scrubbed.toFixed(0)} px)`)
-if (!(await deskPage.locator('[data-reconstruction-view]').getByRole('button', { name: 'Play' }).count())) fail('a scrubbed, held frame should offer Play, not Stop')
-ok(`desk: "Play" drives both cars in (at least ${drove.toFixed(0)} px each) and back to rest; scrubbing to the start holds them ${scrubbed.toFixed(0)} px up their routes`)
+const scrubbed = away(await reconWhere())
+if (scrubbed < 5) fail(`scrubbing to the start did not take the cars back up their routes (${scrubbed.toFixed(1)} m)`)
+if (!(await view.getByRole('button', { name: 'Play' }).count())) fail('a scrubbed, held frame should offer Play, not Stop')
+ok(`desk: "Play" drives both cars in (at least ${drove.toFixed(1)} m each) and back to rest; scrubbing to the start holds them ${scrubbed.toFixed(1)} m up their routes`)
 
 // ── the same photograph, the same VIN, seen before ────────────────────
 // Two reports from two different customers carrying the same picture and the same VIN. The
