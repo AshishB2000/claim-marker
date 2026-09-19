@@ -860,9 +860,10 @@ const MARKER = '.cm-root canvas'
 /**
  * The marker's exported frame round a point on its canvas: the colour of the 3-px spot on it, and
  * how many green pixels — the pinned photo's, which nothing else in the studio is — lie within 40 px.
+ * The first marker on `p`: the customer's on the damage step, vehicle A's on the desk.
  */
-const frameAt = (at) =>
-  page.evaluate(
+const frameAt = (at, p = page) =>
+  p.evaluate(
     async ([sel, [x, y]]) => {
       const c = document.querySelector(sel)
       const img = new Image()
@@ -1179,9 +1180,29 @@ await deskPage
   .waitFor({ timeout: 5000 })
   .catch(() => fail('tapping the card on the desk did not open the photo'))
 ok('desk: the photo pinned to the door is a card on the car there too, and opens large; a tap on the car marks nothing')
+// A pin held down, as a finger or a slow click does: the press turns the camera at once, so by the
+// time the button comes up the pin has turned out from under the pointer, and the desk's body takes
+// no taps, so that release hits nothing. It is still the pin's release: the mark stays selected,
+// and once the camera has come round to the door its card is still aside, not over the pin.
+await deskPage.keyboard.press('Escape')
+await deskPage.mouse.move(deskBox.x + deskBox.width - 30, deskBox.y + 60)
+await deskPage.mouse.down()
+await deskPage.mouse.move(deskBox.x + deskBox.width - 90, deskBox.y + 60, { steps: 12 })
+await deskPage.mouse.up()
+await deskPage.waitForTimeout(2500)
+const deskPinAt = await deskMarker.evaluate((c, p) => c.__probe.project(p), doorMark.point)
+await deskPage.mouse.move(deskBox.x + deskPinAt[0], deskBox.y + deskPinAt[1])
+await deskPage.mouse.down()
+await deskPage.waitForTimeout(150)
+await deskPage.mouse.up()
+await deskPage.waitForTimeout(2500)
+const heldPin = await deskMarker.evaluate((c) => c.__probe.store.getState().selected)
+if (heldPin !== 2) fail(`the door's pin, held down on the desk, lost its selection when the button came up (selected: ${heldPin})`)
+const heldPinFrame = await frameAt(await deskMarker.evaluate((c, p) => c.__probe.project(p), doorMark.point), deskPage)
+if (heldPinFrame.green > 5) fail(`the door's card is back over its pin on the desk after the pin was held (${heldPinFrame.green} green px round it)`)
+ok(`desk: a pin held down keeps its selection when the button comes up off it, and its card stays aside (${heldPinFrame.green} green px round the pin)`)
 // and it stands by the door in the reconstruction too: green, which nothing else there is, read
 // off screenshots because that canvas keeps no drawing buffer
-await deskPage.keyboard.press('Escape')
 await deskPage.getByRole('tab', { name: 'Reconstruction' }).click()
 const deskRecon = deskPage.locator('[data-reconstruction] canvas')
 await deskRecon.waitFor({ timeout: 20000 })
