@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 583 tests across 36 files
+npm test               # vitest, 624 tests across 37 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -36,7 +36,9 @@ signature, the desk, retention, the reuse signals (the same photograph and VIN u
 customers), **both drivers** (the scene step's QR invite, a second browser as the other driver
 seeing nothing of the first report, their account filed once, both side by side on the desk,
 on one clock: the two impact ticks where they were built, "Swap" moving the chase, "Save video"),
-the replay unpacked as a video file, and the demo portal (a second, shorter walk against the
+the replay unpacked as a video file, the desk's map (three reports at three places as three
+pins in their status colours, a cluster when it zooms out, a pin tapped open, the list narrowed
+to the view), and the demo portal (a second, shorter walk against the
 **built** page the claim server serves). Run it for anything touching `src/config.ts`,
 `src/app/submit.ts`, `src/claim/prefill.ts`, `public/embed.js`, `server/` or `src/adjuster/`.
 
@@ -237,6 +239,20 @@ recorded, pruned by the retention sweep. Neither ever reaches the customer —
 blame and suspicious appear in neither, which is also a test. `Photo.hash` is a dHash
 computed in the page (`ponytail:` — the server has no image decoder; a forged hash is the
 stated ceiling).
+
+**The desk's map is a second reading of the inbox, never a filter on it.** The place rides on
+the receipt (`summarise()` adds `lng`/`lat`; `GET /claims` stays receipts only), and a receipt
+without one — every report filed before that line — is simply not on the map while staying in
+the list. `src/adjuster/DeskMap.tsx` is one MapLibre instance (`import '../map/worker'` first,
+the same `STREETS` basemap) with one clustered GeoJSON source; the filtering is pure in
+`src/adjuster/pins.ts`. Five things there are easy to undo: the map is fed `inboxRows(...)`'
+leads, never the receipts, because the two accounts of one accident stand in the same place and
+are one row and one pin; the clusters are **DOM markers**,
+because a count is text and text needs a glyph server — one more host in the CSP for a number a
+div can hold; `DeskMap` compares the drawn collection before `setData`/`fitBounds`, or the fit
+answers its own `moveend` for ever through the desk's bounds state; the map and the list show
+the same reports and only "only what's on the map" makes the list follow the view; and "today"
+is the desk's day from midnight, not the last twenty-four hours.
 
 **Two accounts of one accident are linked by `incident.shared` and `reporter.party`.**
 The customer invites the other driver with a QR code (`src/app/Invite.tsx`, the one runtime
@@ -531,7 +547,7 @@ era that still suits it. The app itself is Tailwind (`src/app.css`).
 ```
 src/app/          the seven steps, the shell, the shared ReportDocument, submit
 src/app/steps/damage/   the damage step's three parts: the camera, the suggestions, the marker
-src/adjuster/     the claims desk (adjuster.html), the insurer's side
+src/adjuster/     the claims desk (adjuster.html), the insurer's side: the inbox, the map of everything, the comparison
 src/claim/        the claim/1 document, the persisted store, prefill, the outbox, a photo's own EXIF
 src/config.ts     runtime configuration and the host-page channel
 public/sw.js      the offline shell; its precache list is patched in by vite.config.ts

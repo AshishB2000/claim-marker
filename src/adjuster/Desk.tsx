@@ -12,7 +12,9 @@ import { config } from '../config'
 import { Icon } from '../app/icons'
 import { ReportDocument } from '../app/ReportDocument'
 import { Compare } from './Compare'
+import { DeskMap } from './DeskMap'
 import { inboxRows } from './inbox'
+import { inRange, inView, RANGE_LABEL, type Bounds, type Range } from './pins'
 import { lightingFor } from '../scene/lighting'
 
 /**
@@ -58,6 +60,9 @@ export type Receipt = {
     kind: Claim['incident']['kind']
     at: string
     address: string
+    /** where it happened, for the map; reports filed before there was one carry neither */
+    lng?: number | null
+    lat?: number | null
     reporter: string
     vehicles: number
     /** the plates on the report, so the desk can find it the way a caller names it */
@@ -180,7 +185,14 @@ export function Desk() {
   const [claims, setClaims] = useState<Receipt[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<Status | 'all'>('all')
+  const [range, setRange] = useState<Range>('all')
   const [query, setQuery] = useState('')
+  // the map: whether it is up, whether it is showing volume rather than reports, the view it
+  // last settled on, and whether the list is following that view
+  const [mapOn, setMapOn] = useState(false)
+  const [heat, setHeat] = useState(false)
+  const [onlyOnMap, setOnlyOnMap] = useState(false)
+  const [bounds, setBounds] = useState<Bounds | null>(null)
   const [ref, setRef] = useState<string | null>(() => window.location.hash.replace(/^#\/?/, '') || null)
   const [open, setOpen] = useState<{ receipt: Receipt; claim: Claim } | null>(null)
   // the last incident fetched and what came back, kept together so a stale answer for a
@@ -282,8 +294,14 @@ export function Desk() {
   const q = query.trim().toLowerCase()
   const matches = (c: Receipt) =>
     !q || [c.reference, c.clientReference, c.summary.reporter, c.summary.address, ...(c.summary.plates ?? [])].some((s) => s?.toLowerCase().includes(q))
+  // what the status chips, the date chips and the search leave: the list and the map show the
+  // same reports, and only the list narrows further to the part of the map on screen
+  const now = new Date()
+  const kept = (c: Receipt) => (filter === 'all' || c.status === filter) && inRange(c.receivedAt, range, now) && matches(c)
+  const onScreen = (c: Receipt) => !mapOn || !onlyOnMap || !bounds || inView(c, bounds)
+  const pinned = (claims ?? []).filter(kept)
   // the accounts of one accident share a row; it shows when any of them matches
-  const rows = inboxRows(claims ?? []).filter((g) => g.accounts.some((c) => (filter === 'all' || c.status === filter) && matches(c)))
+  const rows = inboxRows(claims ?? []).filter((g) => g.accounts.some((c) => kept(c) && onScreen(c)))
   const showing = open && open.receipt.reference === ref ? open : null
   // the fetched incident, but only once it actually names the report on screen — a stale
   // answer for a report we have since left never reads as this one's
@@ -349,17 +367,53 @@ export function Desk() {
                 if (e.key === 'Escape') setQuery('')
               }}
             />
-            <div className="mb-3 flex flex-wrap gap-1.5">
+            <div className="mb-2 flex flex-wrap gap-1.5">
               {(['all', ...STATUSES] as const).map((f) => (
                 <button key={f} className="chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
                   {f === 'all' ? 'All' : STATUS_LABEL[f]}
                 </button>
               ))}
             </div>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {(Object.keys(RANGE_LABEL) as Range[]).map((r) => (
+                <button key={r} className="chip" aria-pressed={range === r} onClick={() => setRange(r)}>
+                  {RANGE_LABEL[r]}
+                </button>
+              ))}
+              <button className="chip" aria-pressed={mapOn} onClick={() => setMapOn((v) => !v)}>
+                Map
+              </button>
+            </div>
+            {mapOn && (
+              <>
+                {/* the rows, not the receipts: two accounts of one accident stand in one place, and they are one row and one pin */}
+                <DeskMap
+                  className="mb-2 h-72 overflow-hidden rounded-xl ring-1 ring-slate-200"
+                  receipts={inboxRows(pinned).map((r) => r.lead)}
+                  heat={heat}
+                  onOpen={show}
+                  onBounds={setBounds}
+                />
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  <button className="chip" aria-pressed={heat} onClick={() => setHeat((v) => !v)}>
+                    Heat
+                  </button>
+                  <button className="chip" aria-pressed={onlyOnMap} onClick={() => setOnlyOnMap((v) => !v)}>
+                    Only what's on the map
+                  </button>
+                </div>
+              </>
+            )}
             {claims === null && !error && !askToken && <p className="text-sm text-slate-500">Loading…</p>}
             {claims !== null && rows.length === 0 && (
               <p className="text-sm text-slate-500">
-                {q ? `Nothing matches “${query.trim()}”.` : 'Nothing here yet. A report sent from the page lands in this list.'}
+                {q
+                  ? `Nothing matches “${query.trim()}”.`
+                  : pinned.length > 0
+                    ? 'Nothing on this part of the map.'
+                    : claims.length > 0
+                      ? 'Nothing in this filter.'
+                      : 'Nothing here yet. A report sent from the page lands in this list.'}
               </p>
             )}
             <ul className={`space-y-2 ${showing ? '' : 'grid gap-3 space-y-0 sm:grid-cols-2 lg:grid-cols-3'}`}>

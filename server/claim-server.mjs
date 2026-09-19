@@ -590,6 +590,10 @@ const summarise = (doc) => ({
   kind: doc.incident.kind,
   at: doc.incident.at,
   address: doc.incident.location?.address ?? '',
+  // where it happened, for the desk's map; a report with no place is simply not on it, and
+  // neither is one filed before this line existed
+  lng: doc.incident.location?.lng ?? null,
+  lat: doc.incident.location?.lat ?? null,
   reporter: doc.reporter.name,
   vehicles: doc.vehicles.length,
   plates: doc.vehicles.map((v) => v.plate).filter(Boolean),
