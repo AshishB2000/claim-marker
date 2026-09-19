@@ -45,7 +45,7 @@ function digitTexture(text: string) {
  * Camera-facing pin at the exact hit point. polygonOffset lifts it off the bodywork, and the
  * wide white halo is what keeps a severity colour legible on paint of the same hue — an
  * orange dent marker on an orange car is otherwise invisible. The number matches the row in
- * the host's list. A `dot` is the same pin at a third the size and without its number, for a
+ * the host's list. A `dot` is the same pin at two-fifths the size and without its number, for a
  * mark whose damage the paint itself now shows.
  */
 function Pin({

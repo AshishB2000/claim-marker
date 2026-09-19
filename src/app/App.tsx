@@ -58,8 +58,11 @@ export function App() {
   const photoFirst = narrow && assistOn()
   const [done, setDone] = useState(!!claim.reference)
 
+  // a new step starts at its top. Not a smooth scroll: that runs the new page's whole length
+  // past the reader, and mounts everything that waits to be scrolled near (the review page's
+  // reconstruction) on the way up
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    window.scrollTo({ top: 0, behavior: 'instant' })
   }, [step, done])
 
   const steps = stepsFor(claim.incident.kind)

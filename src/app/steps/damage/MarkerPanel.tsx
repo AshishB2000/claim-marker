@@ -49,7 +49,10 @@ export function MarkerPanel({ v, afterPhotos = false, children }: { v: ClaimVehi
             lang={lang}
             dots
             photos={cardsOf(photos, v.id)}
-            onTagPhoto={tagPhoto}
+            onTagPhoto={(i, zone) => {
+              // a drop names a photo by its place on the claim; only this vehicle's may be tagged to its panels
+              if (photos[i]?.of === v.id) tagPhoto(i, zone)
+            }}
             onOpenPhoto={setOpen}
           />
         </div>
@@ -120,9 +123,8 @@ export function MarkerPanel({ v, afterPhotos = false, children }: { v: ClaimVehi
                       value={p.shows ?? ''}
                       onChange={(e) => tagPhoto(i, e.target.value)}
                     >
-                      <option value="" disabled>
-                        {t('damage.pinned.pick')}
-                      </option>
+                      {/* a mis-dropped tag can be cleared, not only moved: '' leaves `shows` out of the document */}
+                      <option value="">{t('damage.pinned.none')}</option>
                       {zonesOf(v.body).map((z) => (
                         <option key={z.id} value={z.id}>
                           {t(`zone.${z.id}` as Key)}

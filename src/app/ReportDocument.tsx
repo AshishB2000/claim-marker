@@ -46,6 +46,24 @@ function Edit({ step, lang, children }: { step: Step; lang: Lang; children?: Rea
 }
 
 /** one section of the document: an eyebrow, a way back to the step it came from, the content */
+/** its children mount once the box is within a screen of the viewport, and then stay */
+function WhenNear({ className, children }: { className: string; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null)
+  const [near, setNear] = useState(false)
+  useEffect(() => {
+    const el = box.current
+    if (!el || near) return
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && setNear(true), { rootMargin: '100% 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [near])
+  return (
+    <div ref={box} className={className} data-near={near}>
+      {near && children}
+    </div>
+  )
+}
+
 function Part({ title, edit, children }: { title: string; edit?: ReactNode; children: ReactNode }) {
   return (
     <section className="border-b border-slate-100 px-6 py-5 last:border-b-0">
@@ -574,8 +592,12 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
             It leaves out the photo cards the desk's tab stands on the cars: fifteen pixels here, for a slower first render of the page that records the replay */}
         {edit && center && info.diagram && claim.vehicles.some((v) => v.position) && (
           <figure className="mt-3 overflow-hidden rounded-xl ring-1 ring-slate-900/10 print:hidden">
-            {/* a phone's swipe over it scrolls the page, and a wheel here scrolls it too */}
-            <Reconstruction vehicles={claim.vehicles} impact={claim.impact} poses={play.poses} lang={lang} lighting={lighting} zoom={false} className="h-60 bg-slate-100 max-sm:pointer-events-none" />
+            {/* a phone's swipe over it scrolls the page, and a wheel here scrolls it too. Mounted
+                only as it comes near, so the page's readiness and the send-time recording do not
+                pay for a second WebGL context; its 240 px are held meanwhile, so nothing jumps */}
+            <WhenNear className="h-60 bg-slate-100">
+              <Reconstruction vehicles={claim.vehicles} impact={claim.impact} poses={play.poses} lang={lang} lighting={lighting} zoom={false} className="h-full max-sm:pointer-events-none" />
+            </WhenNear>
             <figcaption className="bg-slate-50 px-4 py-2 text-xs text-slate-600">{t('scene.doc.reconstruction')}</figcaption>
           </figure>
         )}

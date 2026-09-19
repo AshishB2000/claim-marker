@@ -1,6 +1,6 @@
 import { use, useEffect, useMemo, useState } from 'react'
 import * as THREE from 'three'
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import type { LngLat } from '../geo'
 import type { Damage } from '../schema'
@@ -39,7 +39,13 @@ function Body({ v, at, photos }: { v: Stood; at: Placed; photos: CardPhoto[] }) 
     patchInstance(root, damage)
     return root
   }, [template, v.color, damage])
-  useEffect(() => applyDamage(damage, damageUniforms(v.damages ?? [], v.body)), [damage, v.damages, v.body])
+  // written after commit, so the frame r3f asked for on commit may already have been drawn
+  // without it: under `frameloop="demand"` the damage asks for its own
+  const invalidate = useThree((s) => s.invalidate)
+  useEffect(() => {
+    applyDamage(damage, damageUniforms(v.damages ?? [], v.body))
+    invalidate()
+  }, [damage, v.damages, v.body, invalidate])
   useEffect(
     () => () => {
       model.traverse((o) => {

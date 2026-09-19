@@ -64,7 +64,7 @@ function Card({ body, zone, photo, stacked, hidden, onOpen }: { body: Vehicle; z
     <group visible={!hidden}>
       {/* a plain one-pixel line: drei's fat Line is a heavy shader to compile, in every canvas the card is in */}
       {stacked === 0 && (
-        <lineSegments>
+        <lineSegments key={zone.id}>
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" args={[leader, 3]} />
           </bufferGeometry>
@@ -80,7 +80,8 @@ function Card({ body, zone, photo, stacked, hidden, onOpen }: { body: Vehicle; z
             onOpen &&
             ((e: ThreeEvent<MouseEvent>) => {
               e.stopPropagation()
-              if (e.delta <= 2) onOpen()
+              // a finger drifts a few pixels in a tap; a drag that turns the car goes further
+              if (e.delta <= 8) onOpen()
             })
           }
         >

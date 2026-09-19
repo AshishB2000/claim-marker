@@ -70,11 +70,12 @@ describe('what the view holds', () => {
     expect(inBounds([-74.1, 40.6], view)).toBe(true)
   })
 
-  it('reads a view that crosses the antimeridian, where west is greater than east', () => {
-    const pacific: [number, number, number, number] = [170, -20, -170, 20]
+  it('reads a view across the antimeridian as MapLibre gives it, unwrapped past 180', () => {
+    const pacific: [number, number, number, number] = [150, -20, 200, 20]
     expect(inBounds([179, 0], pacific)).toBe(true)
-    expect(inBounds([-179, 0], pacific)).toBe(true)
-    expect(inBounds([0, 0], pacific)).toBe(false)
+    expect(inBounds([-170, 0], pacific)).toBe(true)
+    expect(inBounds([100, 0], pacific)).toBe(false)
+    expect(inBounds([-170, 30], pacific)).toBe(false)
   })
 
   it('leaves a report with no place off the map rather than in every view', () => {

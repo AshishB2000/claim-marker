@@ -21,6 +21,7 @@ import { Icon } from '../app/icons'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
 import { impactTickOf } from '../map/playback'
 import { usePlayback } from '../map/usePlayback'
+import { lightingFor } from '../scene/lighting'
 import { ReportDocument } from '../app/ReportDocument'
 import type { Receipt } from './Desk'
 
@@ -132,6 +133,8 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
   const [saving, setSaving] = useState(false)
   const [unsaved, setUnsaved] = useState(false)
   const map = useRef<MapSceneHandle>(null)
+  // the light of the moment, from the record in the account the map is drawn from — as `Desk` lights a single report
+  const lighting = useMemo(() => lightingFor(reports.length >= 2 ? orderPair(reports)[0].claim.incident.context : null), [reports])
   // DEV only, like `window.__map` and the diagram step's own: the shared clock, so
   // `scripts/integration-smoke.mjs` can hold both accounts on a chosen frame
   useEffect(() => {
@@ -197,6 +200,7 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
               clock={play.clock}
               follow={follow ?? undefined}
               onPlaybackStop={play.stop}
+              lighting={lighting}
               className="h-[420px]"
             />
             {play.canPlay && (

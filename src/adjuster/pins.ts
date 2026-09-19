@@ -48,10 +48,13 @@ export function inRange(receivedAt: string, range: Range, now: Date): boolean {
   return !from || (Number.isFinite(at) && at >= from.getTime())
 }
 
-/** in the view: west is greater than east when it crosses the antimeridian, which is a view, not an error */
+/**
+ * in the view. MapLibre's `getBounds()` never wraps: a view across the antimeridian comes back
+ * as e.g. `[150, s, 200, n]`, so the point's longitude is brought into the 360° from `west` on.
+ */
 export function inBounds([lng, lat]: [number, number], [west, south, east, north]: Bounds): boolean {
-  const acrossLng = west <= east ? lng >= west && lng <= east : lng >= west || lng <= east
-  return acrossLng && lat >= south && lat <= north
+  const l = west + ((((lng - west) % 360) + 360) % 360)
+  return l <= east && lat >= south && lat <= north
 }
 
 /** what the list keeps when it is showing only what the map is showing; a report with no place is not on the map */
