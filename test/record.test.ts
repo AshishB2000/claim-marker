@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { newVehicle, type ClaimVehicle } from '../src/claim/schema'
 import { destination, type LngLat } from '../src/geo'
-import { MIME_CANDIDATES, captionBaseline, damageCount, fitContain, hasReplay, pickMimeType, progressBarRect } from '../src/map/record'
+import { MIME_CANDIDATES, VIDEO_MS, captionBaseline, damageCount, fitContain, pickMimeType, progressBarRect, recordRate } from '../src/map/record'
+import { HOLD_MS, hasReplay, shots, timelineOf, wallMsOf } from '../src/map/playback'
 
 const here: LngLat = [-73.9859, 40.7573]
 const car = (id: string, path: LngLat[], position: LngLat | null): ClaimVehicle => ({ ...newVehicle(id, 'insured', 'sedan', '#b91c1c'), path, position, heading: 0 })
@@ -36,6 +37,10 @@ describe('hasReplay', () => {
 
   it('is false for a vehicle not yet placed, even with a drawn path', () => {
     expect(hasReplay([car('a', [destination(here, 90, 10)], null)])).toBe(false)
+  })
+
+  it('is false for a drawn path that goes nowhere, a point on the car itself', () => {
+    expect(hasReplay([car('a', [here], here)])).toBe(false)
   })
 
   it('is true as soon as one vehicle has a route with some length', () => {
@@ -109,5 +114,35 @@ describe('damageCount', () => {
   it('is plural otherwise, and reads in Spanish too', () => {
     expect(damageCount(3, 'en')).toBe('3 damages')
     expect(damageCount(3, 'es')).toBe('3 daños')
+  })
+})
+
+/**
+ * `MediaRecorder` records wall time, and a cinematic playback spends far more of it than the
+ * drive does — the overhead, the ease, and above all the slow-motion window at a quarter rate.
+ * So the recorder runs the whole clock faster rather than recording the first seven seconds of
+ * it and cutting the impact off.
+ */
+describe('recordRate', () => {
+  it('leaves a run that already fits at its own pace', () => {
+    expect(recordRate(3000)).toBe(1)
+    expect(recordRate(VIDEO_MS)).toBe(1)
+    expect(recordRate(0)).toBe(1)
+  })
+
+  it('runs the clock exactly fast enough for a longer one to fit', () => {
+    expect(recordRate(14_000)).toBeCloseTo(2, 6)
+    expect(recordRate(14_000, 7000)).toBeCloseTo(2, 6)
+    expect(14_000 / recordRate(14_000)).toBeCloseTo(VIDEO_MS, 6)
+  })
+
+  it('fits a real cinematic playback — the overhead, the drive and the hold — inside the ceiling', () => {
+    // 40 m of drive: the longest the clock allows, so the worst case for the ceiling
+    const vehicles = [car('a', [destination(here, 180, 40)], here), { ...car('b', [destination(here, 0, 45)], destination(here, 0, 5)), role: 'other' as const }]
+    const timeline = timelineOf(vehicles)
+    const end = timeline.ms + HOLD_MS
+    const wall = wallMsOf(shots(vehicles, timeline), end)
+    expect(wall).toBeGreaterThan(VIDEO_MS)
+    expect(wall / recordRate(wall)).toBeCloseTo(VIDEO_MS, 6)
   })
 })

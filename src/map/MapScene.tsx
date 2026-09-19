@@ -7,7 +7,9 @@
  * the body to move it, drag the handle ahead of its nose to turn it. Where it came from is
  * drawn by the drag, or tapped onto the map in tap mode, and those points can be dragged.
  * Given `poses`, the 3D cars follow those instead of the vehicles — playback — and the
- * markers step aside until it is over.
+ * markers step aside until it is over. In `mode="cinematic"` the playback also drives the
+ * camera: the map is allowed to tilt for exactly that long, chases the customer's car and
+ * comes back flat before the markers return, so nothing is ever edited tilted.
  */
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import './worker'
@@ -17,8 +19,11 @@ import { bearing, destination, type LngLat } from '../geo'
 import { translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
 import { SIZE } from '../vehicles/bodies'
-import { CarLayer, type CarPose } from './carLayer'
-import { damageCount, paintOverlay, recordPlayback, type OverlayLabel } from './record'
+import type { Lighting } from '../scene/lighting'
+import { CarLayer, shockRing, type CarPose } from './carLayer'
+import { MAX_PITCH, cameraAt, ringAt, sharedTimeline, shotAt, shots, type Camera, type PlaybackMode, type SharedTimeline, type Shot } from './playback'
+import { CITY_GREY, CITY_OPACITY, damageCount, paintOverlay, recordPlayback, standCity, type OverlayLabel } from './record'
+import { reducedMotion } from './usePlayback'
 import { styleFor, type MapStyle } from './styles'
 
 export type MapSceneHandle = {
@@ -28,10 +33,19 @@ export type MapSceneHandle = {
   recentre: () => void
   /**
    * The diagram's playback, recorded as a video: the vehicles' routes into the impact, held
-   * there, then handed back exactly as it was. Null when the browser cannot record it or there
-   * is nothing to play — never throws.
+   * there, then handed back exactly as it was — `cinematic` records the camera moves and the
+   * ghosts too, and falls back to the flat replay when the viewer asked for less motion. Null
+   * when the browser cannot record it or there is nothing to play — never throws.
    */
-  record: () => Promise<Blob | null>
+  record: (mode?: PlaybackMode) => Promise<Blob | null>
+  /**
+   * Hand the map back flat and idle: any playback running on it is ended, the cars go back to
+   * rest, a cinematic camera jumps to the view it was let off at, and this resolves once the
+   * map has painted that way.
+   * What `export()` and `record()` are worth depends on it — a still taken mid-chase is a
+   * tilted frame with a shockwave in it — so the review page's send calls it first.
+   */
+  stop: () => Promise<void>
 }
 
 /** what a tap on the map means right now */
@@ -44,6 +58,12 @@ export type MapSceneProps = {
   vehicles: ClaimVehicle[]
   /** the ways around the incident, drawn as a road under the cars; on the two real-map grounds only */
   roads?: FeatureCollection | null
+  /**
+   * The building footprints around the incident, extruded to the `height` property each one
+   * carries. Flat footprints under everything while the map is flat, a city once a cinematic
+   * replay tilts the camera; like the road, only on the two real-map grounds.
+   */
+  buildings?: FeatureCollection | null
   impact: LngLat | null
   selected: string | null
   /** false on the review page: no handles, no dragging, no map controls */
@@ -52,12 +72,39 @@ export type MapSceneProps = {
   /** a playback frame; while it is set the cars follow it and the markers hide */
   poses?: CarPose[] | null
   /**
+   * How a playback is shown. `diagram` (the default) keeps the map exactly as it is drawn:
+   * flat, north-up. `cinematic` opens the camera for as long as `poses` is set — tilted,
+   * behind the customer's car, slowed into the impact with a shockwave — driven by `clock`,
+   * the playback's own time in ms from `usePlayback`.
+   */
+  mode?: PlaybackMode
+  clock?: number
+  /**
    * A second account's vehicles, drawn faintly over the first for the desk's `Compare` view —
    * somebody else's story of the same cars, not something to edit: no markers, no drag or turn
    * handles, no labels, just the body at reduced opacity and its travel path dashed. Absent or
    * empty leaves the map exactly as it is without this prop; the customer's page never passes it.
    */
   ghosts?: ClaimVehicle[] | null
+  /** the ghosts at a moment of the same playback; without it they stand where they came to rest */
+  ghostPoses?: CarPose[] | null
+  /** the second account's point of impact: where the shockwave rings once `follow` has made the moment that account's */
+  ghostImpact?: LngLat | null
+  /**
+   * The vehicle the cinematic camera chases, by id — a ghost's id as readily as one of
+   * `vehicles`, which is how the desk swaps to the other driver's car. Unset follows the
+   * reporter's own, as `shots` always did.
+   */
+  follow?: string
+  /** the playback running on this map should stop: `stop()` and `record()` say so before they take the map over */
+  onPlaybackStop?: () => void
+  /**
+   * The moment's light, from `lightingFor(incident.context)`: the sun where it stood, real
+   * shadows, the weather, headlights after dark. Absent or null is the fixed light the map has
+   * always had — the desk's `Compare` and every other caller that does not ask are unchanged.
+   * Decoration only: nothing in it moves a car, a mark or the impact.
+   */
+  lighting?: Lighting | null
   onSelect?: (id: string | null) => void
   /** a car was picked up, is being dragged, was let go */
   onGrab?: (id: string) => void
@@ -77,6 +124,9 @@ export type MapSceneProps = {
 
 /** close enough that a sedan is eighty pixels long; the imagery overscales gracefully past 19 */
 const ZOOM = 19.9
+/** the white flow line along a travel path, and how wide it becomes as a light trail in slow motion */
+const FLOW_WIDTH = 3
+const TRAIL_WIDTH = 7
 /** the label floats this far above the car's footprint, in pixels */
 const LABEL_GAP = 18
 
@@ -113,8 +163,8 @@ function roadLineWidth(lat: number, metres: ExpressionSpecification): Expression
   return ['interpolate', ['exponential', 2], ['zoom'], ROAD_ZOOM_MIN, px(ROAD_ZOOM_MIN), ROAD_ZOOM_MAX, px(ROAD_ZOOM_MAX)]
 }
 
-/** the road is a real thing, so it belongs only on the two real-map grounds, never a drawn one */
-const roadsVisible = (style: MapStyle): 'visible' | 'none' => (style === 'satellite' || style === 'streets' ? 'visible' : 'none')
+/** the road and the buildings are real things, so they belong only on the two real-map grounds */
+const onRealGround = (style: MapStyle): 'visible' | 'none' => (style === 'satellite' || style === 'streets' ? 'visible' : 'none')
 
 const el = (className: string, color?: string) => {
   const d = document.createElement('div')
@@ -159,6 +209,20 @@ const DASH_STEPS: number[][] = [
 
 type Handles = { car: Marker; turn: HTMLElement; tagwrap: HTMLElement; tag: HTMLElement; ways: Marker[] }
 
+/** one cinematic replay, from the moment the camera is let off the leash to the moment it is handed back */
+type Cinematic = {
+  shots: Shot[]
+  /** the id the shot list was built to chase, so a Swap mid-playback re-cuts it */
+  follow: string | undefined
+  timeline: SharedTimeline
+  /** the view the customer left, restored exactly at the end */
+  home: Camera
+  ring: ReturnType<typeof shockRing>
+  /** the light trails: which dash step is showing, and whether they are on */
+  step: number
+  slow: boolean
+}
+
 /** everything created for one map instance, so the cleanup can tear down exactly that */
 type Live = {
   map: MapLibreMap
@@ -168,6 +232,10 @@ type Live = {
   styleReady: boolean
   /** the ground the map was last given, so a re-render does not reload the same style */
   style: MapStyle
+  /** set while a cinematic replay has the camera */
+  cine: Cinematic | null
+  /** set while the recorder owns the map: the playback effects keep their hands off it */
+  recording: boolean
 }
 
 type Props = Omit<MapSceneProps, 'className' | 'ref'>
@@ -221,10 +289,15 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     map.keyboard.disableRotation()
     if (init.interactive) map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
     map.addControl(new ScaleControl({ maxWidth: 90, unit: 'metric' }), 'bottom-left')
-    const state: Live = { map, cars: new CarLayer(init.center), handles: new Map(), impact: null, styleReady: false, style: init.style }
+    const state: Live = { map, cars: new CarLayer(init.center), handles: new Map(), impact: null, styleReady: false, style: init.style, cine: null, recording: false }
     live.current = state
-    // a handle for poking at the live map from the console; never in production
-    if (import.meta.env.DEV) Object.assign(window, { __map: map })
+    // a handle for poking at the live map from the console; never in production. On its own
+    // element too, for a page with more than one map: the desk's compare view has three, and
+    // `window.__map` is whichever was made last
+    if (import.meta.env.DEV) {
+      Object.assign(window, { __map: map })
+      Object.assign(container.current!, { __map: map })
+    }
 
     map.on('style.load', () => {
       map.addImage('cm-arrow', arrowImage(), { sdf: true })
@@ -234,24 +307,59 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       // it. style.load fires again on every ground switch, a full style replacement rather
       // than a diff, so this handler has to pick the right initial visibility and geometry
       // itself each time rather than relying on whatever an effect set on the previous style.
+      const groundVisibility = onRealGround(state.style)
+
+      // the city around the crash, added — hence drawn — first of everything this handler
+      // adds, so the road, the paths, the markers' cars and the shockwave are all over it.
+      // Flat map, flat footprint: a plain `fill`. The extrusion is drawn only while a cinematic
+      // run has the camera tilted (`standCity`) — MapLibre draws it with a depth pass the cars
+      // and every line are then tested against, so a car under a roof would vanish from the
+      // flat diagram. Both are switched by opacity, not visibility, which is the ground's.
+      //
+      // The grey is light but deliberately short of white: everything the replay draws over it
+      // — the shockwave's ring, the travel paths' flow line, the labels — is white, and a city
+      // of near-white blocks would swallow all three. At 0.85 over the brightest imagery there
+      // is, this colour stays at about 200, so a wall never passes for one of them.
+      map.addSource('buildings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addLayer({
+        id: 'buildings-flat',
+        type: 'fill',
+        source: 'buildings',
+        layout: { visibility: groundVisibility },
+        paint: { 'fill-color': CITY_GREY, 'fill-opacity': CITY_OPACITY, 'fill-opacity-transition': { duration: 0, delay: 0 } },
+      })
+      map.addLayer({
+        id: 'buildings',
+        type: 'fill-extrusion',
+        source: 'buildings',
+        layout: { visibility: groundVisibility },
+        paint: {
+          'fill-extrusion-color': CITY_GREY,
+          'fill-extrusion-opacity': 0,
+          'fill-extrusion-opacity-transition': { duration: 0, delay: 0 },
+          'fill-extrusion-height': ['get', 'height'],
+          'fill-extrusion-base': 0,
+        },
+      })
+      pushCollection(map, 'buildings', latest.current.buildings)
+
       map.addSource('roads', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-      const roadVisibility = roadsVisible(state.style)
       const roadLat = init.center[1]
       map.addLayer({
         id: 'roads-casing',
         type: 'line',
         source: 'roads',
-        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: roadVisibility },
+        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: groundVisibility },
         paint: { 'line-color': '#3a4150', 'line-width': roadLineWidth(roadLat, roadMetres), 'line-opacity': 0.9 },
       })
       map.addLayer({
         id: 'roads-core',
         type: 'line',
         source: 'roads',
-        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: roadVisibility },
+        layout: { 'line-cap': 'round', 'line-join': 'round', visibility: groundVisibility },
         paint: { 'line-color': '#ffffff', 'line-width': roadLineWidth(roadLat, ['*', roadMetres, 0.6]), 'line-opacity': 0.85 },
       })
-      pushRoads(map, latest.current.roads)
+      pushCollection(map, 'roads', latest.current.roads)
 
       // the other account's travel paths: dashed, same colour family, under the first
       // account's own paths and heads so a ghost never reads as the primary story
@@ -310,12 +418,13 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       }
     })
 
-    // direction of travel: the white dashes creep along the line towards the car
+    // direction of travel: the white dashes creep along the line towards the car; the
+    // cinematic replay steps them itself, faster, while its light trails are lit
     let step = 0
     let last = 0
     let raf = 0
     const flow = (t: number) => {
-      if (t - last > 70 && state.styleReady && map.getLayer('paths-flow')) {
+      if (t - last > 70 && state.styleReady && !state.cine?.slow && map.getLayer('paths-flow')) {
         step = (step + 1) % DASH_STEPS.length
         map.setPaintProperty('paths-flow', 'line-dasharray', DASH_STEPS[step])
         last = t
@@ -357,16 +466,17 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     s.map.setStyle(styleFor(props.style, [lng, lat]), { diff: false })
   }, [props.style, lng, lat])
 
-  // ── the road is only real on the two real-map grounds ────────────────
+  // ── the road and the buildings are only real on the two real-map grounds ─
   // The style.load handler above already sets the right visibility whenever the style itself
   // reloads (which every ground switch does); this effect is what applies it the rest of the
   // time, so it degrades gracefully if the layers do not exist yet.
   useEffect(() => {
     const s = live.current
     if (!s) return
-    const visibility = roadsVisible(props.style)
-    if (s.map.getLayer('roads-casing')) s.map.setLayoutProperty('roads-casing', 'visibility', visibility)
-    if (s.map.getLayer('roads-core')) s.map.setLayoutProperty('roads-core', 'visibility', visibility)
+    const visibility = onRealGround(props.style)
+    for (const id of ['buildings-flat', 'buildings', 'roads-casing', 'roads-core']) {
+      if (s.map.getLayer(id)) s.map.setLayoutProperty(id, 'visibility', visibility)
+    }
   }, [props.style])
 
   // ── the location moved: recentre and move the floating origin ───────
@@ -491,26 +601,104 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
   // ── the road under the cars, from OpenStreetMap ──────────────────────
   // The style.load handler pushes the current roads once when the layers are (re)created;
   // this is what pushes a later change, the same way the vehicles effect above pushes paths.
-  const { roads } = props
+  const { roads, buildings } = props
   useEffect(() => {
     const s = live.current
-    if (s?.styleReady) pushRoads(s.map, roads)
+    if (s?.styleReady) pushCollection(s.map, 'roads', roads)
   }, [roads])
+  useEffect(() => {
+    const s = live.current
+    if (s?.styleReady) pushCollection(s.map, 'buildings', buildings)
+  }, [buildings])
 
   // ── ghosts: the other account's cars and paths, decoration only ──────
-  const { ghosts } = props
+  // The dashed routes are the vehicles' own and are pushed when they change; the bodies follow
+  // `ghostPoses` while a playback is running, exactly as the first account's follow `poses`.
+  const { ghosts, ghostPoses } = props
   useEffect(() => {
     const s = live.current
-    if (!s) return
+    if (!s || s.recording) return
     if (s.styleReady) pushGhostGeometry(s.map, ghosts ?? [])
-    s.cars.setGhosts(posesOf(ghosts ?? []))
   }, [ghosts])
+  useEffect(() => {
+    const s = live.current
+    if (!s || s.recording) return
+    s.cars.setGhosts(ghostPoses ?? posesOf(ghosts ?? []))
+  }, [ghosts, ghostPoses])
+
+  // ── the light as it was: decoration on the layer, never on the document ──
+  const lighting = props.lighting ?? null
+  useEffect(() => {
+    live.current?.cars.setLighting(lighting)
+  }, [lighting])
+
+  // ── cinematic playback: the camera opens up, chases, slows into the impact, comes back ─
+  // The map is built flat and un-tiltable; it may tilt only between the first cinematic frame
+  // and the last, and whatever happens in between — a stop pressed mid-chase, the run ending
+  // — it is handed back at exactly the view the customer left, before the markers return.
+  // It is declared above the poses effect below, so on the run's natural end — both effects in
+  // one flush — the map is flat before `mk-playing` comes off and the markers return.
+  const { poses } = props
+  const mode = props.mode ?? 'diagram'
+  const clock = props.clock ?? 0
+  const follow = props.follow
+  useEffect(() => {
+    const s = live.current
+    if (!s || s.recording) return
+    const { map, cars } = s
+    if (mode !== 'cinematic' || !poses) {
+      flatten(s)
+      return
+    }
+    // the chase, cut for the car it follows: whose moment it slows into (`sharedTimeline`, the
+    // same rule `usePlayback` sets the rate by) and the shots behind that car. The ghosts are in
+    // the list because one of them may be the car it follows.
+    const cut = () => {
+      const ghosts = latest.current.ghosts ?? []
+      const timeline = sharedTimeline(latest.current.vehicles, ghosts, follow)
+      return { follow, timeline, shots: shots([...latest.current.vehicles, ...ghosts], timeline, follow) }
+    }
+    if (!s.cine) {
+      s.cine = {
+        ...cut(),
+        home: { center: fromLL(map.getCenter()), zoom: map.getZoom(), pitch: 0, bearing: 0 },
+        ring: shockRing(),
+        step: 0,
+        slow: false,
+      }
+      map.setMaxPitch(MAX_PITCH)
+      standCity(map, true)
+    } else if (s.cine.follow !== follow) {
+      // "Swap" mid-playback: the chase moves to the other car, and the moment moves with it
+      Object.assign(s.cine, cut())
+    }
+    const c = s.cine
+    const cam = cameraAt(c.shots, clock, [...poses, ...(ghostPoses ?? [])], c.home)
+    map.jumpTo({ center: ll(cam.center), zoom: cam.zoom, pitch: cam.pitch, bearing: cam.bearing })
+    // slow motion: the travel paths brighten into light trails, their dashes racing
+    const slow = shotAt(c.shots, clock).rate < 1
+    if (map.getLayer('paths-flow')) {
+      if (slow !== c.slow) map.setPaintProperty('paths-flow', 'line-width', slow ? TRAIL_WIDTH : FLOW_WIDTH)
+      if (slow) {
+        c.step = (c.step + 1) % DASH_STEPS.length
+        map.setPaintProperty('paths-flow', 'line-dasharray', DASH_STEPS[c.step])
+      }
+    }
+    c.slow = slow
+    // the shockwave: a ring out from the impact, decoration the document never sees
+    // — at the point of impact of whichever account the moment is
+    const ring = ringAt(c.timeline, clock)
+    const impact = c.timeline.lead === 'own' ? latest.current.impact : (latest.current.ghostImpact ?? null)
+    if (ring && impact) {
+      c.ring.material.opacity = ring.opacity
+      cars.setDecor([{ object: c.ring, at: impact, metres: ring.metres }])
+    } else cars.setDecor([])
+  }, [mode, clock, poses, ghostPoses, follow])
 
   // ── playback: the cars follow the frame, the handles step aside ─────
-  const { poses } = props
   useEffect(() => {
     const s = live.current
-    if (!s) return
+    if (!s || s.recording) return
     s.map.getContainer().classList.toggle('mk-playing', !!poses)
     s.cars.setPoses(poses ?? posesOf(latest.current.vehicles))
   }, [poses])
@@ -547,15 +735,52 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
         return compose(s.map, latest.current.vehicles, latest.current.impact, latest.current.lang ?? 'en')
       },
       recentre: () => live.current?.map.easeTo({ center: ll(latest.current.center), zoom: ZOOM, duration: 700 }),
-      record: () => {
+      record: (mode) => {
         const s = live.current
         if (!s) return Promise.resolve(null)
+        // whatever the camera was doing, the recorder owns it from here: the playback on screen
+        // is stopped, and the effects above step aside for as long as it runs, or they would
+        // fight it frame by frame
+        latest.current.onPlaybackStop?.()
+        flatten(s)
+        s.recording = true
         return recordPlayback({
           map: s.map,
           cars: s.cars,
           vehicles: latest.current.vehicles,
+          ghosts: latest.current.ghosts ?? [],
           impact: latest.current.impact,
+          ghostImpact: latest.current.ghostImpact ?? null,
           lang: latest.current.lang ?? 'en',
+          mode: mode === 'cinematic' && !reducedMotion() ? 'cinematic' : 'diagram',
+          follow: latest.current.follow,
+          ring: shockRing(),
+        }).finally(() => {
+          s.recording = false
+        })
+      },
+      stop: async () => {
+        const s = live.current
+        if (!s) return
+        latest.current.onPlaybackStop?.()
+        // a flat "Play it back" leaves the cars mid-route just as surely as a chase leaves the
+        // camera tilted; either way the map goes back to rest here rather than on the re-render
+        // the stop above will cause, which comes after the caller has taken its picture
+        const container = s.map.getContainer()
+        const playing = container.classList.contains('mk-playing')
+        flatten(s)
+        if (!playing) return
+        container.classList.remove('mk-playing')
+        s.cars.setPoses(posesOf(latest.current.vehicles))
+        s.cars.setGhosts(posesOf(latest.current.ghosts ?? []))
+        // none of that is on the canvas until the map has painted again; a still taken before
+        // then is the frame the playback was on. The timeout is the safety net for a map that
+        // will never paint again — a send is never held up by its own picture.
+        await new Promise<void>((resolve) => {
+          const done = () => resolve()
+          setTimeout(done, 300)
+          s.map.once('render', done)
+          s.map.triggerRepaint()
         })
       },
     }),
@@ -563,6 +788,23 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
   )
 
   return <div ref={container} className={className} />
+}
+
+/**
+ * Hand the camera back: the view the cinematic replay was let off at, flat, north-up, with the
+ * tilt locked again and the shockwave gone. True when there was a replay to end. The effect
+ * below calls it when the playback stops, and the handle's `stop`/`record` call it because
+ * neither a still nor a recording may start on a map mid-chase.
+ */
+function flatten(s: Live): boolean {
+  if (!s.cine) return false
+  s.map.jumpTo({ center: ll(s.cine.home.center), zoom: s.cine.home.zoom, pitch: 0, bearing: 0 })
+  s.map.setMaxPitch(0)
+  standCity(s.map, false)
+  s.cars.setDecor([])
+  if (s.map.getLayer('paths-flow')) s.map.setPaintProperty('paths-flow', 'line-width', FLOW_WIDTH)
+  s.cine = null
+  return true
 }
 
 function removeHandles(h: Handles) {
@@ -573,7 +815,7 @@ function removeHandles(h: Handles) {
 const posesOf = (vehicles: ClaimVehicle[]): CarPose[] =>
   vehicles
     .filter((v) => v.position)
-    .map((v) => ({ id: v.id, body: v.body, color: v.color, position: v.position!, heading: v.heading }))
+    .map((v) => ({ id: v.id, body: v.body, color: v.color, position: v.position!, heading: v.heading, damages: v.damages }))
 
 /** the travel paths and their arrowheads, as GeoJSON the style layers draw */
 function pushGeometry(map: MapLibreMap, vehicles: ClaimVehicle[]) {
@@ -595,10 +837,10 @@ function pushGeometry(map: MapLibreMap, vehicles: ClaimVehicle[]) {
   if (headSource instanceof GeoJSONSource) headSource.setData({ type: 'FeatureCollection', features: heads })
 }
 
-/** the road under the cars, exactly as the ways lookup returned it; decoration, never picked */
-function pushRoads(map: MapLibreMap, roads: FeatureCollection | null | undefined) {
-  const source = map.getSource('roads')
-  if (source instanceof GeoJSONSource) source.setData(roads ?? { type: 'FeatureCollection', features: [] })
+/** the road, or the buildings, exactly as the lookup returned them; decoration, never picked */
+function pushCollection(map: MapLibreMap, id: string, data: FeatureCollection | null | undefined) {
+  const source = map.getSource(id)
+  if (source instanceof GeoJSONSource) source.setData(data ?? { type: 'FeatureCollection', features: [] })
 }
 
 /** the other account's travel paths — no arrowhead, no flow animation: decoration, never picked */

@@ -1003,12 +1003,14 @@ canvas, and every animation frame is the map's canvas, the pills and the cross a
 *projected positions for the current poses*, a thin progress bar and a caption. It drives the
 car layer through the same `poses` the on-screen playback uses — there is one animation, not
 two — then `captureStream(30)` into `MediaRecorder`, one run of `durationOf(vehicles)` plus a
-700 ms hold so the impact is on screen long enough to see.
+700 ms hold so the impact is on screen long enough to see. Since v10 that run is the cinematic
+one, camera and all, fitted into seven seconds: see "Two accounts, one moment" below.
 
 The codec is the first the browser offers of VP9, VP8, plain WebM, then MP4: Chrome and Firefox
 record WebM, Safari records only MP4, and whichever it is the server files it by its own type.
 
-**Never at the report's expense.** Recording races an 8-second ceiling; losing the race, a
+**Never at the report's expense.** Recording races a ceiling (8 s in v9; since v10, the 7 s
+video plus 3 s for the encoder to finish, see below); losing the race, a
 browser with no `MediaRecorder`, nothing to play, or a file over the 4 MB cap all send the
 report without it, silently. The customer never sees an error about a video. It is not
 persisted in the draft — like the PNGs it is made fresh at send time — and the server unpacks
@@ -1018,12 +1020,708 @@ webhook's files.
 **On the desk** the adjuster gets the recorded video under the live playback, with a
 frame-by-frame step, because "was the red car already moving when the van pulled out" is
 answered by stepping, not by watching. With two accounts of one accident, "Play both" drives
-both sets of cars from one clock so the two versions move together on one map.
+both sets of cars from one clock so the two versions move together on one map — since v10 the
+clock is `usePlayback`'s own, with a scrubber under it; see "Two accounts, one moment".
 
 **What the smoke proves.** Not that a file came back, which a recorder of a black rectangle
-also manages, but that the frame in the middle of the video is a real picture: it decodes the
-attachment into a `<video>`, seeks to half way, draws it to a canvas and counts distinct colours
-exactly as it does for the PNGs.
+also manages, but that the video shows the replay. `scripts/video-check.mjs` decodes it into a
+`<video>` in the page and checks four things. It must last at least 3 s. Its middle frame must
+have at least 40 distinct colours, the same count the PNGs are held to. The frames at ¼ and ¾
+must differ on at least 5 % of sampled pixels, a pixel counting as different when its channels
+differ by more than 48 in total. And the file must be at least 8 kB, which only guards against
+an empty file. The same check runs on the send-time replay (`smoke.mjs`), on the copy the server
+unpacks and on the desk's "Save video" (`integration-smoke.mjs`).
+
+Since v10 it is **not** a byte count. Measured on the same walks, a file's size follows how many
+distinct frames reached the encoder, and a loaded machine sends fewer. Full-length, moving,
+many-coloured replays came out between 40 and 84 kB, so the old 50 kB gate failed good ones.
+A recorder temporarily made to repaint one frozen frame for the whole run produced a file of
+243 kB with 475 colours. It passed both old byte gates (20 kB and 50 kB), and the motion check
+failed it at 0.0 % of pixels changed (0.7 % on the send-time walk). Real replays changed 10–37 %
+on the same measure.
+
+## Watch it: the cinematic replay (v10)
+
+"Play it back" is a diagram in motion: flat, north-up, the cars sliding along their routes.
+It is exact and it is dull, and an adjuster reading it has to work out for themselves which
+car was where when. "Watch it" is the same playback with the camera let off the leash: it
+holds the overhead for a moment, tilts to 55° behind the customer's own car looking the way it
+set off, follows it, slows to a quarter speed into the impact and out of it, rings the impact
+with a shockwave, holds, and comes back to the flat diagram exactly as the customer left it.
+Nothing in the document changes. It is the same routes and the same `posesAt`; only the camera
+and the clock are different.
+
+**The map is never edited tilted.** `MapScene` is built as it always was — `pitch 0, maxPitch
+0`, rotation disabled — and takes a `mode` prop that defaults to `'diagram'`, so every caller
+that does not ask is unchanged. In `'cinematic'` mode, and only while `poses` is set, it raises
+`maxPitch` to 60 on the live map instance, drives the camera with `jumpTo` every frame, and on
+the last frame — or a Stop pressed mid-chase — jumps back to the view it captured at the first
+frame, drops `maxPitch` to 0 and clears its decoration, *before* the markers return — the
+cinematic effect is declared above the poses effect, so that holds when a run's natural end
+runs both in one flush. So the
+DOM-marker interaction, whose maths assumes a flat map, never meets a pitch; the desk's
+read-only map (`interactive={false}`) gets the same treatment, which is why `maxPitch` is set at
+playback start rather than at construction.
+
+**One clock, held rather than derived.** `usePlayback` used to compute `t` from
+`performance.now()` each frame. Now it keeps the playback's own time in a ref, in ms, and
+advances it by the wall clock's delta times a `rate`; that is what makes `seek(t)` a one-line
+assignment and slow motion a number. The pure parts are in `src/map/playback.ts`: `Timeline`
+(`ms` from `durationOf`, and the impact as `impactT` and `impactMs`), `frameAt`, `advance`,
+the shot list and the camera. `seek(ms)` is a moment on the clock itself, not a fraction of the
+drive, so it can reach past the drive into the hold where the shockwave is. The recorder
+(`src/map/record.ts`) and the desk's two-account view use the same pure parts, so there is one
+curve and one hold, not three copies.
+
+**The impact time is the closest approach.** `impactTimeOf` samples sixty moments of the drive
+and returns the earliest at which the nearest two vehicles are nearest. A car with no route
+stands at its resting position, so one route into a parked car works the same; two cars that
+drive to rest touching meet at `t = 1`; a T-bone whose routes cross before either stops meets
+where they cross. Nothing else on the page needs to know this yet — the two-account replay and
+the reconstruction scene will — which is why it lives on the `Timeline` rather than inside the
+camera code.
+
+**The shot list is pure and in order by construction.** `shots(vehicles, timeline)` returns
+keyframes on the playback clock: overhead for 0.8 s; the chase (pitch 55°, zoom 20.5, bearing =
+the customer's car's initial heading, centre 4 m behind its pose each frame) blended in over
+0.9 s; the rate dropped to 0.25 from 0.6 s before the impact to 0.3 s after; the hold; then the
+overhead blended back over 0.9 s. When the impact comes early — a short drive is
+1.5 s, less than the overhead and the ease together want — both shrink in proportion to the
+time there is before the slow-motion, the ease to no less than 250 ms (a cut is not an ease),
+and the slow-motion keeps its full 0.9 s around the impact wherever the clock allows, so the
+keyframes stay strictly in order — two on one tick is how the ease, or the slow-motion,
+silently disappears — and the rate always drops to a quarter at the impact. `cameraAt` interpolates
+between the running shot and the one before it — both evaluated at the *current* poses, so a
+blend out of the chase starts from wherever the car is now, never from a stale frame.
+`shotAt().rate` is what the hook multiplies its rate by, and what `MapScene` reads to light the
+trails; the two never disagree because they read the same list at the same clock.
+
+**The shockwave is decoration.** `CarLayer.setDecor(decor)` lets the scene hold extras besides
+the cars — each an object standing at a `[lng, lat]` with one model unit being so many metres,
+placed through the same `vehicleMatrix` as a body and wound the other way once, like a body,
+or the map's mirrored projection would cull it. The ring is a flat unlit white annulus,
+untone-mapped so it is white and not the tone mapper's grey, scaled from 0 to 8 m and faded
+over 600 ms of *playback* time from the impact (so at a quarter speed it takes 2.4 s of wall
+time, which is the point). During the same window the travel paths' white flow line widens from
+3 px to 7 and its dashes advance every frame instead of every 70 ms — light trails. The ring
+never appears in a PNG export, because exports are taken outside playback and playback ends
+with `setDecor([])`.
+
+**Reduced motion** (`prefers-reduced-motion: reduce`) turns "Watch it" into "Play it back":
+the hook checks it at `start`, so no caller has to.
+
+**What the smoke proves.** It presses "Watch it" on the diagram and drives the replay's own
+clock through `window.__play` (DEV only): it seeks to three moments inside the ring's 600 ms
+and compares each settled frame with the same shot once the ring has gone, and with the moment
+of impact itself, where the ring has no radius yet — so a loaded machine's frame rate cannot
+decide whether the ring was seen. The pitch must be above 40° on those frames and the same on
+the reference frame (one shot, one camera); the pitch and bearing must be exactly 0 after;
+and every car marker's screen position must be within a pixel of where it was before. Then it
+presses it again on the review's read-only map, which is the component the desk renders, and
+checks the tilt and the return there too.
+
+## The moment, lit as it was (v10)
+
+The cinematic replay tilts the map and chases the car, and a tilted map lit by a fixed
+studio light from the east-north-east, at noon, in any weather, looks like a diagram with a
+camera on it. The record already says where the sun stood, what the weather was doing and
+whether the street was lit — `incident.context`, looked up from the place and the time. So
+the scene lights itself from those facts: the sun where it was, real shadows on the ground
+that lengthen into the evening, a wet road and rain when it rained, snow, fog, headlights and a
+warm pool under a street light after dark. Long evening shadows are what sell the time of day.
+
+**One pure function, two scenes.** `lightingFor(context)` in `src/scene/lighting.ts` turns a
+`SceneContext` into a `Lighting`: the sun as a unit vector in the map layer's frame (x east,
+y south, z up — `[cos alt · sin az, −cos alt · cos az, sin alt]`), whether it is up under a
+sky clear enough to cast a shadow, its intensity (the map's own 1.5 from 25° up, falling to a
+quarter at the horizon, off once set, and dimmed by rain, snow, fog or overcast), its colour,
+the hemisphere sky and ground colours and intensity in three buckets — day, orange below 10°,
+blue below −6°, the same line `lightFrom` draws for "dark" — how much of the environment map
+shows, and five booleans: `rain`, `snow`, `fog` (through `weatherOfCode`, the one table for WMO
+codes), `night`, and `lit` (night on a road the record says is lit). `lightingFor(null)` is
+`DEFAULT_LIGHTING`: exactly the fixed light the map has always had, and the file has no value
+imports of three or maplibre, so `test/lighting.test.ts` runs in plain node. The car layer
+(`CarLayer.setLighting`) and the damage studio (`Scene`'s `lighting` prop, through
+`DamageMarker`) both read it — the studio's `Environment` intensity and its two directionals
+take the same sun and weather, with the sun turned into the body's frame, so the marked-up car
+on the review page is lit like the map above it — with a floor. That render is the evidence:
+`attachments.damage` is exported from it at send time and the desk reads it, and a claim filed
+at night must not ship a black car. `studioLight(l)` keeps the studio's key at no less than
+0.45 of its own 1.1 and the environment at no less than 0.4 of its 0.9, whatever the record
+says; the map has no floor, because the map is the moment. `MapScene` and `ReportDocument` take the
+prop; the customer's page memoises it from the store, the desk from the receipt's document,
+and every caller that does not ask — the desk's `Compare`, the damage step's marker — is
+unchanged.
+
+**Real shadows, inside MapLibre's context.** The layer had no ground for a shadow to land on
+and faked one with a soft disc. Now a `ShadowMaterial` plane at 0.35 opacity lies under
+everything, the directional light casts a 2048² PCF shadow map, and every real car's meshes
+cast; the blob stays only for a ghost, and for whenever there is no sun to throw a real one.
+Three things about doing this in a custom layer are easy to get wrong, and are in `CLAUDE.md`:
+the scene is in mercator units, so the shadow camera's bounds, near and far, the light's
+distance, the fog's reach and every lamp's throw are set in metres times
+`metresToMercator(lat)` and refitted when the origin moves (`fit()`); the shadow pass renders
+back faces by default and the kit's bodies are open shells with no floor, so from a high sun
+the depth map held a sliver of door lining and no shadow at all until the car materials'
+`shadowSide` was set to `DoubleSide`; and the shadow pass restores the viewport three believes
+the canvas has — its size at creation — so `render()` sets three's viewport from the drawing
+buffer before rendering, or a resized map draws the cars in the wrong corner. MapLibre restores
+its own viewport after the layer (`setBaseState`); this is for three's main pass, which draws
+straight after the shadow pass with no other reset in between.
+
+**Everything at ground level is one group in a body's frame.** The shadow ground, the wet
+road, the fog sheet, the street-light pool and the rain are built in the same y-up metres frame
+as a car and placed at the incident by the same `vehicleMatrix`, so one unit is a metre there
+too and the map's mirrored projection is answered once, by `reverseWinding`, exactly as a body
+is. The wet road is a dark, near-mirror (`roughness 0.05`), translucent plane under the cars,
+so the sky and the lamps reflect in it; the rain is six hundred short vertical lines in one
+`LineSegments`, scattered through a box twice the fall height and slid down by up to one height
+each frame, so the visible band is always full — snow is the same lines a quarter as long, white,
+at a sixth of the rate; fog is `scene.fog` on the cars plus a white sheet at 30 % over the
+ground, in the layer rather than the DOM, so the export and the recorder get it for free and the
+DOM pills stay legible. After dark each real car has two `SpotLight` headlights at the corners
+of its nose, always on — whether a car faces the camera is not worth a check — and a street-lit
+road adds a warm additive pool and a warm `PointLight` over the incident. Those lights decay in
+mercator units, where 1/d² clamps to its ceiling everywhere inside the throw and only the
+distance cutoff shapes the pool: flat with a soft edge, which is what a headlight on wet tarmac
+looks like anyway; the intensities are tuned to that ceiling and say so.
+
+**All of it is decoration.** Nothing here moves a car, a heading, a mark or the impact, and
+nothing reaches the document: `export()` captures the canvas, so the PNGs and the replay hold
+the light as it was, and that is the whole of it. "Plain view" is one chip on the diagram step
+and the review page, `plainView` in the persisted store — how the customer is looking, like
+the language, never in `claim/1` — and while it is on every scene on that page is lit as it
+always was.
+
+**What the smoke proves.** The main walk presses "Plain view" the moment it reaches the
+diagram: its pixel gates — the path's blue, the car's red, the shockwave's white — sample a
+map that would otherwise be lit by the live record, the sun at eight that morning under that
+day's weather, and a build gate must not depend on the season or on somebody else's answer.
+The light as it was is proved on its own seeded pages instead — the same tiles, the same two
+cars six metres either side of the impact, facing each other — under four lights. Rain after
+dark: the open road ten metres south must read darker than in plain view (the tiles never
+change, so the difference is the layer's), the ground ahead of A's nose brighter than behind
+its tail, and the map's canvas, sampled directly, a picture. The same night on a street the record
+says is lit: six metres from the incident, inside the pool and outside every headlight, must
+read brighter than the same spot unlit. A clear sun on the horizon: the ground between the
+cars must read darker than plain — the shadow — while the open road reads the same, so it is
+the shadow and not a veil; and with A's body hidden for a moment, the tiles under it read bare
+there and darker in plain view, where the faked shadow is back. Then "Plain view" must bring
+the road back, be in the draft, and still be pressed after a reload. The unit test pins the sun vector by quadrant and length,
+the intensities at 60°, 25°, 12.5°, 2°, 0° and below, the three sky buckets by channel order,
+which codes mean rain, snow and fog, and when the street counts as lit.
+
+## A city around the crash (v10)
+
+A camera tilted to 55° behind a car looks out at the horizon, and until now the horizon was
+satellite imagery lying flat on the ground — which reads as a photograph of a city, not a
+city. The accident happened between buildings, and the buildings are already a matter of
+public record on the same map the road came from. So the lookup brings them back too, and the
+replay flies through them — on the diagram step and on the review page, which is the map the
+replay is recorded off.
+
+**One query, not two.** `roadQuery` grew a third clause: `way[building]` within
+`BUILDING_RADIUS` (150 m — wider than the road's 60, because a tilted camera sees a street's
+worth of frontage where a flat one sees a junction). The clause asks for **every** building,
+not only the ones tagged with a height: the tags are read where they exist and a default
+stands in where they do not, because a city with its untagged blocks missing is a city with
+holes in it, and a hole reads as a mistake where a plinth reads as a building nobody has
+measured. `parseBuildings` is pure and separate, so a fixture can be held against it directly:
+every closed `building` way becomes a polygon carrying the height to extrude it to — the
+`height` tag in metres when the building has one, unit and all, else `building:levels` at
+3.2 m a storey, else 8 m, and absurd values (a negative height, a thousand storeys) count as
+no answer rather than as geometry. Roofs a car drives under are left out — `building=roof` (a
+fuel station's canopy), `carport`, `parking`, `garage`, `garages` — because those are where
+accidents happen, and a solid block drawn over the cars would hide the thing the diagram is of.
+Open ways are left out too: an
+open `building` way is a mapping error or one wall of a multipolygon whose other parts are not
+in the answer, and half a building drawn as a solid is worse than none. `parseRoad` hands the
+collection out beside `ways`, and the store keeps it beside `roadWays` — not in `claim/1`, not
+persisted, for exactly the reason the road geometry is not: it is public map data, cheap to ask
+for again, and a cache of it can only go stale.
+
+**On the map it is two layers of one source**, added first of everything `style.load` adds,
+so the road, the travel paths, the cars and the shockwave are all drawn over them, and — like
+the road — visible on `satellite` and `streets` only, because there is no real city around a
+drawn parking lot. While the map is flat, which is every view the customer edits in, the
+buildings are a plain `fill` (`buildings-flat`) — painted **over** the satellite's picture of
+that same block, at 0.85, so the blocks read as pale shapes and the streets between them stay as
+they were. That is the editing surface and it is what `compose()` puts in `attachments.scene`,
+so it is asserted flat as well as tilted. The `fill-extrusion` (`buildings`) sits at opacity 0
+and becomes the city only while the replay tilts the camera: `standCity` swaps the two
+opacities where `maxPitch` is raised and dropped, in `MapScene` and in the recorder. It is not
+drawn flat because MapLibre draws an extrusion with a depth pass that the car layer and every
+line are then tested against: on a flat map a car under a roof would simply not be there. At
+opacity 0 an extrusion is skipped entirely, and a `fill` writes no depth. The smoke puts a 6 m
+canopy round car A on the flat map and reads A's paint through it (drawn as an extrusion, it
+leaves 0 % of A's red — a taller block would pass over the street-zoom camera, about 55 m up), and asserts the tilted
+layer's height is `['get', 'height']` and its opacity above 0 on the frames it reads a wall
+from, and 0 again once the map is back.
+
+**Who gets the city.** The diagram step and the review page, both from the store — the review
+page's map is the one the replay is recorded off, so the video an adjuster watches is the scene
+the customer built rather than a bare basemap. `ReportDocument` takes the road and the
+buildings as props for exactly that reason: the claims desk renders the same component and must
+have neither, because `claim/1` carries the road in words and the buildings not at all. A
+report read on the desk is therefore flat ground with cars on it, as it always was. The grey is light but deliberately short of white: the
+shockwave, the flow line along each travel path and the labels are all white, and at 0.85 over
+the brightest imagery there is, this colour stays at about 200, so a wall never passes
+for one of them.
+
+**The honest limits.** Coverage is whatever OpenStreetMap has for that corner: dense in cities,
+often nothing at all on a rural road, and heights are the exception rather than the rule — in
+the recorded Times Square answer, 32 of 44 buildings carry one and twelve are plinths at the
+default. That is what the 8 m default is for, and why a building with no height is still drawn
+rather than dropped; a block-sized footprint 8 m tall is wrong about that building and right
+about the street having a building there. Where nothing comes back the scene is exactly what it was before any of this,
+like every other thing the place and the time look up. The Overpass cost is unchanged in
+shape: one query per incident, cached in `sessionStorage` per rounded location, against the
+same mirror the road already used.
+
+**What the smoke proves.** The recorded Times Square answer gained the real building ways, so
+Overpass stays offline in the build gate: the layer must hold more than twenty footprints, each
+with a height. On the flat map it samples points the layer
+reports it is drawing on, away from the middle where the cars and the road are, and they have
+to be the extrusion's grey and not the imagery's. Then, during the cinematic replay, it asks
+the map itself where it is drawing a building — a block's centroid at that zoom is usually off
+the top of the frame while the building fills it — and reads a column of pixels back off the
+canvas there. Three frames of that is the cap: the sampling is expensive and it runs in the
+window the shockwave is measured in, and a check that buys its evidence with its neighbour's
+frame rate is not evidence. That column has to
+be the extrusion's own flat grey and not the satellite's picture of the same block, because a
+layer that validates, queries and paints nothing is exactly the failure this page has had
+before.
+
+## Real damage on the car (v10)
+
+A mark on the car used to be a pin: a numbered disc at the tap, the paint under it untouched.
+The report said "dent, left front door" and the picture showed a perfect door with a badge on
+it. Now the paint shows the damage: a dent is a dish in the bodywork, a scratch bares the metal,
+a crack spreads across the glass, and a missing part is a hole into the dark. The same car, marked
+the same way, in the studio, on the review page, on the desk and on the map.
+
+**Not geometry.** The kit's bodies are a few thousand triangles, and pushing vertices into a
+dent makes a pyramid. The precedent is the zone tint in `Car.tsx` — a world-space radial
+falloff patched into the material with `onBeforeCompile` — and the damage is the same idea per
+mark: `src/marker/damageUniforms.ts` packs the marks as flat typed arrays (twelve at most —
+`MAX_MARKS`; the rest keep their pins), and `src/marker/damageShader.ts` patches every material
+of one body instance to read them. The packing is pure and has no value import of three, so
+`test/damageUniforms.test.ts` runs in plain node; the shader module is the only thing that
+turns it into GPU state, and it composes over whatever `onBeforeCompile` a material already has,
+which is how it stacks on the studio's tint without either knowing about the other.
+
+**One frame for both scenes.** The marks are compared in the body's own frame — metres, nose
++Z, up +Y — carried from the vertex shader as `vCmBody = (transformed + offset) × PROPORTION`,
+where `offset` is where the mesh sits in its body (a wheel at its arch; the kit's nodes carry
+translations only). In the studio, world *is* that frame. On the map the car stands anywhere,
+mirrored by `CAR_BASIS` and 1e-7 to the metre, and none of that reaches the shader: the same
+uniforms draw the same damage wherever the car goes, with nothing to update when it moves. The
+one place the frames meet is the dent's normal tilt, a direction in body metres that has to
+become a view-space one — through `mat3(modelViewMatrix)`, a varying, and renormalised, because
+through the map's matrix that direction comes out 1e-7 long.
+
+**What each kind does.** A *dent* (bodywork: paint, trim, plastic) is a cosine dish scaled by the
+mark's weight: the normal tilts toward the centre, the albedo darkens 15 % toward it, the
+clearcoat is cut to a fifth so the reflection breaks, the roughness rises. And it is lit from
+above whatever the scene does — the upper wall's shadow is baked into the albedo; the lower
+rim's highlight comes from the tilted normal — because the studio's environment map is near-uniform at the angles a door reflects,
+and a tilted normal alone under it barely showed. A *scratch* (bodywork) is three ragged
+streaks of different lengths along the panel's own horizontal — across a hood or a roof, along
+everything else — hashed for their edges and gaps, bare metal (grey, roughness 0.6, metallic) in
+the streak and a darker groove beside it so it shows on light paint and dark. A *crack* (glass,
+headlights, taillights) is Voronoi cells and a few spokes spreading from the point in the panel's
+tangent plane, their edges emissive and rough, fading by the radius. A *missing* part is the
+whole zone — its measured anchor and reach from `zones.ts`, the same data `probe-zones.ts`
+proves, not the tap — painted an unlit cavity colour after tone mapping, darkening to a third
+toward the centre with a torn rim. **Not a discard**: the kit's shells have no floor, so a
+discarded hood seen from the map shows the road through the car. A missing *wheel* is its own
+code on the wire (`KIND_MISSING_WHEEL`), taken by the wheel's materials and no other, so a
+missing fender leaves the tyre beside it alone.
+
+**Before/after, and the severity map.** `strength` blends every effect from none to full and
+`heatmap` swaps the paint for a blue-to-red gradient of accumulated weight; both are
+`MarkerStore` state, defaulting to full and off, never persisted and never in the document.
+`DamageMarker` shows them as chips over its canvas (`tools`); the customer's damage step and
+the desk have them, the customer's review page does not — that canvas is exported as
+`attachments.damage` at send, and a slider left at zero would ship the car unmarked. On the
+map the layer draws at full strength with no map, because a diagram is not a place to argue with.
+
+**The pins.** Where the paint shows the damage, the customer's marker (`dots`) shrinks the pin
+to a dot without its number; from the thirteenth mark on it keeps the numbered pin, since the
+shader has stopped. The desk's and the review's pins stay numbered beside their numbered lists.
+
+**The map clones everything.** `instanceBody` gave every car its own paint and shared the rest
+of the template's materials; a uniform patched into a shared glass material would crack every
+windscreen on the map. `CarLayer` now clones every material once per car (`ownMaterials`),
+dresses it, fades it if it is a ghost's, and patches it; `CarPose.damages` carries the marks,
+`posesOf` and `posesAt` both fill it, so a replay of a dented car is a dented car.
+
+**What the smoke proves.** On the damage step it blends the dent away through the real slider
+and reads a ring round the mark — lighter without the dent than with it — and diffs the frame
+the export takes against the unmarked car's by more than the pin. It marks the left front door
+missing at its own anchor and reads the cavity just below the dot: dark, and warmer than glass
+or a tyre. On the review page the missing door's cavity pixels rise with the strength set
+through the store — there is no slider there, which is also asserted — and on the desk, its API
+answered from the document just sent, the same rise, with the slider and the severity map
+present. The unit test pins the packing: a dent at its own point in the body's metres, a
+missing part at its zone's anchor and reach, the wheel's own code, the cap at twelve.
+
+## The reconstruction in your hands (v10)
+
+The map is a diagram seen from above, and the marked-up car is one car alone in a studio. An
+adjuster reading a collision wants the two together: the cars standing where they stopped, in
+their own paint, with their own damage, and a way to walk round them. The reconstruction is
+that — every vehicle on the diagram stood in the damage marker's studio where the map put it,
+orbitable, and nothing else. It is a third tab on the desk, and a small version under the map
+on the customer's review page, because it is one component.
+
+**One placement, the map's.** `placeVehicles(vehicles, impact)` in `src/marker/place.ts` is
+pure and gives each car `{ id, position, rotationY }` in the studio's frame — three's y-up,
+metres, the impact at the origin, **east +x and north −z**. The offset is the map layer's own:
+the `mercator` difference from the origin that `vehicleMatrix` translates by, divided by the
+metre at the impact (`metresToMercator`), so a car stands exactly where the diagram drew it;
+mercator runs (east, south) and so does the studio's (x, z). The heading is the same compass
+bearing: the body's nose is +Z, three's rotation-y turns +Z to (sin r, 0, cos r), and the nose
+must point at (sin h, 0, −cos h), so `rotationY = π − h`. The map needs `CAR_BASIS`, with its
+determinant of −1, because mercator's (east, south, up) labelling is left-handed; the studio's
+frame is right-handed like the body's, so here a plain rotation puts the car's left on its
+left. `test/place.test.ts` pins two cars at known offsets, the four compass points, and — for
+four cars at arbitrary offsets and headings — the offset, the nose and the car's left against
+`vehicleMatrix` itself, so the two scenes cannot drift apart.
+
+**The studio is shared, not copied.** `src/marker/Studio.tsx` is what `Scene.tsx` used to
+build inline: the photographic environment, the key and fill lights (with the moment's
+`lighting` from `lightingFor`, floored by `studioLight` as the marker's is), the reflector
+floor, the grid and the contact shadows, with the cars under the same `Suspense` as the
+environment. Two props differ between the scenes: `keyAt`, because the marker's body frame has
+its nose north and the reconstruction has north at −z, so each turns the sun into its own
+frame; and `reach`, how far out the floor, the grid's fade and the shadows must look right —
+sixteen metres for one car, a little past the camera's distance here. The single-car marker keeps its
+picking, its pins, its store and its camera rig untouched. Each car's materials are cloned and
+patched by `patchInstance` in `damageShader.ts`, the loop `Car.tsx` had and now shares, so
+Task 3's dents, scratches, cracks and cavities are on both cars, from the same packing.
+
+**The origin and the framing come from where the cars came to rest.** The origin is the
+impact; without one, the middle of the resting positions — never the poses', or a playback
+would slide the floor along with the cars. The camera is placed once, from the south-east and
+above, 2.2 times a radius that reaches the farthest resting car plus half a car (at least five
+and a half metres), and may zoom out to twice that. A playback's cars drive in from beyond that frame and
+meet in it, which is the point of the view; zooming out shows the approach.
+
+**Read-only, and never exported.** Nothing in the scene has a pointer handler: `OrbitControls`
+is the only input, and nothing reaches the store or the document. The canvas renders on demand
+(`frameloop="demand"`) — a drag, a playback frame, a body arriving — and keeps no drawing
+buffer, because nothing reads it back: it is not the review's export, not in `attachments`, not
+in `claim/1`. Each car is a group named `car:<id>` in its body's own metres, nose +Z and left +X,
+so anything that belongs to a car — a photo card pinned to a panel — can stand in that group.
+
+**The desk's tab.** `ReportView` holds a tab — Report, Compare (only with two accounts),
+Reconstruction (only when the diagram placed a vehicle) — defaulting to Compare and reading as
+Report until there is a second account to compare, so a report without one opens as it always
+did and one with one opens on the comparison, with no effect to reset between reports. The
+reconstruction's own `usePlayback` drives it: "Play" runs the same `posesAt` on the same clock
+as the map's playback; the scrubber is `seek(ms)` over the drive, and a scrub holds its frame
+— the hook keeps `playing` true and stops its loop — so the view tracks that in its own `held`
+state and offers Play again rather than a Stop with nothing to stop. At rest the scrubber sits
+at the end, which is where the cars are. Under it, each car's paint swatch and name in the
+desk's voice. The desk stays English (`lang="en"`).
+
+**The review page's small version.** Under the map figure, 240 px tall, only on the
+customer's own review (`edit`) and only when a vehicle has a position. It takes the map's
+`play.poses`, so pressing Play on the map drives the cars here too. The wheel does not zoom it
+(`zoom={false}`) and it takes no pointer below 640 px, so a wheel or a thumb scrolling the
+review over it scrolls the page — the review page's other scenes are read-only for the same
+reason. It is **mounted only once it comes within a screen of the view** (`WhenNear`, an
+`IntersectionObserver` with a one-screen `rootMargin`), its 240 px reserved meanwhile so
+nothing jumps. It is below the map figure, not in the export and not in the document, and a
+fourth WebGL context with its programs cost the page's readiness about 7 s under software GL —
+and the send-time recording shares that main thread. The desk's tab is unaffected: it mounts
+when its tab is chosen. The smoke scrolls to it before it reads it.
+
+**What the smoke proves.** On the desk (`integration-smoke.mjs`, the policyholder's report with
+its red Camry and black SUV): the tab's screenshot has red paint round where the scene's DEV
+probe says the red car stands and dark paint round the black one; a mouse drag changes at
+least 5 000 more pixels against the resting frame than a second screenshot 800 ms later does
+without one (that second screenshot is the baseline, not asserted identical), and moves the red car hundreds on screen; "Play" takes both cars metres up their routes and
+brings them back to rest to the centimetre; a scrub to the start holds them there, with Play
+offered. On the review page (`smoke.mjs`, both languages): car A's paint where the probe says A
+stands, and the map's Play moving A metres in the reconstruction and back. Screenshots, not
+`toDataURL`, because the canvas keeps no buffer; movement in the scene's metres through the
+probe, not on screen, because a car driving at the camera barely moves there.
+
+## Photos pinned to the car (v10)
+
+`Photo.shows` already tied a photograph to a panel, and the report put it beside the mark in the
+list. On the car it was nowhere. Now every photograph that shows a panel stands beside that
+panel in the studio as a small framed card with a thin leader line back to it — on the damage
+step, on the review page's marked-up car (and so in the PNG sent with the report), on the
+desk's, and on each car in the desk's reconstruction. Tapping a card turns the camera to the
+panel and opens the photograph large.
+
+**Where a card stands is pure.** `cardPlacement(body, zone)` in `src/marker/cards.ts` returns
+`{ position, normal }` in the body's own metres — nose +Z, up +Y, the car's left +X. The zone's
+anchor is in the kit's units, like everything `claim-marker/1` stores, so it goes through
+`toWorld` first and the 0.6 m is a real 0.6 m on every body. The outward normal runs from the
+middle of the body's footprint on the floor — the kit's origin, where it stands every body —
+out through the anchor. Measured from there every normal leans upward: a wheel's or a bumper's
+card rises beside it instead of sinking into the floor, a door's stands out at about the height
+of its glass, the roof's above it. `test/cards.test.ts` pins one card to hand-computed metres,
+the directions to the frame (the left door's card at +X, the nose's at +Z, the roof's up), and
+for every zone of every body a unit normal, a card exactly 0.6 m from its anchor, never lower
+than it and farther from the middle than the panel. Several photographs of one panel stack,
+each a little down and to the right of the one before.
+
+**A texture, not `Html`.** The card is a plane on a drei `Billboard` with the photograph drawn
+into a canvas texture — cropped square, in a white frame with a grey edge so it reads against
+the pale studio and against paint — because drei's `Html` is DOM laid over the canvas and would
+be missing from the export. The texture is white until the image decodes, then asks for a frame
+(`invalidate`), which is what the reconstruction's on-demand loop needs to show it at all. The
+leader is a plain one-pixel `lineSegments`, not drei's `Line`: that is a fat-line shader to
+compile in every canvas a card is in, for a line meant to be thin anyway. Each card's placement
+is memoised, because the reconstruction re-renders on every frame of a playback.
+
+**Tagging by dragging.** Beside the car, the damage step lists this vehicle's photographs. Each
+thumbnail is `draggable` with the photo's place on the claim as `PHOTO_DRAG` data; the marker
+listens on its canvas and takes only that type. The drop point is cast from the studio camera
+against the body alone (the car's primitive is named `car`, so pins and cards never catch it),
+the hit goes back to kit units with `toModel`, and `nearestZone` names the panel for the same
+`tagPhoto` the photo-first suggestions use. While the drag is over the car the panel under it is
+tinted, the same tint as a hover, and the turntable stops the moment a drag enters the car, as it
+does at the first touch, so the panel under the pointer holds still. Under each thumbnail a select names the panel it shows — the
+same `tagPhoto` for a keyboard or a phone, where HTML drag is not reliable. A tagged photograph
+can be dropped again on another panel; nothing un-tags one. `shows` is still set only by
+`tagPhoto`, still **absent** from the document when unset, and nothing else in `claim/1` moves.
+
+**Tapping a card.** A card opens on a click that did not move (`e.delta ≤ 2`), not on the press
+a pin uses: a modal opening under a drag would swallow the drag, and a drag that merely starts
+on a card should turn the car. The press is still the card's, so the body behind it is not
+picked. `store.face(zone)` sets `facing` and closes whatever the picker had open; the camera rig
+eases to it through `cameraFor` at the current distance and gives up the moment the user drags.
+The photograph opens in a native modal `<dialog>` (`PhotoLightbox`), which brings Escape, the
+focus trap and the top layer with it, and takes `lang` as a prop because the desk renders it too.
+
+**The panel the camera faces has its cards stand aside.** `cameraFor` puts the camera on the
+azimuth through the point it faces, and a card stands on that same azimuth, 0.6 m out along the
+panel's normal — so seen from where a tap takes the camera, a card covers its own panel: the
+pin behind it is hidden by depth, the card takes the press meant for the pin, and tapping the pin
+of a panel with a photo ended with the photo over the damage. The placement stays; the rule is
+that **while the camera faces a panel, that panel's cards are not drawn and take no taps**.
+`facing` in the marker store is `{ point, zone }` — what the camera was last turned to face — set
+by a pin's selection (`select`, and `commit`, which selects the new mark) and by a card's tap
+(`face`); a new object each time, so a second tap on the same pin or card after a turn aims
+again, and it is also the camera rig's one trigger. It is cleared when the selection clears
+(`select(null)`, `pick`, `remove`, `load`) and by the rig the moment the customer drags the
+camera round — the same moment the rig gives up its goal — so the cards come back as soon as the
+view is the customer's own again. `PhotoCards` takes the zone as `faced` and reads it in render:
+the cards stay mounted, `visible={false}` with no handlers, so the photograph is not decoded
+again when they return. After a card's tap the card stands aside too, which is right: the
+lightbox is showing the photograph.
+
+**A pin's release is the pin's.** A pin's press selects it and the camera starts turning on the
+next frame, so a finger or a slow click comes up after the pin has moved out from under it — the
+reviewer measured 27–49 px in a 100–150 ms hold, against a tap target of about 29. On the
+customer's marker the body catches that release; on the desk's read-only copy nothing does, and a
+click that hits nothing is r3f's `onPointerMissed`, which cleared the selection it had just made
+and so brought the card back over the pin. `Scene` keeps a `pinPressed` ref: every press resets it
+(`onPointerDownCapture` on the canvas's wrapper, which runs before r3f sees the press), a pin's
+press sets it, and `onPointerMissed` leaves the selection alone when it is set. It is a ref written
+in handlers, not state.
+
+**The desk's copy can be turned; the review's cannot.** `ReportDocument`'s marked-up cars are
+now `readOnly`: the body takes no tap and tints nothing, there is no picker or hint, and the
+wheel scrolls the page instead of zooming. On the desk the wrapper takes pointer events, so an
+adjuster can walk round the car, tap a pin to face it, and tap a card to open the photograph.
+The customer's review copy keeps `pointer-events-none`: its canvas is the evidence exported at
+send, and it goes as it is framed.
+
+**The reconstruction** stands each car's cards inside that car's `car:<id>` group, which is in
+the body's own metres, so the same `cardPlacement` puts them in the same place and they drive
+in with the car during a playback. Nothing there can be tapped. The desk's tab shows them; the
+review page's 240-px copy leaves them out. A card there is about fifteen pixels, and timed on
+the smoke's software GL the damage-to-review step took the same eighteen seconds to show the
+review either way, but with the card in that canvas the page stayed busy for about five
+seconds more afterwards — on the page that records the replay at send.
+
+**What the smoke proves.** On the damage step (both languages) the photograph of A is dragged
+from its thumbnail onto the left front door where the camera faces it, and the draft says it
+shows `left_front_door`; before the drop the probe reports no card for it, and after it the
+frame `export()` takes (`toDataURL`) has at least 150 green pixels round where the DEV probe (`card(id)`) projects the card — the
+smoke's photograph is green because nothing else in the studio is. The car is then turned away
+by a drag from an empty corner, the card is clicked where it now is, and the camera's azimuth
+(`azimuth()`) comes back to within 5° of the door while the dialog named "Left front door" shows
+that photograph; Escape closes it. While the camera faces the door the card's green is gone from
+the frame, and the next drag brings it back. Then the door's own pin is clicked where it stands:
+it is selected, the camera turns to the door, the pin's violet dot is on the frame at its projected
+point, and there is no green within 40 px of it. On the desk, a tap on the car opens no picker;
+after `face(door)` and a turn off it, the card on the door opens the photograph; the door's pin,
+held down for 150 ms from a turned view and let go off it, is still selected once the camera has
+come round, with no green round it; and the Reconstruction tab's screenshot has the card's green by A.
+
+## Two accounts, one moment (v10)
+
+The desk already put the other driver's cars over the policyholder's as ghosts. Each ran on a
+clock of its own, though, and the one thing an adjuster most wants from two accounts — *did
+they meet at the same moment?* — was not on screen anywhere. Now the two run on one clock, and
+the gap is the first line of the comparison.
+
+**One clock, a timeline each.** `usePlayback(vehicles, ghosts)` takes the second account
+beside the first. Each has its own `Timeline`, because each side's drive is as long as its own
+routes, and at any moment of the one clock both sets are that many milliseconds into their own
+drive: the shorter drive holds its last pose (`frameAt` clamps) while the longer one keeps
+going. Stretching the shorter drive to the longer one's length would move both sets in step and
+make the comparison meaningless. `sharedTimeline(vehicles, ghosts, follow)` is the one place
+that works out the clock they share. Its length is the longer of the two drives. Its moment of
+impact is taken from the account the camera follows: the policyholder's by default, the other
+driver's after "Swap". If the followed account has nothing driving, it has no moment of its own,
+so the moment comes from the other account; `lead` records which account that is. The hook,
+`MapScene` and the recorder all read it, so the chase lasts until both sets have stopped, the
+scrubber runs across both, and all three agree where the slow-motion is. Earlier, each built this from the policyholder's
+drive alone, and the camera went back to the overhead while the other account's cars were still
+moving. The smoke found that. The frame carries `ghostPoses` beside `poses`, and `MapScene`
+takes it as a prop, so the ghosts' dashed routes are pushed once and only the bodies move per
+frame.
+
+**The scrubber and the two ticks.** Under the compare map: one `<input type="range">` over
+the whole clock (`duration`: the longer drive plus the hold) driving `seek(ms)`, with each
+account's `impactMs` drawn as a tick on it. Dark for the policyholder, pale for the other
+driver, the same distinction the ghosts have on the map. An account with nothing driving gets no
+tick, on the scrubber or on the video's bar (`impactTickOf`). Its `impactMs` is only the clock's
+floor, `durationOf`'s 1.5 s at "the end", and a tick there would show a moment beside a headline
+saying the account has none. `hasReplay` (now in `playback.ts`) is the one test for "something
+drives", shared by the recorder, the headline and the ticks.
+
+**The headline.** `impactApart(a, b)` in `compare.ts` is the table's caption: "The two
+accounts' impacts are N m and S s apart." The metres are between each account's own point of
+impact. If an account never placed the cross, `impactPlaceOf` gives the midpoint of its two
+nearest cars at its own moment of impact. The seconds are the difference between the two
+`impactMs` values on the shared clock. An account with nothing driving has no moment to
+compare, and the sentence says so ("…; the other driver's account has no route to time it
+from") rather than reporting a gap of nought. An account that puts nothing on a map at all
+gets a sentence saying that too. It is English only and sits with the rest of the desk's words.
+It never says which account is right: people remember a two-second event differently.
+
+**Watch both, and Swap.** "Watch both" is the cinematic replay over both sets: the
+policyholder's cars solid, the other driver's as ghosts, the camera chasing the policyholder's
+car. `MapScene` takes a `follow` prop, a vehicle id, and the chase goes behind that car. "Swap"
+sets it to the other driver's own car (their `insured`), which is a ghost, so `shots` and
+`cameraAt` are given both accounts' vehicles and poses in one list. The two accounts usually
+both call their own car "a", so `Compare` prefixes the ghosts' ids (`other:a`); `CarLayer`
+already kept the two sets apart. The documents are not touched. The moment moves with the
+car. After Swap the slow-motion is at the other driver's own impact, and the ring is drawn at
+their point of impact: `ghostImpact`, which `Compare` resolves with the same `impactPointOf`
+the headline measures from. Otherwise the swapped chase would reach the followed car's impact at
+full speed with no ring, which is the moment an adjuster swapped to see. A Swap mid-playback
+rebuilds the hook's run list and `MapScene`'s shot list together, so the rate and the camera
+stay in agreement. A video saved after a Swap records the same run: `record()` passes `follow`
+and `ghostImpact` through.
+
+**The recording is cinematic, and fits in seven seconds.** `MediaRecorder` records wall time,
+and a cinematic playback takes more wall time than the drive: the overhead, the ease into
+the chase, and the slow-motion window. The slow-motion alone spends four wall seconds on every
+second of the clock. So the recorder works out the wall time of the whole run from the shot
+list (`wallMsOf`) and plays the clock at `recordRate` = that ÷ `VIDEO_MS` (7 s), never below 1.
+A short drive keeps its own pace, and a long one is sped up just enough to fit rather than cut
+off before the impact. It stops at the end of the hold and leaves out the ease back to the
+overhead, which a video does not need. The frames are the map canvas with the camera moving, so
+the tilt, the chase, the city and the shockwave are all in them. The pills and the cross are
+still painted by hand at their projected positions, the ghosts ride along through `setGhosts`,
+and the bar along the bottom carries a red tick at each account's impact. Reduced motion
+records the flat replay exactly as before. The review page waits `VIDEO_MS` + 3 s. The extra 3
+s is for the encoder to finish on a loaded machine: throwing away a recording that was seconds
+from done is how a report goes out with no replay on exactly the machines where one is worth
+most. It still never holds the report up longer than that, and any failure still sends without
+it.
+
+**Send never records mid-chase.** If the customer presses Send while "Watch it" is running on
+the review map, the cinematic effect would still be driving the camera under the recorder and
+under `export()`. The PNG would be a tilted frame with a shockwave in it, and the recorder and
+the effect would take turns moving the camera. A flat "Play it back" still running would leave
+the cars partway along their routes in the PNG. `MapSceneHandle.stop()` ends either kind of
+playback: it calls `onPlaybackStop` so the hook stops, puts the cars and ghosts back at rest,
+jumps back to the home view, locks the tilt, clears the ring, and resolves once the map has
+painted that way, with a 300 ms fallback in case the map never paints again. `send()` awaits it before `export()`. `record()` also flattens the map
+itself, and sets `recording` so the playback effects leave the map alone until the recorder
+has finished.
+
+**Save video.** The desk's compare view runs the same `record('cinematic')` over both accounts,
+ghosts included and both ticks on the bar, and downloads the result as
+`<reference>-both-accounts.webm`. Nothing is uploaded: a claims manager forwards a video to a
+colleague, and that should not change what the server holds.
+
+**What proves it.** `test/playback.test.ts`: two sets scrub in lockstep, each along its own
+route, and neither goes backwards; the shorter drive holds while the longer continues; the
+two impact ticks are ordered, and the gap between them equals the difference between the two
+drives; `sharedTimeline` keeps the chase going until the longer drive has ended, and after a
+Swap slows into the followed account's impact unless that account has nothing driving; an
+account with `path: []` gets no tick; `follow` picks
+the chased car across both accounts, and an unknown id falls back to the reporter's own;
+`wallMsOf` charges the slow-motion window four times over. `test/record.test.ts`:
+`recordRate` leaves a short run alone, fits a long one exactly, and brings a real 40 m
+cinematic drive down to 7 s. `test/compare.test.ts`: the headline's four sentences. The
+integration smoke files the other driver's account with two 24 m routes that meet at rest,
+so their impact is at exactly 4 s (24 m at `SPEED`) on the shared clock. On the desk it checks
+that impact against `window.__play`, the two ticks against both timelines, and the headline's
+seconds against their difference. It scrubs from 0.3 s to 2 s and requires both sets to have
+moved more than a metre. It presses "Watch both", seeks to the later impact, reads the compare
+map's bearing, presses "Swap", and reads it again. The two cars were built to set off in
+opposite directions, so the bearing goes from 0° to 180°. At each account's tick it also reads
+the hook's rate and the map's light-trail width. Before Swap only the policyholder's tick is
+slow (rate 0.25, 7 px trails); after Swap only the other driver's is. It presses Stop and checks
+the map is flat again. Last, "Save video" must hand over a `-both-accounts` file that passes the
+video check above, with no non-GET request sent while it does. The desk shows three maps (the comparison and the
+two documents under it), so `window.__map` is whichever map was created last. Each map
+therefore also hangs its DEV handle on its own element, `.maplibregl-map.__map`.
+
+## The desk's map of everything (v9)
+
+An inbox is a list because that is the order reports arrive in, which is the one thing an
+adjuster already knows. What they do not know from a list is that four of this morning's reports
+are the same junction, or that a street has had eleven in a month. The desk's map answers that
+and nothing else: it is a second way of reading the list it sits above, not a second screen.
+
+**The place rides on the receipt, as one more thing the summary carries.** `summarise()` in the
+claim server adds `lng` and `lat` beside the address. `GET /claims` stays receipts only — the
+desk never loads nine documents to draw nine points — and a receipt filed before that line
+existed simply has no place and is not on the map. It is still in the list, like a report of a
+kind that was never diagrammed; the map is a view of the inbox, never a filter on it.
+
+**One clustered source, and the pin says what the row says.** `src/adjuster/DeskMap.tsx` is one
+MapLibre map on the same keyless street basemap the customer's page uses, with one GeoJSON
+source and `cluster: true`. A point is coloured by its status in the colours the inbox rows
+already wear — brand blue new, amber in review, slate closed — grows when someone was hurt or
+the car cannot be driven, and wears a red ring when the server has seen a photograph, a VIN or a
+plate on it before. Nothing on it is an opinion: every one of those is a fact already on the
+receipt, and the pin is the same sentence as the row, drawn where it happened.
+
+**Which is why the map is fed the rows and not the receipts.** The two accounts of one accident
+stand in the same place — the other driver's page is seeded with the first one's — so handing
+`DeskMap` the receipts draws them as two points on top of each other, which clusters into a grey
+"2" at every zoom the clustering reaches and loses the status, the size and the ring for exactly
+the linked case. `inboxRows(...).map((row) => row.lead)` is the same grouping the list uses, so
+one accident is one row and one pin, in the colour of the account that leads it.
+
+**The heat layer is the other question.** Volume over a region rather than one report at a
+time, weighted by `point_count` so a cluster stands for the reports inside it instead of
+thinning out as the map zooms away from them.
+
+**The clusters are DOM markers, not a symbol layer.** A cluster's count is text, and text on a
+MapLibre style needs a glyph server — another host in the served page's CSP, and another thing
+to be down, for a number a `div` can hold. This is the same answer the scenario map gives:
+interaction and labels are DOM, the canvas draws.
+
+**"Only what's on the map" is the one place the map narrows the list.** The map and the list
+show the same reports — the status chips, the date chips (today, 7 days, 30 days) and the search
+all apply to both — and only that toggle makes the list follow the view. The filtering is pure
+(`src/adjuster/pins.ts`: `pins`, `inRange`, `inView`), which is where the two things that would
+otherwise be found by hand are pinned down: "today" is the desk's day from midnight rather than
+the last twenty-four hours, and a view that crosses the antimeridian has a west greater than its
+east and still holds its points.
+
+**The map is told only when the points change.** The desk hands down a fresh array on every
+render, including the render its own `onBounds` causes; `DeskMap` compares the drawn collection
+before calling `setData` and refitting, or `fitBounds` would answer its own `moveend` for ever.
+That is the whole reason the bounds live in the desk's state and the data does not depend on
+them.
 
 ## Tell us everything, once (v9)
 
@@ -1161,5 +1859,6 @@ panes. All of it is one `git checkout` away, and none of it belongs on a page a 
 
 `npm run lint`, `npm test`, `npm run build`, and `node scripts/smoke.mjs`, which now drives
 the whole flow headlessly: searches an address, picks vehicles, drags a car on the map,
-marks a damage, submits, and checks the document that came out. `node scripts/shoot.mjs`
+watches the cinematic replay and reads the pixels while it runs, marks a damage, submits, and
+checks the document that came out. `node scripts/shoot.mjs`
 regenerates the README images from the real map.

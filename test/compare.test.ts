@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { compare, HEADING_DEGREES, PLACE_METRES, REST_METRES, TIME_MINUTES } from '../src/claim/compare'
+import { compare, impactApart, HEADING_DEGREES, PLACE_METRES, REST_METRES, TIME_MINUTES } from '../src/claim/compare'
 import { emptyClaim, newPerson, newVehicle, type Claim, type Incident } from '../src/claim/schema'
 import { destination } from '../src/geo'
 import { damage } from '../src/schema'
@@ -254,6 +254,50 @@ describe('unmatched', () => {
     const result = compare(a, b)
     expect(result.unmatched).toContain('Where it happened was not given by the other driver.')
     expect(result.unmatched.some((m) => m.includes('appears only in the policyholder'))).toBe(true)
+  })
+})
+
+/**
+ * The headline above the table: the one number a row cannot hold, because it belongs to neither
+ * account. Metres between the two points of impact, seconds between the two moments the two
+ * diagrams reach it when both are played from the same start.
+ */
+describe('how far apart the two accounts put the impact', () => {
+  it('is metres and seconds when both accounts have a cross and a route', () => {
+    const { a, b } = pair()
+    expect(impactApart(a, b)).toBe("The two accounts' impacts are 0 m and 0.0 s apart.")
+    // the other driver remembers it 8 m away, and their cars drove half as far to get there
+    const moved: Claim = {
+      ...b,
+      impact: destination(IMPACT, 90, 8),
+      vehicles: b.vehicles.map((v) => ({ ...v, path: [destination(v.position!, v.heading, 15)] })),
+    }
+    const said = impactApart(a, moved)
+    expect(said).toMatch(/^The two accounts' impacts are 8 m and \d+\.\d s apart\.$/)
+    const seconds = Number(said.match(/and ([\d.]+) s/)![1])
+    expect(seconds).toBeGreaterThan(0)
+  })
+
+  it('falls back to where that account\'s own cars meet when it never placed the cross', () => {
+    const { a, b } = pair()
+    const noCross: Claim = { ...b, impact: null }
+    expect(impactApart(a, noCross)).toMatch(/^The two accounts' impacts are \d+ m and [\d.]+ s apart\.$/)
+  })
+
+  it('says so rather than inventing a moment when an account has nothing driving', () => {
+    const { a, b } = pair()
+    const parked: Claim = { ...b, vehicles: b.vehicles.map((v) => ({ ...v, path: [] })) }
+    expect(impactApart(a, parked)).toBe("The two accounts' impacts are 0 m apart; the other driver's account has no route to time it from.")
+    const neither: Claim = { ...a, vehicles: a.vehicles.map((v) => ({ ...v, path: [] })) }
+    expect(impactApart(neither, parked)).toBe(
+      "The two accounts' impacts are 0 m apart; the policyholder's account and the other driver's account have no route to time it from.",
+    )
+  })
+
+  it('says so rather than measuring to nowhere when an account puts nothing on the map', () => {
+    const { a, b } = pair()
+    const nowhere: Claim = { ...b, impact: null, vehicles: [] }
+    expect(impactApart(a, nowhere)).toBe("The other driver's account does not put the impact anywhere on a map.")
   })
 })
 

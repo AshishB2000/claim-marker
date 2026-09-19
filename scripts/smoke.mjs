@@ -14,7 +14,9 @@
  */
 import { readFileSync } from 'node:fs'
 import { stampExif } from './exif-write.mjs'
+import { describeVideo, readVideo, videoProblem } from './video-check.mjs'
 import { chromium } from 'playwright'
+import { zoneById } from '../src/zones.ts'
 
 const args = process.argv.slice(2)
 const origin = args.find((a) => !a.startsWith('--')) ?? 'http://localhost:5173'
@@ -79,12 +81,14 @@ const names = (lang) => ({
   tapMap: t('scene.path.tap'),
   done: t('scene.banner.done'),
   playBack: t('scene.play.start'),
+  watch: t('scene.play.watch'),
   lot: t('surface.lot'),
   satellite: t('surface.satellite'),
   describeLabel: t('shell.describe.label'),
   hitOnBumper: t('scene.vehicle.hit', { panel: t('zone.front_bumper').toLowerCase() }).replace(/^\s*·\s*/, ''),
 
   dent: t('severity.dent'),
+  missing: t('severity.missing'),
   addPhotos: t('damage.addPhotos'),
   // the scene photograph from the Where step is already photo 1, so the damage shot is photo 2
   photo2: t('damage.photo.alt', { n: 2 }),
@@ -104,6 +108,7 @@ const names = (lang) => ({
   agree: t('scene.send.agreeAria'),
   sign: t('scene.send.signAria'),
   reportIn: t('shell.done.sent.title'),
+  plain: t('scene.plain'),
 
   // composed by describe.ts, not looked up: the tag on a vehicle card, and one person's line
   yourVehicle: lang === 'es' ? 'Tu vehículo' : 'Your vehicle',
@@ -137,8 +142,9 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
  * answer: measured from here, one request in three hangs past thirty seconds. A build gate
  * that depends on somebody else's spare capacity is not a gate. The fixture below is a real
  * answer, recorded from the live mirror for the coordinates this walk uses, so everything the
- * page does with it — the parse, the store, the layer, the words in the document — is proved
- * against real data. The live endpoint itself is proved by the page and by live-check.
+ * page does with it — the parse, the store, the layers, the words in the document — is proved
+ * against real data, the roads and the building footprints alike (the file says which half was
+ * recorded when). The live endpoint itself is proved by the page and by live-check.
  */
 const OVERPASS_FIXTURE = readFileSync(new URL('./fixtures/overpass-times-square.json', import.meta.url), 'utf8')
 let overpassHits = 0
@@ -166,8 +172,8 @@ const draft = () => page.evaluate(() => JSON.parse(localStorage.getItem('claim-m
 const state = () => page.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state)
 
 /** distinct colours in a data URL or canvas, sampled sparsely — a blank frame has one or two */
-const colours = (sel) =>
-  page.evaluate(async (sel) => {
+const colours = (sel, p = page) =>
+  p.evaluate(async (sel) => {
     const c = document.querySelector(sel)
     if (!c) return 0
     const img = new Image()
@@ -185,13 +191,97 @@ const colours = (sel) =>
   }, sel)
 
 /** wait for a real frame: three.js skips objects whose shaders are still linking */
-const settled = async (sel) => {
+const settled = async (sel, p = page) => {
   for (let i = 0; i < 60; i++) {
-    if ((await colours(sel)) >= 50) return
-    await page.waitForTimeout(300)
+    if ((await colours(sel, p)) >= 50) return
+    await p.waitForTimeout(300)
   }
   fail(`${sel} never rendered a frame`)
 }
+
+/**
+ * The marker's canvas, read back: the mean luminance of the upper half of a ring 8–16 px round
+ * where a point in the kit's units lands — outside the pin's own dot, and above the mark, where
+ * a dent's wall is in shadow (its lower rim catches the key light and is not what is asserted) —
+ * the colour of a 6-px spot `dy` below it, and the frame as a PNG. `n` picks the marker when a
+ * page has several.
+ */
+const markerSample = (point, dy = 0, n = 0, p = page) =>
+  p.evaluate(
+    ([point, dy, n]) => {
+      const c = document.querySelectorAll('.cm-root canvas')[n]
+      const [x, y] = c.__probe.project(point)
+      const off = document.createElement('canvas')
+      off.width = c.width
+      off.height = c.height
+      const ctx = off.getContext('2d')
+      ctx.drawImage(c, 0, 0)
+      const ring = ctx.getImageData(x - 20, y - 20, 40, 40).data
+      let sum = 0
+      let count = 0
+      for (let j = 0; j < 40; j++)
+        for (let i = 0; i < 40; i++) {
+          const r = Math.hypot(i - 20, j - 20)
+          if (r < 8 || r > 16 || j >= 20) continue
+          const k = (j * 40 + i) * 4
+          sum += 0.299 * ring[k] + 0.587 * ring[k + 1] + 0.114 * ring[k + 2]
+          count++
+        }
+      const spot = ctx.getImageData(x - 3, y + dy - 3, 6, 6).data
+      const rgb = [0, 0, 0]
+      for (let k = 0; k < spot.length; k += 4) for (let ch = 0; ch < 3; ch++) rgb[ch] += spot[k + ch] / 36
+      return { x, y, mean: sum / count, spot: rgb.map(Math.round), png: c.toDataURL('image/png') }
+    },
+    [point, dy, n],
+  )
+/** how many pixels differ between two PNGs of the same size by more than a little in any channel */
+const pixelsDiffering = (a, b, p = page) =>
+  p.evaluate(
+    async ([a, b]) => {
+      const load = async (src) => {
+        const img = new Image()
+        img.src = src
+        await img.decode()
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        const ctx = c.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        return ctx.getImageData(0, 0, img.width, img.height).data
+      }
+      const [pa, pb] = await Promise.all([load(a), load(b)])
+      let n = 0
+      for (let i = 0; i < pa.length; i += 4) if (Math.abs(pa[i] - pb[i]) > 20 || Math.abs(pa[i + 1] - pb[i + 1]) > 20 || Math.abs(pa[i + 2] - pb[i + 2]) > 20) n++
+      return n
+    },
+    [a, b],
+  )
+/**
+ * How many pixels of the nth marker canvas are the cavity a missing part shows — dark, and a
+ * shade warmer than the neutral of a tyre or the blue-black of glass — with the damage blended
+ * in by `strength`. Set through the store behind the canvas: the review page has no slider.
+ */
+const cavityPixels = (strength, n = 0, p = page) =>
+  p.evaluate(
+    async ([strength, n]) => {
+      const c = document.querySelectorAll('.cm-root canvas')[n]
+      c.__probe.store.getState().setStrength(strength)
+      await new Promise((r) => setTimeout(r, 500))
+      const off = document.createElement('canvas')
+      off.width = c.width
+      off.height = c.height
+      const ctx = off.getContext('2d')
+      ctx.drawImage(c, 0, 0)
+      const px = ctx.getImageData(0, 0, c.width, c.height).data
+      let count = 0
+      for (let i = 0; i < px.length; i += 4) {
+        const [r, g, b] = [px[i], px[i + 1], px[i + 2]]
+        if (r >= 12 && r < 60 && g <= r && b < g && r - b >= 2 && r - b <= 10) count++
+      }
+      return count
+    },
+    [strength, n],
+  )
 
 const centre = async (locator) => {
   const b = await locator.boundingBox()
@@ -404,6 +494,12 @@ await page.waitForSelector('.maplibregl-canvas', { timeout: 20000 })
 await page.waitForSelector('.mk-car', { timeout: 20000 })
 await page.waitForTimeout(6000)
 if ((await page.locator('.mk-car').count()) !== 3) fail(`expected 3 cars on the map, got ${await page.locator('.mk-car').count()}`)
+// the diagram is lit from the live record — the sun at 08:00 on that day, the weather that hour —
+// and a gate that samples pixels must not depend on the season or on somebody else's answer:
+// "Plain view" for the walk, and the light as it was is proved on its own seeded pages below
+await page.getByRole('button', { name: N.plain }).click()
+await page.waitForTimeout(600)
+if (!(await state()).plainView) fail('"Plain view" did not take on the diagram')
 const before = (await draft()).vehicles[0].position
 if (!before) fail('vehicle A was not placed on the map')
 
@@ -453,8 +549,10 @@ const blueShare = await page.evaluate(() => {
   const my = ((way.top + way.height / 2 + car.top + car.height / 2) / 2 - cr.top) * dpr
   const size = 24 * dpr
   const px = ctx.getImageData(mx - size / 2, my - size / 2, size, size).data
+  // by hue, not by level: the car's own shadow — a low morning sun, as the record has it —
+  // can lie across this stretch of the path, and a path in shadow is still on the map
   let blue = 0
-  for (let i = 0; i < px.length; i += 4) if (px[i + 2] > 170 && px[i] < 110 && px[i + 1] < 150) blue++
+  for (let i = 0; i < px.length; i += 4) if (px[i + 2] > 100 && px[i + 2] > px[i] * 1.6 && px[i + 2] > px[i + 1] * 1.25) blue++
   return blue / (px.length / 4)
 })
 if (blueShare < 0.05) fail(`the path is in the store but not on the map (${(blueShare * 100).toFixed(0)}% blue between the waypoint and the car)`)
@@ -462,7 +560,7 @@ ok(`map: dragging drew the path (${pathBefore} → ${dragged.path.length} points
 
 // the 3D car under the marker must be its paint: red pixels, not the pink an overexposed
 // layer produces, and not the grey of a paint that never got applied
-const redShare = await page.evaluate(() => {
+const redAroundA = () => page.evaluate(() => {
   const r = document.querySelector('.mk-car').getBoundingClientRect()
   const canvas = document.querySelector('.maplibregl-canvas')
   const cr = canvas.getBoundingClientRect()
@@ -481,6 +579,7 @@ const redShare = await page.evaluate(() => {
   for (let i = 0; i < px.length; i += 4) if (px[i] > 90 && px[i] > px[i + 1] * 1.6 && px[i] > px[i + 2] * 1.6) red++
   return red / (px.length / 4)
 })
+const redShare = await redAroundA()
 if (redShare < 0.08) fail(`car A on the map is not red (${(redShare * 100).toFixed(0)}% red pixels around its marker)`)
 ok(`map: car A renders in its paint (${(redShare * 100).toFixed(0)}% red around the marker)`)
 
@@ -558,6 +657,228 @@ await page.waitForFunction(() => !document.querySelector('.maplibregl-map').clas
 if ((await page.locator('.mk-car').count()) !== 3) fail('the cars did not come back after playback')
 ok('map: playback ran and handed the map back')
 
+// the city around the crash: the buildings the same Overpass answer carried, extruded under
+// everything else. The flat map shows them as flat footprints; the tilt below is the point.
+const city = await page.evaluate(async () => {
+  const map = window.__map
+  if (!map.getLayer('buildings')) return null
+  const fc = await map.getSource('buildings').getData()
+  return fc.features.map((f) => {
+    const ring = f.geometry.coordinates[0]
+    const n = ring.length - 1
+    let x = 0
+    let y = 0
+    for (let i = 0; i < n; i++) {
+      x += ring[i][0]
+      y += ring[i][1]
+    }
+    return { at: [x / n, y / n], height: f.properties.height }
+  })
+})
+if (!city) fail('the map has no building-extrusion layer')
+if (city.length <= 20) fail(`Times Square should be full of buildings; the layer holds ${city.length}`)
+if (!city.every((b) => b.height > 0)) fail(`a building has no height to extrude to: ${JSON.stringify(city.filter((b) => !(b.height > 0)))}`)
+// and they paint, flat, on the map the customer is actually editing on — which is also what
+// `compose()` puts in `attachments.scene`. Zoomed out to see a block at all: at the diagram's
+// own zoom the nearest frontage is past the edge of a 700 px canvas.
+const diagramZoom = await page.evaluate(() => {
+  const z = window.__map.getZoom()
+  window.__map.setZoom(17)
+  return z
+})
+await page.waitForTimeout(2500)
+const flat = await page.evaluate(() => {
+  const map = window.__map
+  const src = map.getCanvas()
+  const off = document.createElement('canvas')
+  off.width = off.height = 1
+  const ctx = off.getContext('2d', { willReadFrequently: true })
+  const dpr = src.width / src.clientWidth
+  const mid = [src.clientWidth / 2, src.clientHeight / 2]
+  const sampled = []
+  for (let gx = 0.1; gx < 1; gx += 0.2) {
+    for (let gy = 0.1; gy < 1; gy += 0.2) {
+      const x = Math.round(gx * src.clientWidth)
+      const y = Math.round(gy * src.clientHeight)
+      // the middle of the frame is the cars, their paths, the impact cross and the road
+      if (Math.hypot(x - mid[0], y - mid[1]) < 150) continue
+      if (!map.queryRenderedFeatures([x, y], { layers: ['buildings-flat'] }).length) continue
+      ctx.drawImage(src, x * dpr, y * dpr, 1, 1, 0, 0, 1, 1)
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+      sampled.push({ grey: Math.max(r, g, b) - Math.min(r, g, b) <= 18 && (r + g + b) / 3 > 100, rgb: [r, g, b] })
+    }
+  }
+  return sampled
+})
+await page.evaluate((z) => window.__map.setZoom(z), diagramZoom)
+await page.waitForTimeout(1500)
+const flatGrey = flat.filter((p) => p.grey).length
+if (flat.length < 3) fail(`the flat map draws no building footprints to sample (${flat.length} points on the layer)`)
+if (flatGrey / flat.length < 0.75) fail(`the flat footprints are not the extrusion's grey: ${JSON.stringify(flat)}`)
+ok(`map: ${city.length} building footprints on the map, the tallest ${Math.max(...city.map((b) => b.height))} m; flat, they paint over the imagery (${flatGrey}/${flat.length} sampled points the extrusion's grey, e.g. rgb(${flat.find((p) => p.grey).rgb}))`)
+
+// a car under a roof — a canopy the lookup kept, a block the customer parked beside — is still
+// drawn on the flat map. An extrusion there writes depth the car layer is tested against and
+// the car vanishes, so the flat map must draw footprints flat. A 6 m canopy is put round A —
+// low on purpose: at street zoom the camera is only about 55 m up, and a taller roof passes
+// over it and is clipped, which would prove nothing.
+const roofed = await page.evaluate(async () => {
+  const map = window.__map
+  const src = map.getSource('buildings')
+  window.__city = await src.getData()
+  const r = document.querySelector('.mk-car').getBoundingClientRect()
+  const cr = map.getCanvas().getBoundingClientRect()
+  const { lng, lat } = map.unproject([r.left + r.width / 2 - cr.left, r.top + r.height / 2 - cr.top])
+  const d = 0.0004
+  const ring = [[lng - d, lat - d], [lng + d, lat - d], [lng + d, lat + d], [lng - d, lat + d], [lng - d, lat - d]]
+  src.setData({ ...window.__city, features: [...window.__city.features, { type: 'Feature', properties: { height: 6 }, geometry: { type: 'Polygon', coordinates: [ring] } }] })
+  await new Promise((done) => setTimeout(done, 1500))
+  return map.queryRenderedFeatures([r.left + r.width / 2 - cr.left, r.top + r.height / 2 - cr.top], { layers: ['buildings-flat'] }).length
+})
+const redUnderRoof = await redAroundA()
+await page.evaluate(() => window.__map.getSource('buildings').setData(window.__city))
+if (!roofed) fail('the canopy put round car A is not on the map, so nothing is proved')
+if (redUnderRoof < 0.08) fail(`car A inside a building footprint is not drawn on the flat map (${(redUnderRoof * 100).toFixed(0)}% red round it, ${(redShare * 100).toFixed(0)}% in the open)`)
+ok(`map: car A under a 6 m canopy's footprint is still drawn on the flat map (${(redUnderRoof * 100).toFixed(0)}% red round it)`)
+
+// watch it: the camera opens up and chases, the shockwave rings the impact, and the diagram
+// comes back exactly as it was — flat, north-up, every marker where it stood. The ring lives
+// 600 ms of the playback's clock and a loaded machine decides how many frames of that a
+// sampler gets to see, so nothing here races it: the replay's own clock is driven from here
+// (`window.__play`, DEV only, from the diagram step) and settled frames of the same chase shot
+// are compared — inside the ring's life against just after it has gone, one camera, one pose.
+const carsBefore = await page.evaluate(() => [...document.querySelectorAll('.mk-car')].map((e) => [e.getBoundingClientRect().left, e.getBoundingClientRect().top]))
+await page.getByRole('button', { name: N.watch }).click()
+await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
+const watched = await page.evaluate(async (impact) => {
+  const map = window.__map
+  const play = window.__play
+  if (!play?.timeline) return { error: 'the diagram step did not expose the replay clock on window.__play' }
+  const RING_MS = 600 // src/map/playback.ts
+  const size = 160
+  const off = document.createElement('canvas')
+  off.width = off.height = size
+  const ctx = off.getContext('2d', { willReadFrequently: true })
+  // the box around the impact, wherever the camera has put it
+  const box = () => {
+    const src = map.getCanvas()
+    const p = map.project(impact)
+    const dpr = src.width / src.clientWidth
+    ctx.clearRect(0, 0, size, size)
+    ctx.drawImage(src, (p.x - size / 2) * dpr, (p.y - size / 2) * dpr, size * dpr, size * dpr, 0, 0, size, size)
+    return ctx.getImageData(0, 0, size, size).data
+  }
+  // A building's own wall, once the camera is tilted. Where the map is drawing one is asked of
+  // the map rather than worked out from a footprint: a block's centroid at this zoom is
+  // usually off the top of the frame while the building itself fills it. So a coarse grid is
+  // queried against the extrusion layer, and the first column of pixels with the layer at both
+  // of its ends is read back off the canvas. That column is a wall, and a wall is one flat
+  // grey — the satellite's picture of the same block, at this zoom, never is.
+  const COLUMN = 24
+  const wall = () => {
+    const src = map.getCanvas()
+    const dpr = src.width / src.clientWidth
+    const on = (x, y) => map.queryRenderedFeatures([x, y], { layers: ['buildings'] })
+    for (let gx = 0.15; gx < 1; gx += 0.2) {
+      for (let gy = 0.08; gy < 0.6; gy += 0.13) {
+        const x = Math.round(gx * src.clientWidth)
+        const y = Math.round(gy * src.clientHeight)
+        const hit = on(x, y)
+        if (!hit.length || !on(x, y + COLUMN).length) continue
+        ctx.clearRect(0, 0, size, size)
+        ctx.drawImage(src, (x - 1) * dpr, y * dpr, 3 * dpr, COLUMN * dpr, 0, 0, 3, COLUMN)
+        const px = ctx.getImageData(0, 0, 3, COLUMN).data
+        const n = px.length / 4
+        let grey = 0
+        const sum = [0, 0, 0]
+        for (let i = 0; i < px.length; i += 4) {
+          const [r, g, bl] = [px[i], px[i + 1], px[i + 2]]
+          sum[0] += r
+          sum[1] += g
+          sum[2] += bl
+          if (Math.max(r, g, bl) - Math.min(r, g, bl) <= 16 && (r + g + bl) / 3 > 80) grey++
+        }
+        return { grey: grey / n, mean: sum.map((v) => Math.round(v / n)), height: hit[0].properties.height }
+      }
+    }
+    return null
+  }
+  const walls = []
+  // the city is extruded to each block's own height and drawn while the camera is tilted — not
+  // a flat footprint the queries above would hit just the same
+  const extruded = { height: map.getPaintProperty('buildings', 'fill-extrusion-height'), opacity: [] }
+  // one moment on the playback clock, settled: the seek holds the frame loop there, the page
+  // hands that frame to the map, and the map is made to paint before the pixels are read back
+  const at = async (ms) => {
+    play.seek(ms)
+    await new Promise((r) => setTimeout(r, 250))
+    for (let i = 0; i < 2; i++)
+      await new Promise((r) => {
+        map.once('render', () => requestAnimationFrame(r))
+        map.triggerRepaint()
+      })
+    return { px: box(), pitch: map.getPitch() }
+  }
+  const { impactMs } = play.timeline
+  // the reference frame: the same shot once the ring has gone — same camera, same cars, no
+  // shockwave — so what lights up against it is the shockwave and nothing else
+  const gone = await at(impactMs + RING_MS + 50)
+  const lit = ({ px }) => {
+    let n = 0
+    for (let i = 0; i < px.length; i += 4) if (px[i] - gone.px[i] > 25 && px[i + 1] - gone.px[i + 1] > 25) n++
+    return n / (px.length / 4)
+  }
+  // the ring is scaled from nothing, so the moment of impact itself is the control: the same
+  // frame again, with a ring of no radius in it
+  const born = lit(await at(impactMs))
+  const frames = []
+  for (const u of [0.6, 0.7, 0.8]) {
+    const f = await at(impactMs + u * RING_MS)
+    frames.push(f)
+    // The city is read off these same three frames. They are already settled and the camera is
+    // already tilted on them — the pitch assertion below says so — and the wall is taken after
+    // the ring's pixels have been copied out of the canvas, so the most expensive thing here
+    // (a grid of queryRenderedFeatures and a canvas read) costs the measurement beside it
+    // nothing. Three readings prove the city; there is no fourth frame to want.
+    const w = wall()
+    if (w) walls.push(w)
+    extruded.opacity.push(map.getPaintProperty('buildings', 'fill-extrusion-opacity'))
+  }
+  play.stop()
+  walls.sort((a, b) => b.grey - a.grey)
+  return {
+    born,
+    rings: frames.map(lit),
+    pitch: Math.max(...frames.map((f) => f.pitch)),
+    gonePitch: gone.pitch,
+    walls: walls.length,
+    wall: walls[0] ?? null,
+    extruded,
+  }
+}, (await draft()).impact)
+const pc = (n) => `${(n * 100).toFixed(0)}%`
+if (watched.error) fail(watched.error)
+const peak = Math.max(...(watched.rings ?? [0]))
+if (watched.pitch < 40) fail(`watching never tilted the map (pitch was ${watched.pitch.toFixed(0)}° on the shockwave's own frames)`)
+if (Math.abs(watched.pitch - watched.gonePitch) > 1)
+  fail(`the frames compared are not the same shot, so nothing is proved (pitch ${watched.pitch.toFixed(0)}° with the ring, ${watched.gonePitch.toFixed(0)}° without)`)
+if (peak < 0.1) fail(`no shockwave: it lit [${watched.rings.map(pc).join(' ')}] of the box around the impact against the same frame with the ring gone`)
+if (watched.born > 0.05) fail(`the box around the impact changes without a shockwave in it (${pc(watched.born)} at the moment of impact, where the ring has no radius yet)`)
+if (JSON.stringify(watched.extruded.height) !== JSON.stringify(['get', 'height']) || !watched.extruded.opacity.every((o) => o > 0))
+  fail(`the tilted city is not extruded to its heights: ${JSON.stringify(watched.extruded)}`)
+if (!watched.wall) fail(`no building stood up in front of the tilted camera on the shockwave's own frames`)
+if (watched.wall.grey < 0.9) fail(`what the extrusion layer drew is not its own flat grey: ${(watched.wall.grey * 100).toFixed(0)}% grey, mean rgb(${watched.wall.mean})`)
+await page.waitForFunction(() => !document.querySelector('.maplibregl-map').classList.contains('mk-playing'), null, { timeout: 12000 })
+const home = await page.evaluate(() => ({ pitch: window.__map.getPitch(), bearing: window.__map.getBearing(), city: window.__map.getPaintProperty('buildings', 'fill-extrusion-opacity') }))
+if (home.pitch !== 0 || home.bearing !== 0) fail(`the map came back tilted (pitch ${home.pitch}, bearing ${home.bearing})`)
+if (home.city !== 0) fail(`the city is still standing on the flat map (extrusion opacity ${home.city})`)
+const carsAfter = await page.evaluate(() => [...document.querySelectorAll('.mk-car')].map((e) => [e.getBoundingClientRect().left, e.getBoundingClientRect().top]))
+if (carsAfter.length !== carsBefore.length || carsAfter.some(([x, y], i) => Math.abs(x - carsBefore[i][0]) > 1 || Math.abs(y - carsBefore[i][1]) > 1))
+  fail(`the markers came back somewhere else: ${JSON.stringify(carsBefore)} → ${JSON.stringify(carsAfter)}`)
+ok(
+  `map: watched it — the camera tilted to ${watched.pitch.toFixed(0)}°, the shockwave lit [${watched.rings.map(pc).join(' ')}] of the box around the impact against the same frame once it had gone (${pc(watched.born)} before it had any radius), buildings stood in front of it on ${watched.walls} of those frames (a ${watched.wall.height} m wall read ${(watched.wall.grey * 100).toFixed(0)}% flat grey, rgb(${watched.wall.mean})), and the map came back flat with the markers where they were`,
+)
+
 // somewhere the map cannot show — a garage, a covered car park: the same diagram on a
 // drawn parking lot. The ground is saved with the claim, and the cars survive the switch.
 await page.getByRole('radio', { name: N.lot }).click()
@@ -581,10 +902,14 @@ const asphalt = await page.evaluate(() => {
   return hit / n
 })
 if (asphalt < 0.5) fail(`the parking lot did not paint (${(asphalt * 100).toFixed(0)}% tarmac)`)
+// there is no real city around a drawn parking lot, any more than there is a real road
+const shown = () => page.evaluate(() => ['buildings-flat', 'buildings', 'roads-casing'].map((id) => window.__map.getLayoutProperty(id, 'visibility')))
+if ((await shown()).some((v) => v !== 'none')) fail(`the road and the buildings are still drawn on the parking lot: ${await shown()}`)
 await page.getByRole('radio', { name: N.satellite }).click()
 await page.waitForTimeout(2000)
 if ((await draft()).incident.surface !== 'satellite') fail('could not switch back to the satellite map')
-ok(`map: drawn parking lot for places the map cannot show (${(asphalt * 100).toFixed(0)}% tarmac), cars kept, back to satellite`)
+if ((await shown()).some((v) => v !== 'visible')) fail(`the road and the buildings did not come back on the satellite map: ${await shown()}`)
+ok(`map: drawn parking lot for places the map cannot show (${(asphalt * 100).toFixed(0)}% tarmac), no road or buildings on it, cars kept, back to satellite`)
 
 await page.getByRole('textbox', { name: N.describeLabel }).fill('The van pulled out across me.')
 await noEnglish('the map')
@@ -612,14 +937,51 @@ const autoAfter = await page.evaluate(() => JSON.parse(localStorage.getItem('cla
 if (autoAfter.a !== 'user') fail(`vehicle A's marks should be the customer's after a tap, got ${JSON.stringify(autoAfter)}`)
 ok(`damage: ${d4.vehicles[0].damages[0].zone} from the impact + ${d4.vehicles[0].damages[1].zone} / dent by hand on the ${d4.vehicles[0].body}`)
 
+// ── the damage is on the paint, not just a pin on it ──────────────────
+// The dent: with the effect blended away through the real slider, the paint just above the mark —
+// the dish's shadowed wall — reads lighter than with it on, and the frame the export takes differs
+// from the unmarked car by more than the pin. The picker is closed first and the camera given its
+// moment to ease round.
+await page.locator('.cm-pop .cm-x').click({ force: true })
+await page.waitForTimeout(1500)
+const strengthSlider = page.locator('.cm-tools input[type=range]')
+if ((await strengthSlider.count()) !== 1) fail('the customer’s marker has no before/after slider')
+const dentPoint = d4.vehicles[0].damages[1].point
+const dented = await markerSample(dentPoint)
+await strengthSlider.fill('0')
+await page.waitForTimeout(500)
+const undented = await markerSample(dentPoint)
+await strengthSlider.fill('1')
+await page.waitForTimeout(500)
+const darker = 1 - dented.mean / undented.mean
+if (darker < 0.03) fail(`the dent is not in the paint: the wall above the mark reads ${undented.mean.toFixed(1)} without it and ${dented.mean.toFixed(1)} with it`)
+const differing = await pixelsDiffering(dented.png, undented.png)
+if (differing < 300) fail(`the marked car's export differs from the unmarked one by only ${differing} px`)
+ok(`damage: the dent is in the paint — its wall ${(darker * 100).toFixed(1)}% darker above the mark, ${differing} px of the export differ from the unmarked car`)
+// A missing part is the whole panel: the left front door, picked at its own anchor, shows the
+// cavity just below the dot — dark, and warmer than glass or a tyre
+const door = zoneById(d4.vehicles[0].body, 'left_front_door')
+await page.evaluate((p) => document.querySelector('.cm-root canvas').__probe.store.getState().pick(p), door.anchor)
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: N.missing, exact: true }).click({ force: true })
+await page.waitForTimeout(400)
+await page.locator('.cm-pop .cm-x').click({ force: true })
+await page.waitForTimeout(1500)
+const hole = await markerSample(door.anchor, 14)
+if (Math.max(...hole.spot) > 60 || hole.spot[0] <= hole.spot[2]) fail(`the missing door shows no cavity: rgb(${hole.spot}) just below the mark`)
+const d4b = await draft()
+if (d4b.vehicles[0].damages.length !== 3 || d4b.vehicles[0].damages[2].severity !== 'missing' || d4b.vehicles[0].damages[2].zone !== 'left_front_door') fail(`the missing door was not saved: ${JSON.stringify(d4b.vehicles[0].damages)}`)
+ok(`damage: the missing ${door.id.replace(/_/g, ' ')} is a cavity on the car, rgb(${hole.spot})`)
+
 // a photograph through the real file picker: downscaled to 1280 on the long edge, kept as a
-// JPEG on the claim, tagged with the vehicle it shows
+// JPEG on the claim, tagged with the vehicle it shows. Green, which nothing else in the studio
+// is — not the red car, the pins, the damage or the floor — so its card can be counted on the car.
 const png = await page.evaluate(() => {
   const c = document.createElement('canvas')
   c.width = 1600
   c.height = 1200
   const x = c.getContext('2d')
-  x.fillStyle = '#b91c1c'
+  x.fillStyle = '#15803d'
   x.fillRect(0, 0, 1600, 1200)
   x.fillStyle = '#fff'
   x.fillRect(200, 300, 900, 500)
@@ -643,6 +1005,110 @@ const dims = await page.evaluate(
   photo.data,
 )
 if (dims[0] !== 1280 || dims[1] !== 960) fail(`expected 1280×960 after downscaling, got ${dims.join('×')}`)
+
+// ── the photo pinned to the car ───────────────────────────────────────
+// Dragged from its thumbnail beside the car onto the left front door — which the camera faces,
+// the missing door being the last mark — the drop is cast into the scene and the nearest panel is
+// the one the photo shows. Its card then stands out from that door in the very frame the export
+// takes (`toDataURL`, what `export()` returns): green, where the probe says the card is.
+const MARKER = '.cm-root canvas'
+/**
+ * The marker's exported frame round a point on its canvas: the colour of the 3-px spot on it, and
+ * how many green pixels — the pinned photo's, which nothing else in the studio is — lie within 40 px.
+ * The first marker on `p`: the customer's on the damage step, vehicle A's on the desk.
+ */
+const frameAt = (at, p = page) =>
+  p.evaluate(
+    async ([sel, [x, y]]) => {
+      const c = document.querySelector(sel)
+      const img = new Image()
+      img.src = c.toDataURL('image/png')
+      await img.decode()
+      const off = document.createElement('canvas')
+      off.width = img.width
+      off.height = img.height
+      const ctx = off.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+      const px = ctx.getImageData(Math.round(x) - 40, Math.round(y) - 40, 80, 80).data
+      let green = 0
+      for (let k = 0; k < px.length; k += 4) if (px[k + 1] > 90 && px[k + 1] > px[k] * 1.6 && px[k + 1] > px[k + 2] * 1.3) green++
+      const spot = ctx.getImageData(Math.round(x) - 1, Math.round(y) - 1, 3, 3).data
+      const rgb = [0, 0, 0]
+      for (let k = 0; k < spot.length; k += 4) for (let ch = 0; ch < 3; ch++) rgb[ch] += spot[k + ch] / 9
+      return { green, rgb: rgb.map(Math.round) }
+    },
+    [MARKER, at],
+  )
+/** where the photo's card is on the marker's canvas, null while it is not in the scene */
+const cardOnCanvas = () => page.evaluate((sel) => document.querySelector(sel).__probe.card(1), MARKER)
+const onCanvas = (point) => page.evaluate(([sel, p]) => document.querySelector(sel).__probe.project(p), [MARKER, point])
+if (await cardOnCanvas()) fail('a card is on the car before the photo says which panel it shows')
+await page.locator(MARKER).scrollIntoViewIfNeeded()
+const doorOnCanvas = await onCanvas(door.anchor)
+await page.locator('img[draggable="true"]').dragTo(page.locator(MARKER), { targetPosition: { x: doorOnCanvas[0], y: doorOnCanvas[1] } })
+await page.waitForTimeout(400)
+const pinnedPhoto = (await draft()).attachments.photos[1]
+if (pinnedPhoto.shows !== 'left_front_door') fail(`dropping the photo on the left front door tagged it ${JSON.stringify(pinnedPhoto.shows)}`)
+let tagged = { green: 0 }
+for (let i = 0; i < 40 && tagged.green < 150; i++) {
+  await page.waitForTimeout(250)
+  const at = await cardOnCanvas()
+  if (at) tagged = await frameAt(at)
+}
+if (tagged.green < 150) fail(`the exported frame has no card for the photo: ${tagged.green} green px round where the probe puts it`)
+ok(`damage: the photo dropped on the car shows the ${pinnedPhoto.shows.replace(/_/g, ' ')}, and its card is in the exported frame (${tagged.green} green px round it)`)
+
+// Tapping the card turns the camera to its panel and opens the photo large. The car is turned
+// away first by a drag from the empty corner of the studio, then the card is tapped where it is now.
+const azimuth = () => page.evaluate((sel) => document.querySelector(sel).__probe.azimuth(), MARKER)
+const degreesApart = (a, b) => Math.abs(((((a - b) * 180) / Math.PI + 540) % 360) - 180)
+const facingDoor = await azimuth()
+// the drag to the car may have scrolled the page: the whole canvas in view, so both gestures land on it
+await page.locator(MARKER).evaluate((c) => c.scrollIntoView({ block: 'center' }))
+const markerBox = await page.locator(MARKER).boundingBox()
+const turnAway = async () => {
+  await drag({ x: markerBox.x + markerBox.width - 40, y: markerBox.y + 40 }, -110, 0)
+  await page.waitForTimeout(2500)
+  const az = await azimuth()
+  if (degreesApart(az, facingDoor) < 20) fail(`the drag did not turn the car away from the door (${degreesApart(az, facingDoor).toFixed(1)}°)`)
+  return az
+}
+const turnedAway = await turnAway()
+const cardAt = await cardOnCanvas()
+await page.mouse.click(markerBox.x + cardAt[0], markerBox.y + cardAt[1])
+const lightbox = page.getByRole('dialog', { name: t('zone.left_front_door') })
+await lightbox.waitFor({ timeout: 5000 }).catch(() => fail('tapping the card did not open the photo'))
+await page.waitForTimeout(2500)
+const backAtDoor = await azimuth()
+if (degreesApart(backAtDoor, facingDoor) > 5) fail(`tapping the card did not turn the camera to the door: ${degreesApart(backAtDoor, facingDoor).toFixed(1)}° off, from ${degreesApart(turnedAway, facingDoor).toFixed(1)}°`)
+if ((await lightbox.locator('img').getAttribute('src')) !== photo.data) fail('the photo opened is not the one pinned')
+await page.keyboard.press('Escape')
+await lightbox.waitFor({ state: 'detached', timeout: 3000 }).catch(() => fail('Escape did not close the photo'))
+ok(`damage: tapping the card opened the photo and turned the camera ${degreesApart(turnedAway, backAtDoor).toFixed(0)}° back round to the door`)
+
+// Seen head-on a card stands on the line of sight to its own panel, so while the camera faces the
+// door its card stands aside, and the next turn of the car brings it back. Then the door's own pin,
+// tapped where it stands: the camera turns to the door, the pin is drawn there, and no card covers it.
+const aside = await frameAt(await cardOnCanvas())
+if (aside.green > 5) fail(`the card stays in front of the door the camera was turned to face (${aside.green} green px)`)
+await turnAway()
+const cardBack = await frameAt(await cardOnCanvas())
+if (cardBack.green < 150) fail(`turning the car did not bring the door's card back (${cardBack.green} green px)`)
+const doorMark = d4b.vehicles[0].damages[2]
+const pinAt = await onCanvas(doorMark.point)
+await page.mouse.click(markerBox.x + pinAt[0], markerBox.y + pinAt[1])
+await page.waitForTimeout(2500)
+const tappedPin = await page.evaluate((sel) => document.querySelector(sel).__probe.store.getState().selected, MARKER)
+if (tappedPin !== 2) fail(`the tap on the door's pin did not select it (selected: ${tappedPin})`)
+const pinFaced = await azimuth()
+if (degreesApart(pinFaced, facingDoor) > 5) fail(`the door's pin did not turn the camera to the door (${degreesApart(pinFaced, facingDoor).toFixed(1)}° off)`)
+const pin = await frameAt(await onCanvas(doorMark.point))
+const [pr, pg, pb] = pin.rgb
+// the missing mark's violet dot, #7c3aed
+if (!(pb > 170 && pb > pr * 1.5 && pb > pg * 2)) fail(`the door's pin is not drawn where it stands once the camera faces the door: rgb(${pin.rgb})`)
+if (pin.green > 5) fail(`a card covers the door's pin once the camera faces the door (${pin.green} green px round it)`)
+await page.locator('.cm-pop .cm-x').click({ force: true })
+ok(`damage: facing the door, its card stands aside — after the card's tap (${aside.green} green px) and after the pin's, whose dot is drawn, rgb(${pin.rgb}), with ${pin.green} green px round it — and a turn of the car brings it back (${cardBack.green})`)
 // the car now, and the pole it took with it
 await page.locator(`[role=radiogroup][aria-label="${N.drivable}"]`).getByRole('radio', { name: N.no, exact: true }).click()
 await page.locator(`[role=radiogroup][aria-label="${N.airbags}"]`).getByRole('radio', { name: N.yes, exact: true }).click()
@@ -654,7 +1120,14 @@ ok(`damage: photo kept as ${dims.join('×')} JPEG (${photoKb} kB) of A with a ca
 
 // ── 5 · review and send ────────────────────────────────────────────────
 await next()
-await page.waitForSelector(`text=${N.send}`, { timeout: 20000 })
+// readiness, not an assertion: under software GL the review page compiles the map's and two
+// markers' programs before it is up, which a loaded machine stretches past 20 s
+await page.waitForSelector(`text=${N.send}`, { timeout: 45000 })
+// the small reconstruction under the map is mounted only as it comes within a screen of the
+// view: the page does not pay for a WebGL context nobody has scrolled to yet
+const reconEarly = await page.evaluate(() => ({ slot: document.querySelector('[data-near]')?.getBoundingClientRect().top ?? null, mounted: !!document.querySelector('[data-reconstruction]') }))
+if (reconEarly.slot === null) fail('the review page holds no place for the reconstruction under the map')
+if (reconEarly.slot > 2 * 1000 && reconEarly.mounted) fail(`the reconstruction ${Math.round(reconEarly.slot)} px down the page was mounted before anyone scrolled near it`)
 // nothing goes without the customer's word and their name on it
 if (!(await page.getByRole('button', { name: N.send }).isDisabled())) fail('Send should be disabled before the attestation')
 await page.getByRole('textbox', { name: N.yourName }).fill('Ashish B')
@@ -666,6 +1139,58 @@ if (!(await page.getByRole('button', { name: N.send }).isDisabled())) fail('Send
 await page.getByRole('textbox', { name: N.sign }).fill('Ashish B')
 if (await page.getByRole('button', { name: N.send }).isDisabled()) fail('Send should be enabled once confirmed and signed')
 if (!(await page.locator('text=Dana Q').count())) fail('review does not show the other driver')
+// the review's marked-up car is the same shader: the cavity of the missing door is in its frame,
+// and blending the damage away takes it out — the export at send is the car as it always renders
+await settled('.cm-root canvas')
+const reviewCavity = { off: await cavityPixels(0), on: await cavityPixels(1) }
+if (reviewCavity.on < reviewCavity.off + 150) fail(`the review's car does not show the missing door: ${reviewCavity.off} cavity px without the damage, ${reviewCavity.on} with it`)
+if (await page.locator('.cm-tools').count()) fail('the customer’s review page should not offer the before/after slider')
+ok(`review: the marked-up car shows the missing door (${reviewCavity.on - reviewCavity.off} px of cavity), and has no slider to blend it away before the export`)
+
+// the same moment in 3D under the map: every car stood where the diagram put it, A in its paint.
+// Its canvas is never exported and keeps no drawing buffer, so it is read as a screenshot, round
+// where the scene's DEV probe says A stands
+const RECON = '[data-reconstruction] canvas'
+await page.locator('[data-near]').scrollIntoViewIfNeeded()
+await page.waitForSelector(RECON, { timeout: 45000 }).catch(() => fail('the review page has no reconstruction under the map'))
+await page.locator(RECON).scrollIntoViewIfNeeded()
+const reconA = () =>
+  page.evaluate((sel) => {
+    const c = document.querySelector(sel)
+    const k = c.clientWidth / c.width
+    // null until A's body has loaded into the scene
+    return c.__probe.project('a')?.map((n) => n * k) ?? null
+  }, RECON)
+let reconRed = 0
+for (let i = 0; i < 60 && reconRed < 150; i++) {
+  await page.waitForTimeout(500)
+  const at = await reconA()
+  if (!at) continue
+  const shot = (await page.screenshot({ clip: await page.locator(RECON).boundingBox() })).toString('base64')
+  reconRed = await page.evaluate(
+    async ([png, [x, y]]) => {
+      const img = new Image()
+      img.src = `data:image/png;base64,${png}`
+      await img.decode()
+      const c = document.createElement('canvas')
+      c.width = img.width
+      c.height = img.height
+      const ctx = c.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+      const px = ctx.getImageData(0, 0, img.width, img.height).data
+      let n = 0
+      for (let j = Math.max(0, Math.round(y - 60)); j < Math.min(img.height, y + 60); j++)
+        for (let i = Math.max(0, Math.round(x - 60)); i < Math.min(img.width, x + 60); i++) {
+          const k = (j * img.width + i) * 4
+          if (px[k] > 60 && px[k] > px[k + 1] * 1.6 && px[k] > px[k + 2] * 1.6) n++
+        }
+      return n
+    },
+    [shot, at],
+  )
+}
+if (reconRed < 150) fail(`the review's reconstruction does not show car A in its paint (${reconRed} red px round it)`)
+ok(`review: the same moment in 3D under the map — A stands there in its paint (${reconRed} red px round it); ${Math.round(reconEarly.slot)} px down the page, it was ${reconEarly.mounted ? 'already' : 'not yet'} mounted when the page was ready`)
 if (!(await page.locator('text=2026-0042').count())) fail('review does not show the police report number')
 if (!(await page.locator('text=Times Square').count())) fail('review does not show the address')
 if (!(await page.locator('text=The van pulled out across me.').count())) fail('review does not show the description')
@@ -673,11 +1198,43 @@ await page.waitForSelector('.maplibregl-canvas', { timeout: 20000 })
 await page.waitForTimeout(7000)
 await noEnglish('the review')
 
-// the review can play it back too: the insurer sees what happened, not a still
+// the review can play it back too: the insurer sees what happened, not a still — and the
+// reconstruction under the map plays along, A driving in there too and coming back to rest
+// measured in the scene's metres, not on screen, where a car driving at the camera barely moves
+const reconWhere = () => page.evaluate((sel) => document.querySelector(sel).__probe.where('a'), RECON)
+const reconRest = await reconWhere()
+const reconAway = async () => {
+  const [x, , z] = await reconWhere()
+  return Math.hypot(x - reconRest[0], z - reconRest[2])
+}
 await page.getByRole('button', { name: N.playBack }).click()
 await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
+let reconDrove = 0
+for (let i = 0; i < 240 && (await page.evaluate(() => document.querySelector('.maplibregl-map').classList.contains('mk-playing'))); i++) {
+  reconDrove = Math.max(reconDrove, await reconAway())
+  await page.waitForTimeout(50)
+}
 await page.waitForFunction(() => !document.querySelector('.maplibregl-map').classList.contains('mk-playing'), null, { timeout: 12000 })
 ok('review: playback ran on the review map')
+const reconBack = await reconAway()
+if (reconDrove < 2) fail(`the review's reconstruction did not play along with the map (A moved ${reconDrove.toFixed(2)} m)`)
+if (reconBack > 0.01) fail(`after the playback, A did not come back to rest in the reconstruction (${reconBack.toFixed(2)} m off)`)
+ok(`review: the reconstruction played along (A drove ${reconDrove.toFixed(1)} m there and came back to rest)`)
+
+// and watch it there too: the read-only map — the desk's is this same component — tilts and comes back
+await page.getByRole('button', { name: N.watch }).click()
+await page.waitForSelector('.maplibregl-map.mk-playing', { timeout: 3000 })
+const reviewPitch = await page.evaluate(async () => {
+  let pitch = 0
+  const t0 = performance.now()
+  while (document.querySelector('.maplibregl-map').classList.contains('mk-playing') && performance.now() - t0 < 30000) {
+    pitch = Math.max(pitch, window.__map.getPitch())
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return { peak: pitch, after: window.__map.getPitch() }
+})
+if (reviewPitch.peak < 40 || reviewPitch.after !== 0) fail(`the review map did not tilt and come back (peaked at ${reviewPitch.peak.toFixed(0)}°, now ${reviewPitch.after}°)`)
+ok(`review: watched it on the read-only map (tilted to ${reviewPitch.peak.toFixed(0)}°, back to flat)`)
 
 const submitted = page.evaluate(() => new Promise((r) => window.addEventListener('claim:submitted', (e) => r(e.detail), { once: true })))
 await page.getByRole('button', { name: N.send }).click()
@@ -688,7 +1245,7 @@ if (doc.schema !== 'claim/1') fail(`document schema ${doc.schema}`)
 if (!/^CM-[A-HJ-NP-Z2-9]{6}$/.test(doc.reference)) fail(`reference ${doc.reference}`)
 if (doc.vehicles.length !== 3) fail(`document has ${doc.vehicles.length} vehicles`)
 if (doc.vehicles[0].make !== 'Honda' || doc.vehicles[0].year !== 2021) fail('document lost the make or year')
-if (doc.vehicles[0].damages.length !== 2) fail('document lost a damage')
+if (doc.vehicles[0].damages.length !== 3) fail('document lost a damage')
 if (doc.vehicles[1].damages.length !== 1) fail("document lost B's damage from the impact")
 if (!doc.impact) fail('document lost the impact')
 if (doc.incident.surface !== 'satellite') fail(`document ground ${doc.incident.surface}`)
@@ -733,49 +1290,276 @@ ok(`sent: what the record said — ${doc.incident.context.weather.label}, ${doc.
 ok('sent: the whole report — kind, conditions, VIN, the other driver and their insurer, an injured passenger, the police report, a witness, a photo, the car now, the pole, who to call, signed')
 ok(`sent: ${doc.reference}, scene ${sceneKb} kB, damage PNG ${Math.round(doc.attachments.damage.a.length / 1024)} kB`)
 
+// ── the desk shows the same car ───────────────────────────────────────
+// The claims desk renders this same document through the same component, so the missing door's
+// cavity is in its frame too — and the desk, unlike the review page, gets the before/after
+// slider and the severity map. Its API is answered here from the document just sent.
+const receipt = {
+  reference: doc.reference,
+  clientReference: null,
+  receivedAt: doc.submittedAt,
+  status: 'new',
+  files: {},
+  signals: [],
+  summary: { kind: doc.incident.kind, at: doc.incident.at, address: doc.incident.location.address, reporter: doc.reporter.name, vehicles: doc.vehicles.length, plates: [], hurt: 0, damaged: 2, photos: 2, drivable: false },
+}
+const deskPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
+deskPage.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+deskPage.on('pageerror', (e) => errors.push(String(e)))
+await deskPage.route(`${origin}/desk-api/**`, (route) => {
+  const path = new URL(route.request().url()).pathname.replace('/desk-api', '')
+  const body = path === '/claims' ? { claims: [receipt] } : path === `/claims/${doc.reference}` ? { ...receipt, claim: doc } : null
+  return body ? route.fulfill({ json: body }) : route.fulfill({ status: 404, json: { error: 'not found' } })
+})
+await deskPage.goto(`${origin}/adjuster.html?api=${origin}/desk-api#/${doc.reference}`, { waitUntil: 'networkidle' })
+await deskPage.waitForSelector('.cm-root canvas', { timeout: 45000 })
+await settled('.cm-root canvas', deskPage)
+const deskCavity = { off: await cavityPixels(0, 0, deskPage), on: await cavityPixels(1, 0, deskPage) }
+if (deskCavity.on < deskCavity.off + 150) fail(`the desk's car does not show the missing door: ${deskCavity.off} cavity px without the damage, ${deskCavity.on} with it`)
+if ((await deskPage.locator('.cm-tools input[type=range]').count()) < 1) fail('the desk’s marker has no before/after slider')
+if (!(await deskPage.getByRole('button', { name: 'Severity map' }).count())) fail('the desk’s marker has no severity map')
+ok(`desk: the same marked-up car — the missing door is ${deskCavity.on - deskCavity.off} px of cavity there too — with the before/after slider and the severity map`)
+// The desk's copy is a document: a tap on the car marks nothing — it only stops the turntable —
+// but the photo pinned to the door is on it, and tapping its card opens the photo
+const deskMarker = deskPage.locator('.cm-root canvas').first()
+await deskMarker.evaluate((c) => c.scrollIntoView({ block: 'center' }))
+const deskBox = await deskMarker.boundingBox()
+await deskPage.mouse.click(deskBox.x + deskBox.width / 2, deskBox.y + deskBox.height / 2)
+await deskPage.waitForTimeout(600)
+if (await deskPage.locator('.cm-pop').count()) fail('a tap on the desk’s car opened the severity picker')
+// facing the door stands its card aside; a turn off it brings the card back, where it is tapped
+await deskMarker.evaluate((c, z) => c.__probe.store.getState().face(z), door)
+await deskPage.waitForTimeout(2500)
+await deskPage.mouse.move(deskBox.x + deskBox.width - 30, deskBox.y + 60)
+await deskPage.mouse.down()
+await deskPage.mouse.move(deskBox.x + deskBox.width - 90, deskBox.y + 60, { steps: 12 })
+await deskPage.mouse.up()
+await deskPage.waitForTimeout(2500)
+const deskCard = await deskMarker.evaluate((c) => c.__probe.card(1))
+if (!deskCard) fail('the desk’s car has no card for the photo pinned to the door')
+await deskPage.mouse.click(deskBox.x + deskCard[0], deskBox.y + deskCard[1])
+await deskPage
+  .getByRole('dialog', { name: DICT.en['zone.left_front_door'] })
+  .waitFor({ timeout: 5000 })
+  .catch(() => fail('tapping the card on the desk did not open the photo'))
+ok('desk: the photo pinned to the door is a card on the car there too, and opens large; a tap on the car marks nothing')
+// A pin held down, as a finger or a slow click does: the press turns the camera at once, so by the
+// time the button comes up the pin has turned out from under the pointer, and the desk's body takes
+// no taps, so that release hits nothing. It is still the pin's release: the mark stays selected,
+// and once the camera has come round to the door its card is still aside, not over the pin.
+await deskPage.keyboard.press('Escape')
+await deskPage.mouse.move(deskBox.x + deskBox.width - 30, deskBox.y + 60)
+await deskPage.mouse.down()
+await deskPage.mouse.move(deskBox.x + deskBox.width - 90, deskBox.y + 60, { steps: 12 })
+await deskPage.mouse.up()
+await deskPage.waitForTimeout(2500)
+const deskPinAt = await deskMarker.evaluate((c, p) => c.__probe.project(p), doorMark.point)
+await deskPage.mouse.move(deskBox.x + deskPinAt[0], deskBox.y + deskPinAt[1])
+await deskPage.mouse.down()
+await deskPage.waitForTimeout(150)
+await deskPage.mouse.up()
+await deskPage.waitForTimeout(2500)
+const heldPin = await deskMarker.evaluate((c) => c.__probe.store.getState().selected)
+if (heldPin !== 2) fail(`the door's pin, held down on the desk, lost its selection when the button came up (selected: ${heldPin})`)
+const heldPinFrame = await frameAt(await deskMarker.evaluate((c, p) => c.__probe.project(p), doorMark.point), deskPage)
+if (heldPinFrame.green > 5) fail(`the door's card is back over its pin on the desk after the pin was held (${heldPinFrame.green} green px round it)`)
+ok(`desk: a pin held down keeps its selection when the button comes up off it, and its card stays aside (${heldPinFrame.green} green px round the pin)`)
+// and it stands by the door in the reconstruction too: green, which nothing else there is, read
+// off screenshots because that canvas keeps no drawing buffer
+await deskPage.getByRole('tab', { name: 'Reconstruction' }).click()
+const deskRecon = deskPage.locator('[data-reconstruction] canvas')
+await deskRecon.waitFor({ timeout: 45000 })
+let reconGreen = 0
+for (let i = 0; i < 40 && reconGreen < 15; i++) {
+  await deskPage.waitForTimeout(500)
+  const shot = (await deskRecon.screenshot()).toString('base64')
+  reconGreen = await deskPage.evaluate(async (png) => {
+    const img = new Image()
+    img.src = `data:image/png;base64,${png}`
+    await img.decode()
+    const c = document.createElement('canvas')
+    c.width = img.width
+    c.height = img.height
+    const ctx = c.getContext('2d')
+    ctx.drawImage(img, 0, 0)
+    const px = ctx.getImageData(0, 0, img.width, img.height).data
+    let n = 0
+    for (let k = 0; k < px.length; k += 4) if (px[k + 1] > 90 && px[k + 1] > px[k] * 1.6 && px[k + 1] > px[k + 2] * 1.3) n++
+    return n
+  }, shot)
+}
+if (reconGreen < 15) fail(`the desk's reconstruction has no card for the photo pinned to A (${reconGreen} green px)`)
+await deskPage.close()
+ok(`desk: the reconstruction stands the card by A too (${reconGreen} green px)`)
+
 // ── the replay, recorded at send time ─────────────────────────────────
-// A video data URL of a real size, and — the part that matters — a real frame inside it: the
-// same distinct-colour count the PNGs get, on a frame seeked out of the middle of the video.
-// A recorder that captured a canvas before three.js had drawn anything makes a perfectly
-// valid file of a black rectangle, and only reading the pixels back catches that.
+// Judged on what it shows, not on its size, which follows the machine's load: decoded in the
+// page, it has to last, have a real picture in its middle frame, and move between its first
+// and last quarters (scripts/video-check.mjs has the thresholds and why).
 const replay = doc.attachments.replay
 if (!/^data:video\/(webm|mp4)(;[^,]*)?;base64,/.test(replay ?? '')) fail(`no replay was attached: ${String(replay).slice(0, 40)}`)
-const replayKb = Math.round(replay.length / 1024)
-if (replayKb < 50) fail(`the replay is suspiciously small (${replayKb} kB)`)
-const frame = await page.evaluate(async (src) => {
-  const v = document.createElement('video')
-  v.muted = true
-  v.src = src
-  await new Promise((ok, no) => {
-    v.onloadeddata = ok
-    v.onerror = () => no(new Error('the replay does not decode'))
-  })
-  // a MediaRecorder webm often reports an infinite duration until it has been read to the end
-  if (!Number.isFinite(v.duration)) {
-    v.currentTime = 1e9
-    await new Promise((ok) => (v.ontimeupdate = ok))
-  }
-  const middle = v.duration / 2
-  v.currentTime = middle
-  await new Promise((ok) => (v.onseeked = ok))
-  const c = document.createElement('canvas')
-  c.width = v.videoWidth
-  c.height = v.videoHeight
-  const ctx = c.getContext('2d')
-  ctx.drawImage(v, 0, 0)
-  const px = ctx.getImageData(0, 0, c.width, c.height).data
-  const seen = new Set()
-  for (let i = 0; i < px.length; i += 4 * 499) seen.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2])
-  return { colours: seen.size, width: c.width, height: c.height, seconds: Math.round(v.duration * 10) / 10 }
-}, replay)
-if (frame.colours < 40) fail(`the middle of the replay is a blank frame (${frame.colours} colours)`)
-ok(`sent: a ${replayKb} kB replay, ${frame.seconds} s at ${frame.width}×${frame.height}, and its middle frame is a real picture (${frame.colours} colours)`)
+const replayBytes = Math.round((replay.length - replay.indexOf(',') - 1) * 0.75)
+const replayVideo = await readVideo(page, replay)
+const replayWrong = videoProblem(replayVideo, replayBytes)
+if (replayWrong) fail(`the replay is not a real recording: ${replayWrong}`)
+ok(`sent: a replay of ${describeVideo(replayVideo, replayBytes)}`)
 
 // ── a refresh lands on the confirmation, not the first step ────────────
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForSelector(`text=${N.reportIn}`, { timeout: 10000 })
 await noEnglish('the confirmation')
 ok('refresh keeps the confirmation')
+
+// ── the moment, lit as it was ─────────────────────────────────────────
+// A draft seeded straight onto the diagram — the same place, the same two cars, the same
+// tiles — under three lights: rain after dark, a clear evening with the sun on the horizon,
+// and "Plain view". The tiles never change, so every difference on the ground is the layer's
+// own: the wet road has to read darker than the plain one, the ground ahead of a car's nose
+// brighter than behind its tail (its headlights), a low sun has to lay a shadow between the
+// cars and nowhere else, and the canvas the export captures has to be a picture. Then the
+// chip turns all of it off, and is kept with the draft.
+const LIT_LNG = -73.9859
+const LIT_LAT = 40.7573
+const litM = 1 / (111320 * Math.cos((LIT_LAT * Math.PI) / 180))
+const litRoad = (lit) => ({ name: 'W 44th St', class: 'residential', lanes: 2, oneway: true, maxspeed: '25 mph', lit, junction: 'none', controls: [] })
+const NIGHT_RAIN = { weather: { code: 61, label: 'Light rain', tempC: 14, precipMm: 1.2, windKph: 12 }, sun: { altitude: -20, azimuth: 300 }, road: litRoad(null) }
+/** the same night on a road the record says is lit: the warm pool under the incident */
+const NIGHT_LIT = { ...NIGHT_RAIN, road: litRoad(true) }
+const LOW_SUN = { weather: { code: 0, label: 'Clear sky', tempC: 22, precipMm: 0, windKph: 6 }, sun: { altitude: 6, azimuth: 270 }, road: litRoad(null) }
+const litSeed = (context, plainView) => ({
+  // a version behind: the store's migrate fills in every section this seed leaves out
+  version: 7,
+  state: {
+    step: 'scene',
+    impactManual: false,
+    autoDamage: {},
+    autoConditions: {},
+    policy: [],
+    delivery: null,
+    lang,
+    invite: null,
+    plainView,
+    claim: {
+      incident: {
+        kind: 'collision',
+        at: '2026-09-08T21:00',
+        utcOffset: -240,
+        shared: null,
+        location: { lng: LIT_LNG, lat: LIT_LAT, address: 'Times Square, New York' },
+        surface: 'satellite',
+        conditions: { weather: '', road: '', light: '' },
+        description: '',
+        language: lang,
+        context: { ...context, source: 'open-meteo+osm', fetchedAt: '2026-09-08T12:00:00.000Z' },
+      },
+      // A six metres west of the impact facing east, B six metres east facing west: clear road between them
+      vehicles: [
+        { id: 'a', role: 'insured', body: 'sedan', color: '#c0392b', position: [LIT_LNG - 6 * litM, LIT_LAT], heading: 90, path: [[LIT_LNG - 30 * litM, LIT_LAT - 4 / 111320]], damages: [] },
+        { id: 'b', role: 'other', body: 'suv', color: '#2563eb', position: [LIT_LNG + 6 * litM, LIT_LAT], heading: 270, path: [], damages: [] },
+      ],
+      impact: [LIT_LNG, LIT_LAT],
+    },
+  },
+})
+/** mean luminance of the map canvas around a few points on the ground, in metres east of the impact along its latitude, or south of it */
+const litSample = (p) =>
+  p.evaluate(([lng, lat, m]) => {
+    const map = window.__map
+    const src = map.getCanvas()
+    const dpr = src.width / src.clientWidth
+    const off = document.createElement('canvas')
+    off.width = src.width
+    off.height = src.height
+    const ctx = off.getContext('2d')
+    ctx.drawImage(src, 0, 0)
+    const lum = (east, south) => {
+      const q = map.project([lng + east * m, lat - south / 111320])
+      const size = 12 * dpr
+      const px = ctx.getImageData(q.x * dpr - size / 2, q.y * dpr - size / 2, size, size).data
+      let s = 0
+      for (let i = 0; i < px.length; i += 4) s += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]
+      return s / (px.length / 4)
+    }
+    const all = ctx.getImageData(0, 0, src.width, src.height).data
+    const seen = new Set()
+    for (let i = 0; i < all.length; i += 4 * 499) seen.add((all[i] << 16) | (all[i + 1] << 8) | all[i + 2])
+    // open road ten metres south; ahead of A's nose and behind its tail; the ground between the two
+    // cars; six metres south of the incident, inside the street light's pool and outside every headlight
+    return { road: lum(0, 10), ahead: lum(-1.5, 0), behind: lum(-10.5, 0), between: lum(1, 0), pool: lum(0, 6), colours: seen.size }
+  }, [LIT_LNG, LIT_LAT, litM])
+/** the ground under car A with its body hidden for a moment: the faked shadow, or bare tiles */
+const litUnder = (p) =>
+  p.evaluate(async ([lng, lat, m]) => {
+    const map = window.__map
+    const car = map.getLayer('cars').implementation.cars.get('a')
+    car.root.children[0].visible = false
+    map.triggerRepaint()
+    await new Promise((r) => setTimeout(r, 500))
+    const src = map.getCanvas()
+    const dpr = src.width / src.clientWidth
+    const off = document.createElement('canvas')
+    off.width = src.width
+    off.height = src.height
+    const ctx = off.getContext('2d')
+    ctx.drawImage(src, 0, 0)
+    const q = map.project([lng - 6 * m, lat])
+    const size = 12 * dpr
+    const px = ctx.getImageData(q.x * dpr - size / 2, q.y * dpr - size / 2, size, size).data
+    let sum = 0
+    for (let i = 0; i < px.length; i += 4) sum += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]
+    car.root.children[0].visible = true
+    map.triggerRepaint()
+    return sum / (px.length / 4)
+  }, [LIT_LNG, LIT_LAT, litM])
+const litPage = async (context, plainView = false) => {
+  const p = await browser.newPage({ viewport: { width: 1280, height: 1000 } })
+  p.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  p.on('pageerror', (e) => errors.push(String(e)))
+  if (lang === 'es') await p.addInitScript(() => void (window.CLAIM_MARKER = { lang: 'es' }))
+  // seeded once: an init script runs on every navigation, and the reload below must find what the page saved
+  await p.addInitScript((seed) => void (localStorage.getItem('claim-marker/draft') || localStorage.setItem('claim-marker/draft', JSON.stringify(seed))), litSeed(context, plainView))
+  await p.goto(`${origin}/`, { waitUntil: 'networkidle' })
+  await p.waitForSelector('.mk-car', { timeout: 20000 })
+  // the tiles and the shaders both take their time; wait for a real frame, then a little longer for the tiles
+  for (let i = 0; i < 60 && (await litSample(p)).colours < 50; i++) await p.waitForTimeout(300)
+  await p.waitForTimeout(3000)
+  return p
+}
+const nightPage = await litPage(NIGHT_RAIN)
+const night = await litSample(nightPage)
+const litPageAtNight = await litPage(NIGHT_LIT)
+const nightLit = await litSample(litPageAtNight)
+await litPageAtNight.close()
+const duskPage = await litPage(LOW_SUN)
+const dusk = await litSample(duskPage)
+// with the sun up the faked shadow is off and, with A's body hidden, nothing casts: bare tiles under A
+const bare = await litUnder(duskPage)
+await duskPage.close()
+const plainPage = await litPage(LOW_SUN, true)
+const plain = await litSample(plainPage)
+// no sun in plain view: the faked shadow under A — a ghost's is the same disc under the same matrix
+const under = await litUnder(plainPage)
+await plainPage.close()
+if (night.colours < 50) fail(`the map after dark is a blank canvas (${night.colours} colours) — the export would capture nothing`)
+if (night.road >= plain.road * 0.75) fail(`the wet road after dark is not darker than the plain one (${night.road.toFixed(0)} vs ${plain.road.toFixed(0)})`)
+if (night.ahead <= night.behind * 1.3) fail(`no headlights: the road ahead of A's nose is ${night.ahead.toFixed(0)}, behind its tail ${night.behind.toFixed(0)}`)
+if (dusk.between >= plain.between * 0.85) fail(`a sun on the horizon lays no shadow between the cars (${dusk.between.toFixed(0)} vs ${plain.between.toFixed(0)} plain)`)
+if (Math.abs(dusk.road - plain.road) > plain.road * 0.12) fail(`the low sun changed the open road, not just the shadow (${dusk.road.toFixed(0)} vs ${plain.road.toFixed(0)} plain)`)
+if (nightLit.pool < night.pool + 20) fail(`no pool under the street light: the ground six metres from the incident reads ${nightLit.pool.toFixed(0)} lit against ${night.pool.toFixed(0)} unlit`)
+if (under >= bare * 0.8) fail(`the faked shadow is not drawn under a car in plain view (${under.toFixed(0)} under A against ${bare.toFixed(0)} bare tiles)`)
+ok(`lit: after dark in the rain the road reads ${night.road.toFixed(0)} against ${plain.road.toFixed(0)} plain, ${night.ahead.toFixed(0)} ahead of A's headlights against ${night.behind.toFixed(0)} behind it, ${nightLit.pool.toFixed(0)} under a street light against ${night.pool.toFixed(0)} without; a sun on the horizon shadows the ground between the cars (${dusk.between.toFixed(0)} vs ${plain.between.toFixed(0)}) and leaves the open road alone (${dusk.road.toFixed(0)}); the faked shadow reads ${under.toFixed(0)} under A against ${bare.toFixed(0)} bare`)
+
+// "Plain view" turns it all off, on this page and on a reload
+await nightPage.getByRole('button', { name: N.plain }).click()
+await nightPage.waitForTimeout(1500)
+const plained = await litSample(nightPage)
+if (plained.road < plain.road * 0.85) fail(`"Plain view" left the road dark (${plained.road.toFixed(0)} vs ${plain.road.toFixed(0)} plain)`)
+if (!(await nightPage.evaluate(() => JSON.parse(localStorage.getItem('claim-marker/draft')).state.plainView))) fail('"Plain view" was not kept with the draft')
+await nightPage.reload({ waitUntil: 'networkidle' })
+await nightPage.waitForSelector('.mk-car', { timeout: 20000 })
+if ((await nightPage.getByRole('button', { name: N.plain }).getAttribute('aria-pressed')) !== 'true') fail('"Plain view" did not survive a reload')
+await nightPage.close()
+ok(`lit: "Plain view" brought the road back to ${plained.road.toFixed(0)}, and stayed on after a reload`)
 
 // ── nothing depends on the lookups ────────────────────────────────────
 // With all three hosts refused, the Where step must be exactly what it was before any of this

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useClaim, othersOf } from '../../claim/store'
 import { assistOn, buildDiagram, writeStatement } from '../../assist/client'
 import { config } from '../../config'
@@ -10,10 +10,12 @@ import type { Key } from '../../i18n'
 import { useLang, useT } from '../../i18n/useT'
 import { MapScene, type MapSceneHandle, type TapMode } from '../../map/MapScene'
 import { usePlayback } from '../../map/usePlayback'
+import { lightingFor } from '../../scene/lighting'
 import { alignToRoad } from '../../scene/road'
 import { zoneById } from '../../zones'
 import { Describe } from '../Describe'
 import { Icon } from '../icons'
+import { PlainViewChip } from '../PlainView'
 
 type Tap = { kind: 'waypoint'; id: string } | { kind: 'impact' } | null
 /** a suggestion offered after a drop: turn this vehicle to this bearing to line it up with the road */
@@ -32,6 +34,11 @@ export function Diagram() {
   const claim = useClaim((s) => s.claim)
   const autoDamage = useClaim((s) => s.autoDamage)
   const roadWays = useClaim((s) => s.roadWays)
+  const buildings = useClaim((s) => s.buildings)
+  const plainView = useClaim((s) => s.plainView)
+  // the moment's light, from what the record said; memoised so the layer is not re-lit on every drag frame
+  const context = claim.incident.context
+  const lighting = useMemo(() => (plainView ? null : lightingFor(context)), [plainView, context])
   // only the policyholder invites, only when there is somebody to invite, and only when there
   // is a server to make the link: the other driver's own page must never offer this
   const canInvite = !!config.submitUrl && claim.reporter.party === 'policyholder' && othersOf(claim).length > 0
@@ -97,6 +104,14 @@ export function Diagram() {
   }
 
   useEffect(() => placeVehicles(), [placeVehicles])
+
+  /**
+   * DEV only, like `window.__map`: the replay's own clock, so `scripts/smoke.mjs` can hold the
+   * shockwave on a chosen frame instead of racing the 600 ms it lives for on a loaded machine.
+   */
+  useEffect(() => {
+    if (import.meta.env.DEV) Object.assign(window, { __play: play })
+  }, [play])
 
   /**
    * "Just tell us what happened" may already have described a scene: draw it once,
@@ -166,12 +181,16 @@ export function Diagram() {
           style={claim.incident.surface}
           vehicles={claim.vehicles}
           roads={roadWays}
+          buildings={buildings}
+          lighting={lighting}
           impact={claim.impact}
           selected={selected}
           lang={lang}
           interactive
           tapMode={tapMode}
           poses={play.poses}
+          mode={play.mode}
+          clock={play.clock}
           onSelect={select}
           onGrab={(id) => {
             setTouched(true)
@@ -203,12 +222,18 @@ export function Diagram() {
             <span />
           )}
           <div className="pointer-events-auto mr-12 flex gap-1.5">
-            <button className="chip" onClick={play.playing ? play.stop : play.start} disabled={!play.canPlay} aria-pressed={play.playing}>
+            <button className="chip" onClick={play.playing ? play.stop : () => play.start()} disabled={!play.canPlay} aria-pressed={play.playing}>
               {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
             </button>
+            {!play.playing && (
+              <button className="chip" onClick={() => play.start('cinematic')} disabled={!play.canPlay}>
+                <Icon.film /> {t('scene.play.watch')}
+              </button>
+            )}
             <button className="chip" onClick={() => map.current?.recentre()}>
               <Icon.target /> {t('scene.recentre')}
             </button>
+            <PlainViewChip lang={lang} />
           </div>
         </div>
 

@@ -6,6 +6,8 @@ import { activeZone, type MarkerStore } from './store'
 import { nearestZone, type V3, type Vehicle, type Zone } from '../zones'
 import { bodyBounds, instanceBody, loadBody } from '../vehicles/load'
 import { PROPORTION, radiusToWorld, toModel, toWorld } from '../vehicles/bodies'
+import { applyDamage, applyView, createDamageUniforms, patchInstance } from './damageShader'
+import { damageUniforms } from './damageUniforms'
 
 const TINT = new THREE.Color('#3b82f6')
 
@@ -65,9 +67,13 @@ function applyZone(u: Uniforms, vehicle: Vehicle, zone: Zone | null) {
 const VIEW_DISTANCE = 1.75
 const VIEW_DIRECTION = new THREE.Vector3(0.59, 0.4, 0.7).normalize()
 
-export function Car({ store, paint, modelUrl }: { store: MarkerStore; paint: string; modelUrl?: string }) {
+/** `pickable` off is a document's copy: the body takes no tap and tints nothing under the pointer */
+export function Car({ store, paint, modelUrl, pickable = true }: { store: MarkerStore; paint: string; modelUrl?: string; pickable?: boolean }) {
   const vehicle = useStore(store, (s) => s.vehicle)
   const zone = useStore(store, activeZone)
+  const damages = useStore(store, (s) => s.damages)
+  const strength = useStore(store, (s) => s.strength)
+  const heatmap = useStore(store, (s) => s.heatmap)
   const template = use(loadBody(vehicle, modelUrl))
   const get = useThree((s) => s.get)
 
@@ -77,26 +83,23 @@ export function Car({ store, paint, modelUrl }: { store: MarkerStore; paint: str
     uRadius: { value: 0 },
     uTint: { value: TINT },
   }))
+  // the marks, as the shader takes them; one set for every material of this body
+  const [damageU] = useState(() => createDamageUniforms(PROPORTION[vehicle]))
 
-  // own materials per instance: the zone tint is a uniform on the material, and two markers
-  // on one page must not share it
+  // own materials per instance: the zone tint and the damage are uniforms on the material,
+  // and two markers on one page must not share them
   const model = useMemo(() => {
     const root = instanceBody(template, paint)
-    root.traverse((o) => {
-      const mesh = o as THREE.Mesh
-      if (!mesh.isMesh) return
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-      const own = mats.map((m) => {
-        const c = m.clone()
-        patch(c, uniforms)
-        return c
-      })
-      mesh.material = Array.isArray(mesh.material) ? own : own[0]
-    })
+    patchInstance(root, damageU, (c) => patch(c, uniforms))
     return root
-  }, [template, uniforms, paint])
+  }, [template, uniforms, damageU, paint])
 
   useEffect(() => applyZone(uniforms, vehicle, zone), [zone, vehicle, uniforms])
+  useEffect(() => {
+    damageU.uCmScale.value.set(...PROPORTION[vehicle])
+    applyDamage(damageU, damageUniforms(damages, vehicle))
+  }, [damageU, damages, vehicle])
+  useEffect(() => applyView(damageU, strength, heatmap), [damageU, strength, heatmap])
 
   // frame the body: everything is in metres now, so the camera stands back a fixed multiple
   // of the vehicle's own length and a box truck fills the canvas no more than a coupe does
@@ -128,21 +131,31 @@ export function Car({ store, paint, modelUrl }: { store: MarkerStore; paint: str
   const at = (e: ThreeEvent<PointerEvent>): V3 => toModel(vehicle, [e.point.x, e.point.y, e.point.z])
 
   return (
+    // named, so a photo dropped on the canvas can be cast against the body alone
     <primitive
       object={model}
+      name="car"
       scale={PROPORTION[vehicle]}
-      onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-        e.stopPropagation()
-        store.getState().pick(at(e))
-      }}
-      onPointerMove={(e: ThreeEvent<PointerEvent>) => {
-        e.stopPropagation()
-        const s = store.getState()
-        if (s.pending || s.selected !== null) return
-        const next = nearestZone(s.vehicle, at(e))
-        if (next !== s.hovered) s.hover(next)
-      }}
-      onPointerOut={() => store.getState().hover(null)}
+      onPointerDown={
+        pickable
+          ? (e: ThreeEvent<PointerEvent>) => {
+              e.stopPropagation()
+              store.getState().pick(at(e))
+            }
+          : undefined
+      }
+      onPointerMove={
+        pickable
+          ? (e: ThreeEvent<PointerEvent>) => {
+              e.stopPropagation()
+              const s = store.getState()
+              if (s.pending || s.selected !== null) return
+              const next = nearestZone(s.vehicle, at(e))
+              if (next !== s.hovered) s.hover(next)
+            }
+          : undefined
+      }
+      onPointerOut={pickable ? () => store.getState().hover(null) : undefined}
     />
   )
 }

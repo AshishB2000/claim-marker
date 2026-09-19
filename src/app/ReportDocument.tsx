@@ -17,16 +17,22 @@ import {
   yesNo,
   type Voice,
 } from '../claim/describe'
+import type { FeatureCollection } from 'geojson'
 import type { LngLat } from '../geo'
 import { plural, translate, type Key, type Lang, type Vars } from '../i18n'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
 import { DamageMarker, type DamageMarkerHandle } from '../marker/DamageMarker'
+import { Reconstruction } from '../marker/Reconstruction'
+import { cardsOf } from '../marker/cards'
 import { SCHEMA, SEVERITY_COLOR } from '../schema'
 import { PAINTS } from '../vehicles/paint'
 import { Icon } from './icons'
 import { VehiclePhoto } from './VehiclePhoto'
 import { MarkPhotos } from './MarkPhotos'
+import { PhotoLightbox } from './PhotoLightbox'
+import { PlainViewChip } from './PlainView'
 import { usePlayback } from '../map/usePlayback'
+import type { Lighting } from '../scene/lighting'
 
 // ── the pieces the document is written in ────────────────────────────
 
@@ -40,6 +46,24 @@ function Edit({ step, lang, children }: { step: Step; lang: Lang; children?: Rea
 }
 
 /** one section of the document: an eyebrow, a way back to the step it came from, the content */
+/** its children mount once the box is within a screen of the viewport, and then stay */
+function WhenNear({ className, children }: { className: string; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null)
+  const [near, setNear] = useState(false)
+  useEffect(() => {
+    const el = box.current
+    if (!el || near) return
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && setNear(true), { rootMargin: '100% 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [near])
+  return (
+    <div ref={box} className={className} data-near={near}>
+      {near && children}
+    </div>
+  )
+}
+
 function Part({ title, edit, children }: { title: string; edit?: ReactNode; children: ReactNode }) {
   return (
     <section className="border-b border-slate-100 px-6 py-5 last:border-b-0">
@@ -194,6 +218,14 @@ export type ReportDocumentProps = {
   edit?: boolean
   /** the live scenes, for the review page to export at send time */
   mapRef?: RefObject<MapSceneHandle | null>
+  /**
+   * The road and the buildings around the incident, so the review page — and the replay it
+   * records off this very map — shows the customer the ground they drew the diagram on. Props
+   * rather than the store, because the claims desk renders this component too and has neither:
+   * `claim/1` carries the road in words and the buildings not at all.
+   */
+  roads?: FeatureCollection | null
+  buildings?: FeatureCollection | null
   markers?: RefObject<Map<string, DamageMarkerHandle>>
   /** what an adjuster sees instead of the draft badge */
   badge?: ReactNode
@@ -201,6 +233,12 @@ export type ReportDocumentProps = {
   voice?: Voice
   /** which language to read it in; the claims desk renders this too and always stays English */
   lang?: Lang
+  /**
+   * The moment's light for the map and the marked-up cars, from `lightingFor(incident.context)`
+   * — the customer's page passes null while "Plain view" is on, the desk the receipt's own.
+   * Absent is the fixed light both scenes have always had.
+   */
+  lighting?: Lighting | null
 }
 
 /**
@@ -208,11 +246,13 @@ export type ReportDocumentProps = {
  * customer reads it on the review step with a way back into every section; the insurer
  * reads the same component on the claims desk with none.
  */
-export function ReportDocument({ claim, edit = false, mapRef, markers, badge, voice = 'customer', lang = 'en' }: ReportDocumentProps) {
+export function ReportDocument({ claim, edit = false, mapRef, markers, badge, voice = 'customer', lang = 'en', roads = null, buildings = null, lighting = null }: ReportDocumentProps) {
   const t = (key: Key, vars?: Vars) => translate(lang, key, vars)
   const ownMarkers = useRef(new Map<string, DamageMarkerHandle>())
   const marks = markers ?? ownMarkers
   const play = usePlayback(claim.vehicles)
+  // a photo shown large, by its place on the claim — opened by tapping its card on the desk's car
+  const [open, setOpen] = useState<number | null>(null)
 
   const loc = claim.incident.location
   const ctx = claim.incident.context
@@ -500,17 +540,33 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                 center={center}
                 style={claim.incident.surface}
                 vehicles={claim.vehicles}
+                roads={roads}
+                buildings={buildings}
                 impact={claim.impact}
                 selected={null}
                 lang={lang}
+                lighting={lighting}
                 interactive={false}
                 poses={play.poses}
+                mode={play.mode}
+                clock={play.clock}
+                onPlaybackStop={play.stop}
                 className="h-[360px]"
               />
-              {play.canPlay && (
-                <button className="chip absolute top-3 right-3 print:hidden" onClick={play.playing ? play.stop : play.start} aria-pressed={play.playing}>
-                  {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
-                </button>
+              {(play.canPlay || edit) && (
+                <div className="absolute top-3 right-3 flex gap-1.5 print:hidden">
+                  {play.canPlay && (
+                    <button className="chip" onClick={play.playing ? play.stop : () => play.start()} aria-pressed={play.playing}>
+                      {play.playing ? <Icon.stop /> : <Icon.play />} {play.playing ? t('scene.play.stop') : t('scene.play.start')}
+                    </button>
+                  )}
+                  {play.canPlay && !play.playing && (
+                    <button className="chip" onClick={() => play.start('cinematic')}>
+                      <Icon.film /> {t('scene.play.watch')}
+                    </button>
+                  )}
+                  {edit && <PlainViewChip lang={lang} />}
+                </div>
               )}
             </div>
             <figcaption className="flex flex-wrap items-center gap-x-4 gap-y-1 bg-slate-50 px-4 py-2 text-xs text-slate-600">
@@ -532,6 +588,19 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
             </figcaption>
           </figure>
         )}
+        {/* the same moment in 3D, small, for the customer: it plays along with the map above and is never exported — the desk has it as a tab.
+            It leaves out the photo cards the desk's tab stands on the cars: fifteen pixels here, for a slower first render of the page that records the replay */}
+        {edit && center && info.diagram && claim.vehicles.some((v) => v.position) && (
+          <figure className="mt-3 overflow-hidden rounded-xl ring-1 ring-slate-900/10 print:hidden">
+            {/* a phone's swipe over it scrolls the page, and a wheel here scrolls it too. Mounted
+                only as it comes near, so the page's readiness and the send-time recording do not
+                pay for a second WebGL context; its 240 px are held meanwhile, so nothing jumps */}
+            <WhenNear className="h-60 bg-slate-100">
+              <Reconstruction vehicles={claim.vehicles} impact={claim.impact} poses={play.poses} lang={lang} lighting={lighting} zoom={false} className="h-full max-sm:pointer-events-none" />
+            </WhenNear>
+            <figcaption className="bg-slate-50 px-4 py-2 text-xs text-slate-600">{t('scene.doc.reconstruction')}</figcaption>
+          </figure>
+        )}
         {voice !== 'customer' && claim.attachments.replay && <ReplayVideo src={claim.attachments.replay} lang={lang} />}
       </Part>
 
@@ -543,7 +612,8 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
           <div className="space-y-4">
             {damaged.map((v) => (
               <div key={v.id} className="grid gap-4 overflow-hidden rounded-xl ring-1 ring-slate-900/10 sm:grid-cols-[340px_minmax(0,1fr)]">
-                <div className="pointer-events-none h-44 bg-slate-100 sm:h-full">
+                {/* the customer's copy is the evidence exported at send, so it stays as it is framed; the desk's turns, and its photos open */}
+                <div className={`${voice === 'customer' ? 'pointer-events-none ' : ''}h-44 bg-slate-100 sm:h-full`}>
                   <DamageMarker
                     ref={(h) => {
                       if (h) marks.current.set(v.id, h)
@@ -552,7 +622,14 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                     vehicle={v.body}
                     paint={v.color}
                     lang={lang}
+                    lighting={lighting}
+                    // the desk may blend the damage away and back; the review page exports this
+                    // canvas as evidence at send, so it always shows the marks in full
+                    tools={voice !== 'customer'}
                     value={{ schema: SCHEMA, vehicle: v.body, damages: v.damages }}
+                    readOnly
+                    photos={cardsOf(photos, v.id)}
+                    onOpenPhoto={setOpen}
                   />
                 </div>
                 <div className="p-4 pt-3 sm:pl-0">
@@ -638,6 +715,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
           />
         </Part>
       )}
+      {open !== null && photos[open] && <PhotoLightbox photo={photos[open]} lang={lang} onClose={() => setOpen(null)} />}
     </article>
   )
 }

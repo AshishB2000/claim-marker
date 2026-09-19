@@ -16,8 +16,10 @@
  * document sent twice is filed once; an expired or forged token is refused; a flood is rate
  * limited; the built page is served with a CSP and its runtime config; the webhook carries a
  * valid signature; the desk lists, opens and re-files the report; a report older than
- * RETAIN_DAYS is gone by the time the server is up; and who may link what to an incident is
- * decided by the token, never by the document.
+ * RETAIN_DAYS is gone by the time the server is up; who may link what to an incident is
+ * decided by the token, never by the document; and the desk's map draws three reports filed at
+ * three places as three pins in their status colours, folds them into a cluster as it zooms
+ * out, opens one when it is tapped, and narrows the list to what is in view.
  *
  * Then a second, shorter walk through the demo portal the same server serves at /demo: sign in
  * as a sample customer, report an accident in the *built* page it embeds — not the dev page —
@@ -28,6 +30,7 @@ import { chromium } from 'playwright'
 import { readFileSync as readDictionary } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { sign } from '../server/session.mjs'
+import { describeVideo, readVideo, videoProblem } from './video-check.mjs'
 import { createServer } from 'node:http'
 import { createHmac } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -336,10 +339,14 @@ const replayFile = files.find((f) => /^replay\.(webm|mp4)$/.test(f))
 if (!replayFile) fail(`the replay was not unpacked; have ${files.join(', ')}`)
 const replayRes = await fetch(`http://localhost:${API_PORT}/claims/${shown}/files/${replayFile}`, desk)
 if (replayRes.status !== 200 || !/^video\/(webm|mp4)$/.test(replayRes.headers.get('content-type') ?? '')) fail(`the replay is served as ${replayRes.status} ${replayRes.headers.get('content-type')}`)
-if ((await replayRes.arrayBuffer()).byteLength < 20_000) fail('the replay file is suspiciously small')
+// judged on what it shows once decoded, not on its size, which follows the machine's load
+const replayBody = Buffer.from(await replayRes.arrayBuffer())
+const servedReplay = await readVideo(page, `data:${replayRes.headers.get('content-type')};base64,${replayBody.toString('base64')}`)
+const servedWrong = videoProblem(servedReplay, replayBody.length)
+if (servedWrong) fail(`the replay the server unpacked is not a real recording: ${servedWrong}`)
 const png = await fetch(`http://localhost:${API_PORT}/claims/${shown}/files/scene.png`, desk)
 if (png.headers.get('content-type') !== 'image/png' || (await png.arrayBuffer()).byteLength < 10000) fail('the scene PNG is not served as a real image')
-ok(`server: filed as ${shown} with ${files.length} files, the diagram served as image/png`)
+ok(`server: filed as ${shown} with ${files.length} files, the diagram served as image/png, the replay as ${replayFile} (${describeVideo(servedReplay, replayBody.length)})`)
 
 if ((await fetch(`http://localhost:${API_PORT}/claims`)).status !== 401) fail('the desk API answered without a token')
 const anon = await fetch(`http://localhost:${API_PORT}/claims`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
@@ -448,6 +455,11 @@ if (after.status !== 'reviewing') fail(`the desk's status change did not reach t
 ok('desk: lists the report, opens the document, moves it to "in review"')
 
 // ── the other driver gives their side, on their own phone ─────────────
+// How far their cars drove, and therefore when their account reaches the impact: `durationOf`
+// is the longest route over SPEED (6 m/s, src/map/playback.ts) and two cars that drive to rest
+// touching meet at the end of the drive, so this is the moment of impact on the shared clock.
+const OTHER_DRIVE_M = 24
+const OTHER_IMPACT_MS = (OTHER_DRIVE_M / 6) * 1000
 // A second browser, a stranger's: no session, no prefill, nothing but the link.
 const incidentId = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).incident
 if (!/^INC-/.test(incidentId ?? '')) fail(`the customer's report did not name an incident: ${incidentId}`)
@@ -490,23 +502,26 @@ ok('invite: the other driver lands on a seeded report in party mode, and sees no
 // they fill in the little that is needed and send — describing their own car as the shape and
 // colour it really is, which is how the desk pairs it with the customer's account of it
 const theirCar = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles.find((v) => v.role === 'other')
-await other.evaluate(({ car, key }) => {
+await other.evaluate(({ car, key, drive }) => {
   const raw = JSON.parse(localStorage.getItem(key))
   raw.state.step = 'review'
   raw.state.claim.reporter = { ...raw.state.claim.reporter, name: 'Dana Q', phone: '555 0199', email: 'dana@example.com', policy: 'OTHER-1' }
   raw.state.claim.incident = { ...raw.state.claim.incident, description: 'I was already in the junction.' }
-  // they place the cars themselves, and remember it differently: the same spot, facing the
-  // other way — a real disagreement for the comparison to find
+  // They place the cars themselves, and remember it differently: nose to nose on the spot, each
+  // having driven `drive` metres to get there. That length is the constructed part — the drive
+  // is the longest route over SPEED (6 m/s), and two cars that arrive touching meet at the end
+  // of it, so this account's moment of impact is a number the desk can be held to.
   const at = raw.state.claim.incident.location
+  const north = (metres) => at.lat + metres / 111320
   raw.state.claim.vehicles = raw.state.claim.vehicles.map((v, i) => ({
     ...v,
     ...(i === 0 ? { body: car.body, color: car.color } : {}),
-    position: [at.lng + 0.00004 * (i + 1), at.lat + 0.00003 * (i + 1)],
-    heading: i === 0 ? 10 : 190,
-    path: [],
+    position: [at.lng, north(i === 0 ? 2 : -2)],
+    path: [[at.lng, north(i === 0 ? 2 + drive : -2 - drive)]],
+    heading: i === 0 ? 180 : 0,
   }))
   localStorage.setItem(key, JSON.stringify(raw))
-}, { car: theirCar, key: partyKey })
+}, { car: theirCar, key: partyKey, drive: OTHER_DRIVE_M })
 await other.reload({ waitUntil: 'networkidle' })
 await other.getByRole('checkbox', { name: enT('scene.send.agreeAria') }).check()
 await other.getByRole('textbox', { name: enT('scene.send.signAria') }).fill('Dana Q')
@@ -549,8 +564,224 @@ for (const word of ['fraud', 'fault', 'liability', 'blame', 'suspicious']) {
   if (new RegExp(word, 'i').test(compared)) fail(`the comparison says "${word}"`)
 }
 ok('desk: two accounts under one incident, laid side by side, saying nothing about who is right')
+
+// one clock for both: the two impacts are two ticks on one scrubber, and the headline says how
+// far apart they are. The other driver's is where it was constructed; the policyholder's is
+// whatever their page drew, so the headline is held to the difference between the two.
+const shared = await deskPage.evaluate(() => {
+  const p = window.__play
+  return p?.ghostTimeline ? { mine: p.timeline.impactMs, theirs: p.ghostTimeline.impactMs, duration: p.duration } : null
+})
+if (!shared) fail('the compare view did not expose its shared clock on window.__play')
+if (Math.abs(shared.theirs - OTHER_IMPACT_MS) > 50) fail(`the other driver's impact is at ${shared.theirs.toFixed(0)} ms on the shared clock, not the constructed ${OTHER_IMPACT_MS}`)
+const tickAt = (await deskPage.locator('[data-impact-tick]').evaluateAll((els) => els.map((e) => Number(e.dataset.impactTick)))).sort((a, b) => a - b)
+const expectTicks = [shared.mine, shared.theirs].map(Math.round).sort((a, b) => a - b)
+if (tickAt.length !== 2 || tickAt.some((t, i) => Math.abs(t - expectTicks[i]) > 1)) fail(`the scrubber's impact ticks are ${JSON.stringify(tickAt)}, not ${JSON.stringify(expectTicks)}`)
+const apartS = (Math.abs(shared.mine - shared.theirs) / 1000).toFixed(1)
+const headline = await deskPage.locator('[data-compare] table caption').innerText()
+if (!new RegExp(`^The two accounts' impacts are \\d+ m and ${apartS.replace('.', '\\.')} s apart\\.$`).test(headline)) fail(`the headline does not give the gap as ${apartS} s: "${headline}"`)
+if (Number(apartS) < 1) fail(`the constructed disagreement is only ${apartS} s: the ticks would sit on top of each other`)
+ok(`desk: one scrubber, two impact ticks ${expectTicks.join(' ms and ')} ms — the other driver's where it was built (${OTHER_IMPACT_MS} ms) — and the headline "${headline}"`)
+
+// both sets move on that clock: two moments of the scrub, each account's cars somewhere else
+const scrubbed = await deskPage.evaluate(async () => {
+  const snap = async (ms) => {
+    window.__play.seek(ms)
+    await new Promise((r) => setTimeout(r, 300))
+    const p = window.__play
+    return { mine: p.poses?.map((x) => x.position) ?? [], theirs: p.ghostPoses?.map((x) => x.position) ?? [] }
+  }
+  const a = await snap(300)
+  const b = await snap(2000)
+  // metres, near enough: a degree of longitude at this latitude is about 84 km
+  const far = (u, v) => Math.max(0, ...u.map((p, i) => Math.hypot((p[0] - v[i][0]) * 84_000, (p[1] - v[i][1]) * 111_320)))
+  window.__play.stop()
+  return { sets: [a.mine.length, a.theirs.length], mine: far(a.mine, b.mine), theirs: far(a.theirs, b.theirs) }
+})
+if (scrubbed.sets[0] < 2 || scrubbed.sets[1] < 2) fail(`the scrub does not hold both accounts' cars: ${JSON.stringify(scrubbed.sets)}`)
+if (scrubbed.mine < 1 || scrubbed.theirs < 1) fail(`scrubbing moved the policyholder's cars ${scrubbed.mine.toFixed(1)} m and the other driver's ${scrubbed.theirs.toFixed(1)} m`)
+ok(`desk: scrubbing 0.3 s → 2 s moves both sets — the policyholder's cars ${scrubbed.mine.toFixed(1)} m, the other driver's ghosts ${scrubbed.theirs.toFixed(1)} m`)
+
+// "Watch both" chases the policyholder's car; "Swap" chases the other driver's. The chase looks
+// the way the car it follows set off, and the two were built to set off opposite ways, so the
+// camera's bearing says which car it is behind — no need to guess from where it is. And the
+// moment goes with the car: the slow-motion is at the followed account's own tick and not at
+// the other's, 1.7 s away — asked of the hook (the rate it plays that moment at) and of the map
+// (the light trails it lights for slow motion), because both cut a shot list and must agree.
+await deskPage.getByRole('button', { name: 'Watch both' }).click()
+await deskPage.locator('[data-compare] .maplibregl-map.mk-playing').waitFor({ timeout: 5000 }).catch(() => fail('"Watch both" did not start'))
+const chased = () =>
+  deskPage.evaluate(async () => {
+    // the compare view's own map: the two documents under it have one each, and `window.__map`
+    // is whichever of the three was made last
+    const map = document.querySelector('[data-compare] .maplibregl-map').__map
+    const at = async (ms) => {
+      window.__play.seek(ms)
+      // the seek is a render away: on a loaded page 400 ms can still read the frame before it,
+      // so wait (bounded) until the clock the page hands out is the moment asked for
+      for (let i = 0; i < 50 && Math.abs(window.__play.clock - ms) > 1; i++) await new Promise((r) => setTimeout(r, 100))
+      await new Promise((r) => setTimeout(r, 400))
+      return { rate: window.__play.rate, trail: map.getPaintProperty('paths-flow', 'line-width'), pitch: map.getPitch(), bearing: map.getBearing() }
+    }
+    const p = window.__play
+    const atMine = await at(p.timeline.impactMs)
+    // the later of the two impacts, last: the chase has to last until both drives are over, not
+    // hand the camera back while the other account's cars are still on their way
+    const atTheirs = await at(p.ghostTimeline.impactMs)
+    return { ...atTheirs, atMine, atTheirs, follow: document.querySelector('[data-compare]').dataset.follow }
+  })
+const angle = (b) => Math.abs(((((b % 360) + 540) % 360) - 180))
+const mineChase = await chased()
+await deskPage.getByRole('button', { name: 'Swap' }).click()
+await deskPage.waitForTimeout(300)
+const theirChase = await chased()
+if (mineChase.pitch < 40 || theirChase.pitch < 40) fail(`the chase did not tilt (${mineChase.pitch.toFixed(0)}°, then ${theirChase.pitch.toFixed(0)}°)`)
+if (angle(mineChase.bearing - 0) > 5) fail(`"Watch both" is not behind the policyholder's car, which set off north: bearing ${mineChase.bearing.toFixed(0)}°`)
+if (angle(theirChase.bearing - 180) > 5) fail(`"Swap" is not behind the other driver's car, which set off south: bearing ${theirChase.bearing.toFixed(0)}°`)
+if (mineChase.follow !== '' || !theirChase.follow.startsWith('other:')) fail(`the followed car did not change: ${mineChase.follow || '(default)'} → ${theirChase.follow}`)
+const slowAt = (c) => (c.atMine.rate < 1 && c.atMine.trail > 3 ? 'mine' : '') + (c.atTheirs.rate < 1 && c.atTheirs.trail > 3 ? 'theirs' : '')
+const momentSaid = (c) => `rate ${c.atMine.rate} / trail ${c.atMine.trail} px at the policyholder's tick, rate ${c.atTheirs.rate} / trail ${c.atTheirs.trail} px at the other driver's`
+if (slowAt(mineChase) !== 'mine') fail(`"Watch both" does not slow into the policyholder's impact alone: ${momentSaid(mineChase)}`)
+if (slowAt(theirChase) !== 'theirs') fail(`after "Swap" the slow-motion did not move to the other driver's impact: ${momentSaid(theirChase)}`)
+await deskPage.getByRole('button', { name: 'Stop' }).click()
+await deskPage.waitForTimeout(500)
+const deskHome = await deskPage.evaluate(() => {
+  const map = document.querySelector('[data-compare] .maplibregl-map').__map
+  return { pitch: map.getPitch(), bearing: map.getBearing() }
+})
+if (deskHome.pitch !== 0 || deskHome.bearing !== 0) fail(`the desk's map came back tilted (pitch ${deskHome.pitch}, bearing ${deskHome.bearing})`)
+ok(
+  `desk: "Watch both" chases the policyholder's car (bearing ${mineChase.bearing.toFixed(0)}°) and slows into its impact (${momentSaid(mineChase)}); "Swap" chases the other driver's (${theirChase.bearing.toFixed(0)}°) and the slow-motion moves with it (${momentSaid(theirChase)}); Stop hands the map back flat`,
+)
+
+// "Save video" runs the same recorder over both accounts and hands the file over; nothing is uploaded
+const uploads = []
+const watchUploads = (req) => req.method() !== 'GET' && uploads.push(req.url())
+deskPage.on('request', watchUploads)
+const [download] = await Promise.all([deskPage.waitForEvent('download', { timeout: 30000 }), deskPage.getByRole('button', { name: 'Save video' }).click()]).catch(() => [null])
+deskPage.off('request', watchUploads)
+if (!download) fail('"Save video" did not hand over a file')
+const savedName = download.suggestedFilename()
+if (!/-both-accounts\.(webm|mp4)$/.test(savedName)) fail(`the saved video is called ${savedName}`)
+if (uploads.length) fail(`saving the video sent something: ${uploads.join(', ')}`)
+const savedBody = await readFile(await download.path())
+const savedVideo = await readVideo(deskPage, `data:video/${savedName.endsWith('.mp4') ? 'mp4' : 'webm'};base64,${savedBody.toString('base64')}`)
+const savedWrong = videoProblem(savedVideo, savedBody.length)
+if (savedWrong) fail(`the saved video of both accounts is not a real recording: ${savedWrong}`)
+ok(`desk: "Save video" recorded both accounts to ${savedName} (${describeVideo(savedVideo, savedBody.length)}) and uploaded nothing`)
 if (otherErrors.length) fail(`the other driver's page threw: ${otherErrors.join('\n')}`)
 await otherCtx.close()
+
+// ── the reconstruction: the policyholder's diagram in 3D, the desk's third tab ──
+// Its canvas keeps no drawing buffer (it is never exported), so it is read the way the adjuster
+// sees it — a screenshot — and each car is found where the scene's DEV probe says it stands.
+const RECON = '[data-reconstruction] canvas'
+const reconShot = async () => (await deskPage.screenshot({ clip: await deskPage.locator(RECON).boundingBox() })).toString('base64')
+/** where each car stands on the canvas, in CSS pixels */
+const reconAt = (ids) =>
+  deskPage.evaluate(([sel, ids]) => {
+    const c = document.querySelector(sel)
+    const k = c.clientWidth / c.width
+    const at = ids.map((id) => [id, c.__probe.project(id)?.map((n) => n * k)])
+    // null until every body has loaded into the scene
+    return at.every(([, p]) => p) ? Object.fromEntries(at) : null
+  }, [RECON, ids])
+/** in a screenshot: red paint within 60 px of `red`, dark paint within 60 px of `dark`, and how many pixels differ from `than` */
+const reconRead = (png, { red, dark, than = null }) =>
+  deskPage.evaluate(
+    async ([png, red, dark, than]) => {
+      const load = async (b64) => {
+        const img = new Image()
+        img.src = `data:image/png;base64,${b64}`
+        await img.decode()
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        c.getContext('2d').drawImage(img, 0, 0)
+        return { w: img.width, h: img.height, px: c.getContext('2d').getImageData(0, 0, img.width, img.height).data }
+      }
+      const { w, h, px } = await load(png)
+      const near = ([x, y], test) => {
+        let n = 0
+        for (let j = Math.max(0, Math.round(y - 60)); j < Math.min(h, y + 60); j++)
+          for (let i = Math.max(0, Math.round(x - 60)); i < Math.min(w, x + 60); i++) {
+            const k = (j * w + i) * 4
+            if (test(px[k], px[k + 1], px[k + 2])) n++
+          }
+        return n
+      }
+      let differ = 0
+      if (than) {
+        const b = (await load(than)).px
+        for (let k = 0; k < px.length; k += 4) if (Math.abs(px[k] - b[k]) > 20 || Math.abs(px[k + 1] - b[k + 1]) > 20 || Math.abs(px[k + 2] - b[k + 2]) > 20) differ++
+      }
+      return {
+        red: near(red, (r, g, b) => r > 60 && r > g * 1.6 && r > b * 1.6),
+        dark: near(dark, (r, g, b) => Math.max(r, g, b) < 70),
+        differ,
+      }
+    },
+    [png, red, dark, than],
+  )
+const policyCars = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles
+const redCar = policyCars.find((v) => v.color === '#b91c1c')
+const darkCar = policyCars.find((v) => v.color === '#1c1f26')
+if (!redCar?.position || !darkCar?.position) fail(`the policyholder's report should have a red car and a black one on the diagram: ${JSON.stringify(policyCars.map((v) => [v.id, v.color, !!v.position]))}`)
+await deskPage.getByRole('tab', { name: 'Reconstruction' }).click()
+await deskPage.waitForSelector(RECON, { timeout: 20000 }).catch(() => fail('the reconstruction tab has no canvas'))
+await deskPage.locator(RECON).scrollIntoViewIfNeeded()
+// the bodies load and their programs link before anything is drawn: poll for both paints
+let reconAtRest = null
+let restShot = null
+let paints = { red: 0, dark: 0 }
+for (let i = 0; i < 60 && (paints.red < 300 || paints.dark < 300); i++) {
+  await deskPage.waitForTimeout(500)
+  reconAtRest = await reconAt([redCar.id, darkCar.id])
+  if (!reconAtRest) continue
+  restShot = await reconShot()
+  paints = await reconRead(restShot, { red: reconAtRest[redCar.id], dark: reconAtRest[darkCar.id] })
+}
+if (!reconAtRest || paints.red < 300 || paints.dark < 300) fail(`the reconstruction does not show both bodies in their paints: ${paints.red} red px round ${redCar.id}, ${paints.dark} dark px round ${darkCar.id}`)
+// nothing moves on its own — no turntable — so whatever changes next is the drag's doing
+await deskPage.waitForTimeout(800)
+const still = (await reconRead(await reconShot(), { red: reconAtRest[redCar.id], dark: reconAtRest[darkCar.id], than: restShot })).differ
+const canvasBox = await deskPage.locator(RECON).boundingBox()
+await deskPage.mouse.move(canvasBox.x + canvasBox.width * 0.3, canvasBox.y + canvasBox.height * 0.5)
+await deskPage.mouse.down()
+await deskPage.mouse.move(canvasBox.x + canvasBox.width * 0.6, canvasBox.y + canvasBox.height * 0.4, { steps: 16 })
+await deskPage.mouse.up()
+await deskPage.waitForTimeout(2000)
+const orbited = await reconAt([redCar.id, darkCar.id])
+const turned = (await reconRead(await reconShot(), { red: orbited[redCar.id], dark: orbited[darkCar.id], than: restShot })).differ
+const slid = Math.hypot(orbited[redCar.id][0] - reconAtRest[redCar.id][0], orbited[redCar.id][1] - reconAtRest[redCar.id][1])
+if (turned < still + 5000 || slid < 20) fail(`dragging did not orbit the reconstruction: ${turned} px changed against ${still} standing still, ${redCar.id} moved ${slid.toFixed(0)} px`)
+const reconDoc = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles
+if (JSON.stringify(reconDoc) !== JSON.stringify(policyCars)) fail('orbiting the reconstruction changed the stored vehicles')
+ok(`desk: the reconstruction tab stands both bodies in their paints (${paints.red} red px, ${paints.dark} dark px round each), and a drag orbits it (${turned} px changed, ${still} standing still; the red car moved ${slid.toFixed(0)} px on screen, the document did not)`)
+
+// play drives them in on the same clock as the map, and they come back to rest; a scrub holds a moment.
+// Measured in the scene's metres, not on screen, where a car driving at the camera barely moves
+const reconWhere = () =>
+  deskPage.evaluate(([sel, ids]) => Object.fromEntries(ids.map((id) => [id, document.querySelector(sel).__probe.where(id)])), [RECON, [redCar.id, darkCar.id]])
+const restNow = await reconWhere()
+const away = (at) => Math.min(...[redCar.id, darkCar.id].map((id) => Math.hypot(at[id][0] - restNow[id][0], at[id][2] - restNow[id][2])))
+const view = deskPage.locator('[data-reconstruction-view]')
+await view.getByRole('button', { name: 'Play' }).click()
+let drove = 0
+for (let i = 0; i < 300 && (await view.getByRole('button', { name: 'Stop' }).count()); i++) {
+  drove = Math.max(drove, away(await reconWhere()))
+  await deskPage.waitForTimeout(30)
+}
+await view.getByRole('button', { name: 'Play' }).waitFor({ timeout: 15000 }).catch(() => fail('the reconstruction never finished playing'))
+const backAt = away(await reconWhere())
+if (drove < 2) fail(`playing did not move both cars: the lesser moved ${drove.toFixed(2)} m`)
+if (backAt > 0.01) fail(`after playing, the cars did not come back to rest (${backAt.toFixed(2)} m off)`)
+await deskPage.getByRole('slider', { name: 'Moment in the drive' }).fill('0')
+await deskPage.waitForTimeout(500)
+const reconScrubbed = away(await reconWhere())
+if (reconScrubbed < 5) fail(`scrubbing to the start did not take the cars back up their routes (${reconScrubbed.toFixed(1)} m)`)
+if (!(await view.getByRole('button', { name: 'Play' }).count())) fail('a scrubbed, held frame should offer Play, not Stop')
+ok(`desk: "Play" drives both cars in (at least ${drove.toFixed(1)} m each) and back to rest; scrubbing to the start holds them ${reconScrubbed.toFixed(1)} m up their routes`)
 
 // ── the same photograph, the same VIN, seen before ────────────────────
 // Two reports from two different customers carrying the same picture and the same VIN. The
@@ -662,6 +893,206 @@ if (trimmedSeed.location.address.length !== 200 || trimmedSeed.vehicles.length !
 const huge = await invite(crasher, { padding: 'x'.repeat(20_000) }).then((r) => r.status, () => 'reset')
 if (huge === 201) fail('a 20 kB invite was accepted')
 ok(`invite: the address is capped at 200, an unknown body is dropped, a 20 kB body is refused (${huge})`)
+
+// ── the desk's map of everything ──────────────────────────────────────
+// Three reports at three places, in the three statuses. The desk draws a pin apiece in its own
+// colour, folds them into a cluster as it zooms out, opens one when it is tapped, and narrows
+// the list to the part of the world on screen.
+
+const mapIp = { 'x-forwarded-for': '198.51.100.44' }
+const mapSession = async (id) => (await (await mint({ 'x-api-key': API_KEY, ...mapIp }, { customer: { id, policy: 'POL-MAP' }, ttlSeconds: 600 })).json()).token
+const fileAt = async (id, location) =>
+  (
+    await (
+      await fetch(`${API}/claims`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${await mapSession(id)}`, ...mapIp },
+        body: JSON.stringify({ schema: 'claim/1', vehicles: [], incident: { kind: 'collision', at: '2026-09-06T17:30', location } }),
+      })
+    ).json()
+  ).reference
+
+/** the colours the inbox rows wear, which the pins wear too */
+const STATUS_COLOUR = { new: '#1f56e6', reviewing: '#d97706', closed: '#64748b' }
+const PLACES = [
+  { id: 'map-one', status: 'new', location: { lng: -73.9859, lat: 40.7573, address: 'Broadway at 7th, New York' } },
+  { id: 'map-two', status: 'reviewing', location: { lng: -118.2437, lat: 34.0522, address: 'Wilshire Boulevard, Los Angeles' } },
+  { id: 'map-three', status: 'closed', location: { lng: -0.1276, lat: 51.5072, address: 'Trafalgar Square, London' } },
+]
+for (const place of PLACES) {
+  place.reference = await fileAt(place.id, place.location)
+  if (!place.reference) fail(`the report at ${place.location.address} was not filed`)
+  const { summary } = await filed(place.reference)
+  if (summary.lng !== place.location.lng || summary.lat !== place.location.lat) fail(`the receipt for ${place.reference} does not carry its place: ${JSON.stringify(summary)}`)
+  if (place.status === 'new') continue
+  const moved = await fetch(`${API}/claims/${place.reference}`, { method: 'PATCH', headers: { 'content-type': 'application/json', ...desk.headers }, body: JSON.stringify({ status: place.status }) })
+  if (!moved.ok) fail(`moving ${place.reference} to ${place.status} gave ${moved.status}`)
+}
+ok(`server: three receipts carry where they happened (${PLACES.map((p) => `${p.reference} ${p.status}`).join(', ')})`)
+
+/** the colour under the middle of the map, where a map showing one report has put its pin */
+const centreColour = () =>
+  deskPage.evaluate(() => {
+    const canvas = document.querySelector('.maplibregl-canvas')
+    if (!canvas) return null
+    const off = document.createElement('canvas')
+    off.width = canvas.width
+    off.height = canvas.height
+    const ctx = off.getContext('2d')
+    ctx.drawImage(canvas, 0, 0)
+    const px = ctx.getImageData(Math.round(canvas.width / 2) - 3, Math.round(canvas.height / 2) - 3, 6, 6).data
+    const seen = new Map()
+    for (let i = 0; i < px.length; i += 4) {
+      const hex = '#' + [px[i], px[i + 1], px[i + 2]].map((n) => n.toString(16).padStart(2, '0')).join('')
+      seen.set(hex, (seen.get(hex) ?? 0) + 1)
+    }
+    return [...seen].sort((a, b) => b[1] - a[1])[0][0]
+  })
+
+const near = (a, b, tolerance = 8) => a && b && [1, 3, 5].every((i) => Math.abs(parseInt(a.slice(i, i + 2), 16) - parseInt(b.slice(i, i + 2), 16)) <= tolerance)
+/** the map draws on a frame of its own, and flies: wait for what should be there rather than a timeout */
+const settles = async (test) => {
+  for (let i = 0; i < 60; i++) {
+    if (await test()) return true
+    await deskPage.waitForTimeout(250)
+  }
+  return false
+}
+
+const openDeskMap = async () => {
+  await deskPage.goto(`${PAGE}/adjuster.html?api=${API}`)
+  await deskPage.getByRole('button', { name: 'Map', exact: true }).click()
+  await deskPage.locator('.maplibregl-canvas').waitFor({ timeout: 20000 })
+}
+await openDeskMap()
+const deskFind = deskPage.getByRole('searchbox', { name: 'Search reports' })
+const listed = () => deskPage.locator('aside ul li').count()
+
+// one report at a time: the map frames its one pin in the middle, so the colour under the
+// middle is that report's status and nothing the basemap happens to paint
+for (const place of PLACES) {
+  await deskFind.fill(place.reference)
+  if (!(await settles(async () => (await listed()) === 1))) fail(`searching for ${place.reference} left ${await listed()} rows`)
+  const colour = STATUS_COLOUR[place.status]
+  if (!(await settles(async () => near(await centreColour(), colour)))) fail(`the pin for a "${place.status}" report is ${await centreColour()}, not ${colour}`)
+}
+ok('desk map: a pin per report — brand blue for new, amber for in review, slate for closed')
+
+// the heat layer, around the one report still on the map, and only while it is on: the ground
+// within 60 px of the pin — and not the pin itself, which is drawn over the heat either way
+const aroundThePin = () =>
+  deskPage.evaluate(() => {
+    const canvas = document.querySelector('.maplibregl-canvas')
+    const off = document.createElement('canvas')
+    off.width = canvas.width
+    off.height = canvas.height
+    const ctx = off.getContext('2d')
+    ctx.drawImage(canvas, 0, 0)
+    const px = ctx.getImageData(Math.round(canvas.width / 2) - 60, Math.round(canvas.height / 2) - 60, 120, 120).data
+    const out = []
+    for (let y = 0; y < 120; y++) {
+      for (let x = 0; x < 120; x++) {
+        if (Math.abs(x - 60) < 16 && Math.abs(y - 60) < 16) continue
+        const i = (y * 120 + x) * 4
+        out.push((px[i] << 16) | (px[i + 1] << 8) | px[i + 2])
+      }
+    }
+    return out
+  })
+const changed = (a, b) => a.reduce((n, v, i) => n + (v === b[i] ? 0 : 1), 0)
+// a baseline only once the map has stopped changing by itself — the search's flight and the
+// tiles still arriving after it would otherwise pass for the heat layer, on and off
+const atRest = async () => {
+  let last = await aroundThePin()
+  for (let i = 0; i < 40; i++) {
+    await deskPage.waitForTimeout(400)
+    const now = await aroundThePin()
+    if (changed(now, last) < 50) return now
+    last = now
+  }
+  fail(`the desk map never came to rest around the pin (${changed(await aroundThePin(), last)} px still changing)`)
+}
+
+const cold = await atRest()
+await deskPage.getByRole('button', { name: 'Heat' }).click()
+if (!(await settles(async () => changed(await aroundThePin(), cold) > 1000))) fail('turning the heat layer on drew nothing around the report')
+const warm = await atRest()
+await deskPage.getByRole('button', { name: 'Heat' }).click()
+if (!(await settles(async () => changed(await aroundThePin(), warm) > 1000))) fail('turning the heat layer off left it on the map')
+ok(`desk map: the heat layer paints volume over the region while it is on, and nothing when it is off (${changed(warm, cold)} px around the pin)`)
+
+// tapping the pin opens that report
+const box = await deskPage.locator('.maplibregl-canvas').boundingBox()
+await deskPage.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+const tapped = PLACES[2].reference
+await deskPage
+  .waitForFunction((r) => window.location.hash.includes(r), tapped, { timeout: 10000 })
+  .catch(() => fail(`tapping the pin did not open ${tapped}: the hash is ${deskPage.url()}`))
+await deskPage.locator('text=Reported by').waitFor({ timeout: 20000 }).catch(() => fail('tapping the pin opened no document'))
+ok(`desk map: tapping a pin opens its report (${tapped})`)
+
+// the two accounts of one accident stand in the same place: they are one row in the list, and
+// one pin — the row's lead — rather than two points on top of each other under a "2"
+const clusterCounts = async () => (await deskPage.locator('.desk-cluster').allInnerTexts()).map(Number)
+// the premise first, from the receipts themselves: two accounts, one place, and a word that
+// finds those two and nothing else filed by now
+const pair = (await (await fetch(`${API}/incidents/${incidentId}`, desk)).json()).reports
+if (pair.length !== 2) fail(`${incidentId} holds ${pair.length} accounts, not two`)
+const standing = pair.map((r) => `${r.reference} ${r.status} ${r.summary.lng},${r.summary.lat}`)
+if (new Set(pair.map((r) => `${r.summary.lng},${r.summary.lat}`)).size !== 1) fail(`the two accounts do not stand in the same place: ${standing.join(' | ')}`)
+const WORD = 'manhattan'
+const inbox = (await (await fetch(`${API}/claims`, desk)).json()).claims
+const matching = inbox.filter((c) => [c.reference, c.clientReference, c.summary.reporter, c.summary.address].some((s) => s?.toLowerCase().includes(WORD)))
+if (matching.length !== 2 || matching.some((c) => !pair.some((r) => r.reference === c.reference)))
+  fail(`"${WORD}" finds ${matching.map((c) => c.reference).join()}, not the two accounts of one accident`)
+const lead = pair.find((r) => r.party === 'policyholder') ?? pair[0]
+
+await openDeskMap()
+await deskFind.fill(WORD)
+if (!(await settles(async () => (await listed()) === 1))) fail(`the two accounts of ${incidentId} are ${await listed()} rows in the list`)
+if (!(await settles(async () => near(await centreColour(), STATUS_COLOUR[lead.status]))))
+  fail(`the two accounts of one accident draw ${await centreColour()}, not one "${lead.status}" pin (clusters: ${JSON.stringify(await clusterCounts())})`)
+// zoomed out, two points standing on the same spot have to cluster: one pin cannot, so a "2"
+// here is the map having been given the receipts instead of the rows
+for (let i = 0; i < 3; i++) {
+  await deskPage.getByRole('button', { name: 'Zoom out' }).click()
+  await deskPage.waitForTimeout(300)
+}
+await deskPage.waitForTimeout(1000)
+if (await deskPage.locator('.desk-cluster').count()) fail(`the two accounts of one accident are two points on one spot: zoomed out they cluster ${JSON.stringify(await clusterCounts())}`)
+if (!near(await centreColour(), STATUS_COLOUR[lead.status])) fail(`zoomed out, the one pin for ${incidentId} is ${await centreColour()}, not "${lead.status}"`)
+ok(`desk map: two accounts of one accident (${standing.join(', ')}) are one pin, in the "${lead.status}" colour of the account leading their row`)
+
+// zoomed out to the whole world, everything filed folds into one cluster, and tapping it opens it up
+await openDeskMap()
+const biggest = async () => Math.max(0, ...(await clusterCounts()))
+for (let i = 0; i < 6; i++) {
+  await deskPage.getByRole('button', { name: 'Zoom out' }).click()
+  await deskPage.waitForTimeout(300)
+}
+if (!(await settles(async () => (await biggest()) >= 3))) fail(`zoomed out to the world, the reports do not cluster: ${JSON.stringify(await clusterCounts())}`)
+const clustered = await biggest()
+await deskPage.locator('.desk-cluster').first().click()
+if (!(await settles(async () => (await biggest()) < clustered))) fail(`tapping the cluster of ${clustered} did not open it up: ${JSON.stringify(await clusterCounts())}`)
+const left = await biggest()
+ok(`desk map: zoomed out the reports fold into a cluster of ${clustered}, and tapping it splits them into ${left ? `clusters of at most ${left}` : 'separate pins'}`)
+
+// and the list follows the map when it is asked to
+await openDeskMap()
+const all = await listed()
+await deskPage.getByRole('button', { name: "Only what's on the map" }).click()
+// fewer than the whole list already: a report with no place is on no map
+const framed = await listed()
+if (framed < PLACES.length || framed > all) fail(`the map's own view lists ${framed} of ${all} reports, and the three just filed are on it`)
+for (let i = 0; i < 8; i++) {
+  await deskPage.getByRole('button', { name: 'Zoom in' }).click()
+  await deskPage.waitForTimeout(250)
+}
+if (!(await settles(async () => (await listed()) < framed))) fail(`zoomed into the ocean between them, the list still holds ${await listed()} of ${framed} reports`)
+const narrowed = await listed()
+await deskPage.getByRole('button', { name: "Only what's on the map" }).click()
+if (!(await settles(async () => (await listed()) === all))) fail(`the list did not come back when it stopped following the map: ${await listed()} of ${all}`)
+ok(`desk map: "only what's on the map" narrows the list to the view (${all} filed, ${framed} on the map, ${narrowed} in the view) and gives it back`)
 
 // ── the demo portal, on the same server, embedding the built page ─────
 

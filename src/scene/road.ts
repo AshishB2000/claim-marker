@@ -1,13 +1,14 @@
 /**
  * The road the accident happened on, from OpenStreetMap via Overpass: its name, class, lanes,
  * direction, posted limit, whether it is lit, what junction it is, and what controls the
- * junction — plus the ways themselves as GeoJSON so the diagram can draw them.
+ * junction — plus the ways themselves as GeoJSON so the diagram can draw them, and the
+ * building footprints a little further out so the cinematic replay has a city to fly through.
  *
  * `parseRoad` is pure (no network) so it can be unit-tested against literal Overpass fixtures;
  * `fetchRoad` is the only impure function, and it never throws — a bad response is exactly as
  * useful to a claim as no response, so every failure just resolves to `null`.
  */
-import type { FeatureCollection, LineString } from 'geojson'
+import type { FeatureCollection, LineString, Polygon } from 'geojson'
 import { bearing, distance, normalizeBearing, toRad, type LngLat } from '../geo'
 import type { Junction, SceneRoad } from '../claim/schema'
 import { withDeadline } from './timeout'
@@ -26,6 +27,16 @@ const OVERPASS_URL: string = import.meta.env.VITE_ROADS_URL ?? 'https://overpass
 /** metres around the incident that the Overpass query asks for */
 export const ROAD_RADIUS = 60
 
+/**
+ * metres around the incident the same query asks for buildings in. Wider than the road,
+ * because a tilted camera 4 m behind a car sees a street's worth of frontage, not a junction.
+ */
+export const BUILDING_RADIUS = 150
+
+/** a storey's height in metres, and what a building with nothing to say about its own is drawn at */
+const LEVEL_METRES = 3.2
+const DEFAULT_HEIGHT = 8
+
 /** metres from a way's centre line for the car to count as standing on it */
 export const ALIGN_METRES = 3
 /** degrees a car may already be off the road's line and still be "nearly lined up with it" */
@@ -39,7 +50,11 @@ const CACHE_PREFIX = 'claim-marker/road/'
 export type RoadResult = {
   road: SceneRoad
   ways: FeatureCollection<LineString, { name: string; class: string; lanes: number | null }>
+  /** the buildings around the incident, to extrude; empty where nobody has mapped any */
+  buildings: BuildingCollection
 }
+
+export type BuildingCollection = FeatureCollection<Polygon, { height: number }>
 
 type Tags = Record<string, string>
 type OverpassNode = { type: 'node'; id: number; lat?: number; lon?: number; tags?: Tags }
@@ -198,16 +213,85 @@ export function parseRoad(json: unknown, at: LngLat): RoadResult | null {
     })),
   }
 
-  return { road, ways }
+  // buildings ride along with the road because they come out of the same answer; a place with
+  // no road in it has no result at all to hang them on, which is the same as having none
+  return { road, ways, buildings: parseBuildings(json) }
+}
+
+/**
+ * Roofs a car drives under — a fuel station's canopy, a carport, a parking or garage structure.
+ * These are where accidents happen, and a solid block drawn over the cars would hide them.
+ */
+const COVERED = new Set(['roof', 'carport', 'parking', 'garage', 'garages'])
+
+/**
+ * How tall to draw a building. `height` is metres by OSM convention and may carry a unit
+ * ("12 m"), which `parseFloat` drops; failing that `building:levels` at 3.2 m a storey; failing
+ * both, a default low enough that a mis-tagged corner shop never becomes a tower. Absurd values
+ * — a negative height, a thousand storeys — are treated as no answer, not as geometry.
+ */
+function buildingHeight(tags: Tags): number {
+  const metres = parseFloat(tags.height ?? '')
+  if (metres > 0 && metres < 1000) return Math.round(metres * 10) / 10
+  const levels = parseFloat(tags['building:levels'] ?? '')
+  if (levels > 0 && levels < 200) return Math.round(levels * LEVEL_METRES * 10) / 10
+  return DEFAULT_HEIGHT
+}
+
+/**
+ * The building footprints in an Overpass answer, as polygons carrying the height to extrude
+ * them to. Pure, and separate from `parseRoad` so a fixture can be held against it directly.
+ *
+ * Only closed ways: an open `building` way is either a mapping error or one wall of a
+ * multipolygon whose other parts are not in the answer, and half a building drawn as a solid
+ * is worse than no building. Relations are not asked for at all.
+ */
+export function parseBuildings(json: unknown): BuildingCollection {
+  const elements = elementsOf(json)
+  const features: BuildingCollection['features'] = []
+  if (!elements) return { type: 'FeatureCollection', features }
+
+  const nodePos = new Map<number, LngLat>()
+  for (const el of elements) {
+    if (el && typeof el === 'object' && (el as { type?: unknown }).type === 'node') {
+      const n = el as OverpassNode
+      if (n.lat !== undefined && n.lon !== undefined) nodePos.set(n.id, [n.lon, n.lat])
+    }
+  }
+
+  for (const el of elements) {
+    if (!(el && typeof el === 'object' && (el as { type?: unknown }).type === 'way')) continue
+    const w = el as OverpassWay
+    const tags = w.tags ?? {}
+    if (!tags.building || tags.building === 'no' || COVERED.has(tags.building)) continue
+    const ids = w.nodes ?? []
+    const ring: LngLat[] = []
+    for (const id of ids) {
+      const pos = nodePos.get(id)
+      if (!pos) break
+      ring.push(pos)
+    }
+    if (ring.length !== ids.length || ring.length < 4) continue
+    const [firstLng, firstLat] = ring[0]
+    const [lastLng, lastLat] = ring[ring.length - 1]
+    if (firstLng !== lastLng || firstLat !== lastLat) continue
+    features.push({
+      type: 'Feature',
+      properties: { height: buildingHeight(tags) },
+      geometry: { type: 'Polygon', coordinates: [ring] },
+    })
+  }
+  return { type: 'FeatureCollection', features }
 }
 
 /** the Overpass QL text, so a test can assert it and a reader can paste it in to see what came back */
 export function roadQuery(at: LngLat): string {
   const [lng, lat] = at
   const around = `(around:${ROAD_RADIUS},${lat},${lng})`
+  const block = `(around:${BUILDING_RADIUS},${lat},${lng})`
   return (
     `[out:json][timeout:10];` +
-    `(way[highway]${around};node[highway~"^(traffic_signals|stop|give_way|crossing)$"]${around};);` +
+    `(way[highway]${around};node[highway~"^(traffic_signals|stop|give_way|crossing)$"]${around};way[building]${block};);` +
     `out body; >; out skel qt;`
   )
 }

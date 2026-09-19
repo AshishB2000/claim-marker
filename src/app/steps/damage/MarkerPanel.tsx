@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useClaim } from '../../../claim/store'
 import type { ClaimVehicle } from '../../../claim/schema'
 import { SCHEMA, SEVERITIES, SEVERITY_COLOR } from '../../../schema'
@@ -6,7 +6,10 @@ import { namedVehicle } from '../../../claim/describe'
 import { plural, type Key } from '../../../i18n'
 import { useLang, useT } from '../../../i18n/useT'
 import { DamageMarker } from '../../../marker/DamageMarker'
+import { PHOTO_DRAG, cardsOf } from '../../../marker/cards'
+import { zonesOf } from '../../../zones'
 import { VehiclePhoto } from '../../VehiclePhoto'
+import { PhotoLightbox } from '../../PhotoLightbox'
 
 /**
  * The car to mark the damage on, and beside it what is marked so far. `children` go at the foot
@@ -16,10 +19,16 @@ import { VehiclePhoto } from '../../VehiclePhoto'
 export function MarkerPanel({ v, afterPhotos = false, children }: { v: ClaimVehicle; afterPhotos?: boolean; children?: ReactNode }) {
   const autoDamage = useClaim((s) => s.autoDamage)
   const setDamages = useClaim((s) => s.setDamages)
+  const photos = useClaim((s) => s.claim.attachments.photos)
+  const tagPhoto = useClaim((s) => s.tagPhoto)
+  // the photo shown large, by its place on the claim; opened by tapping its card on the car
+  const [open, setOpen] = useState<number | null>(null)
   const lang = useLang()
   const t = useT()
   // the car's name, or its shape when the customer has not named it yet
   const name = namedVehicle(v, lang) || t(`body.${v.body}` as Key).toLowerCase()
+  // this vehicle's photos, each with its place on the claim — what `tagPhoto` and the photo's number go by
+  const mine = photos.flatMap((p, i) => (p.of === v.id ? [{ p, i }] : []))
 
   return (
     <>
@@ -38,6 +47,13 @@ export function MarkerPanel({ v, afterPhotos = false, children }: { v: ClaimVehi
             value={{ schema: SCHEMA, vehicle: v.body, damages: v.damages }}
             onChange={(next) => setDamages(v.id, next.damages)}
             lang={lang}
+            dots
+            photos={cardsOf(photos, v.id)}
+            onTagPhoto={(i, zone) => {
+              // a drop names a photo by its place on the claim; only this vehicle's may be tagged to its panels
+              if (photos[i]?.of === v.id) tagPhoto(i, zone)
+            }}
+            onOpenPhoto={setOpen}
           />
         </div>
 
@@ -86,9 +102,45 @@ export function MarkerPanel({ v, afterPhotos = false, children }: { v: ClaimVehi
             </ul>
           </div>
 
+          {mine.length > 0 && (
+            <div className="card p-4">
+              <h3 className="eyebrow">{t('damage.pinned.title')}</h3>
+              <p className="mt-1 text-sm text-slate-500">{t('damage.pinned.lead')}</p>
+              <ul className="mt-3 grid grid-cols-2 gap-2">
+                {mine.map(({ p, i }) => (
+                  <li key={i}>
+                    {/* dragged onto the car, it says which panel it shows; the select is the same for a keyboard or a phone */}
+                    <img
+                      src={p.data}
+                      alt={p.caption || t('damage.photo.alt', { n: i + 1 })}
+                      draggable
+                      onDragStart={(e) => e.dataTransfer.setData(PHOTO_DRAG, String(i))}
+                      className="aspect-square w-full cursor-grab rounded-md object-cover ring-1 ring-slate-900/10"
+                    />
+                    <select
+                      className="input mt-1 h-7 px-1.5 py-0 text-[11px]"
+                      aria-label={t('damage.pinned.shows', { n: i + 1 })}
+                      value={p.shows ?? ''}
+                      onChange={(e) => tagPhoto(i, e.target.value)}
+                    >
+                      {/* a mis-dropped tag can be cleared, not only moved: '' leaves `shows` out of the document */}
+                      <option value="">{t('damage.pinned.none')}</option>
+                      {zonesOf(v.body).map((z) => (
+                        <option key={z.id} value={z.id}>
+                          {t(`zone.${z.id}` as Key)}
+                        </option>
+                      ))}
+                    </select>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {children}
         </aside>
       </div>
+      {open !== null && photos[open] && <PhotoLightbox photo={photos[open]} lang={lang} onClose={() => setOpen(null)} />}
     </>
   )
 }

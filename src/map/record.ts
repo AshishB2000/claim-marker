@@ -20,15 +20,62 @@ import type { LngLat } from '../geo'
 import { plural, translate, type Lang } from '../i18n'
 import { SIZE } from '../vehicles/bodies'
 import type { Vehicle } from '../zones'
-import type { CarLayer, CarPose } from './carLayer'
-import { durationOf, lengthOf, posesAt, routeOf } from './playback'
+import type { CarLayer, CarPose, shockRing } from './carLayer'
+import {
+  HOLD_MS,
+  advance,
+  MAX_PITCH,
+  cameraAt,
+  frameAt,
+  hasReplay,
+  impactTickOf,
+  posesAt,
+  ringAt,
+  sharedTimeline,
+  shotAt,
+  shots,
+  timelineOf,
+  wallMsOf,
+  type Camera,
+  type PlaybackMode,
+} from './playback'
 
 export const REC_WIDTH = 960
 export const REC_HEIGHT = 540
-/** the impact should sit on screen long enough to read; mirrors `usePlayback`'s own HOLD_MS */
-const HOLD_MS = 700
+/** the buildings' grey and how solid they are drawn, flat or standing (`MapScene` adds both layers) */
+export const CITY_GREY = '#b4b8bf'
+export const CITY_OPACITY = 0.85
+
+/**
+ * The city stands up for a tilted camera and lies flat otherwise: the extrusion only while the
+ * cinematic replay runs, the flat footprint the rest of the time. An extrusion at opacity 0 is
+ * not drawn at all, so it writes no depth a car or a path under a roof could be hidden by.
+ */
+export function standCity(map: MapLibreMap, up: boolean) {
+  if (map.getLayer('buildings')) map.setPaintProperty('buildings', 'fill-extrusion-opacity', up ? CITY_OPACITY : 0)
+  if (map.getLayer('buildings-flat')) map.setPaintProperty('buildings-flat', 'fill-opacity', up ? 0 : CITY_OPACITY)
+}
+
 /** about 1.5 Mbps: plenty for a diagram of flat colour and a moving map tile, not a photo */
 const BITRATE = 1_500_000
+
+/**
+ * How long the video may be. `MediaRecorder` records **wall** time, and a cinematic playback
+ * takes far more of it than the drive does: the overhead, the ease into the chase and above all
+ * the slow-motion window, which spends four wall seconds on every second of the clock. So the
+ * recorder runs the whole clock at a rate that fits it inside this, rather than recording the
+ * first seven seconds of it and cutting the impact off.
+ */
+export const VIDEO_MS = 7000
+
+/**
+ * The rate the recorder's clock runs at: whatever makes a run of `wallMs` fit inside `cap`,
+ * and never less than 1 — a short drive is recorded at its own pace, never stretched to fill
+ * the ceiling. `wallMs` comes from {@link wallMsOf}, so the slow-motion's cost is in it.
+ */
+export function recordRate(wallMs: number, cap = VIDEO_MS): number {
+  return Math.max(1, wallMs / cap)
+}
 
 /** "1 damage" / "3 damages" — the pill's own words, shared with the live tag `MapScene` draws */
 export const damageCount = (n: number, lang: Lang): string => translate(lang, plural(n, 'scene.map.damage.one', 'scene.map.damage.other'), { n })
@@ -45,21 +92,6 @@ export const MIME_CANDIDATES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8'
 /** the first codec `isSupported` accepts, or null when none of them are — never throws */
 export function pickMimeType(isSupported: (type: string) => boolean): string | null {
   return MIME_CANDIDATES.find(isSupported) ?? null
-}
-
-// ── is there anything to play ────────────────────────────────────────
-
-/**
- * Nothing to record: every vehicle that made it onto the map sits exactly where it started, so
- * a "playback" would just hold on one frame for several seconds. `durationOf` cannot say this
- * by itself — it always clamps to at least `MIN_MS`, even for a route with zero length — so
- * this looks at the routes directly instead, the same way `usePlayback`'s own `canPlay` does.
- */
-export function hasReplay(vehicles: ClaimVehicle[]): boolean {
-  return vehicles.some((v) => {
-    const route = routeOf(v)
-    return route !== null && lengthOf(route) > 0
-  })
 }
 
 // ── geometry: fitting the map canvas, the progress bar, the caption ────
@@ -83,6 +115,9 @@ export function progressBarRect(t: number, width: number, height: number): Rect 
   const clamped = Math.min(1, Math.max(0, t))
   return { x: 0, y: height - BAR_HEIGHT, width: width * clamped, height: BAR_HEIGHT }
 }
+
+/** a moment of impact on the bar, as a fraction of the whole clock: a notch this wide, in pixels */
+const TICK_WIDTH = 3
 
 /** the baseline the one-line caption sits on, just above the progress bar */
 export function captionBaseline(height: number): number {
@@ -157,18 +192,24 @@ const labelsFor = (vehicles: ClaimVehicle[], poses: CarPose[]): OverlayLabel[] =
   return out
 }
 
-/** cars pull away and brake rather than teleport — the same curve `usePlayback` eases through */
-const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2)
-
 const nextFrame = (): Promise<number> => new Promise((resolve) => requestAnimationFrame(resolve))
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 export type RecordDeps = {
   map: MapLibreMap
   cars: CarLayer
   vehicles: ClaimVehicle[]
+  /** a second account of the same accident, drawn as ghosts and driven by the same clock */
+  ghosts?: ClaimVehicle[]
   impact: LngLat | null
+  /** the second account's point of impact: where the ring goes once `follow` has swapped the moment to that account */
+  ghostImpact?: LngLat | null
   lang: Lang
+  /** `cinematic` drives the shot list — the camera, the slow-motion, the shockwave; anything else records the flat diagram */
+  mode?: PlaybackMode
+  /** which vehicle the chase follows; the shot list's own choice otherwise */
+  follow?: string
+  /** the shockwave, made by the caller: this module holds no three.js, so it cannot make one */
+  ring?: ReturnType<typeof shockRing>
   /** swapped in by the test; real callers leave this to `MediaRecorder.isTypeSupported` */
   isTypeSupported?: (type: string) => boolean
 }
@@ -179,13 +220,19 @@ export type RecordDeps = {
  * through for the on-screen playback, so there is one animation path, not two; the DOM/
  * MediaRecorder side of this is proved by the browser smoke, not a unit test.
  *
+ * In `cinematic` mode it also drives the camera, from the same `shots` and `cameraAt` the live
+ * playback uses — the map canvas is what is captured, so the tilt, the chase and the shockwave
+ * are in the video. The clock runs at {@link recordRate}, because the video has a ceiling in
+ * wall time and the cinematic playback does not.
+ *
  * Never throws: every reason this can't produce a video — no `MediaRecorder`, no
  * `captureStream`, no codec, nothing to play, anything going wrong mid-recording — resolves to
  * `null` instead, because a report is never held up, or spoiled, by its own replay.
  */
 export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
   const { map, cars, vehicles, impact, lang } = deps
-  if (!hasReplay(vehicles)) return null
+  const ghosts = deps.ghosts ?? []
+  if (!hasReplay([...vehicles, ...ghosts])) return null
   if (typeof MediaRecorder === 'undefined') return null
 
   const canvas = document.createElement('canvas')
@@ -200,10 +247,28 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
   if (!ctx) return null
 
   const src = map.getCanvas()
-  // computed once: the view does not move while this records, only the cars do
+  // computed once: the canvas does not resize while this records, whatever the camera does
   const rect = fitContain(src.clientWidth, src.clientHeight, REC_WIDTH, REC_HEIGHT)
   const scale = src.clientWidth > 0 ? rect.width / src.clientWidth : 0
   const caption = translate(lang, 'scene.replay.caption')
+
+  const timeline = timelineOf(vehicles)
+  const ghostTimeline = timelineOf(ghosts)
+  // the end of the clock: the longer of the two drives, held. A cinematic run's own end is
+  // later than this — it eases the camera back to the overhead — and the video does not need
+  // that: the last thing it shows is the impact, not the way home.
+  // whose moment it slows into, and rings, follows the car it chases — the same rule the live
+  // playback keeps, so a video saved after "Swap" is the one the adjuster was watching
+  const shared = sharedTimeline(vehicles, ghosts, deps.follow)
+  const shockAt = shared.lead === 'own' ? impact : (deps.ghostImpact ?? null)
+  const end = shared.ms + HOLD_MS
+  const list = deps.mode === 'cinematic' ? shots([...vehicles, ...ghosts], shared, deps.follow) : null
+  const rate = list ? recordRate(wallMsOf(list, end)) : 1
+  const centre = map.getCenter()
+  const home: Camera = { center: [centre.lng, centre.lat], zoom: map.getZoom(), pitch: 0, bearing: 0 }
+  // where each account's impact falls on the shared clock, as notches on the bar — none for an
+  // account with nothing driving, which has no moment to mark
+  const ticks = [impactTickOf(vehicles, timeline), impactTickOf(ghosts, ghostTimeline)].filter((ms): ms is number => ms !== null).map((ms) => ms / end)
 
   const draw = (poses: CarPose[], t: number) => {
     ctx.fillStyle = '#0f172a'
@@ -224,6 +289,9 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
     const bar = progressBarRect(t, REC_WIDTH, REC_HEIGHT)
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(bar.x, bar.y, bar.width, bar.height)
+    // the moment of impact, once per account: where on this bar the two stories met
+    ctx.fillStyle = '#dc2626'
+    for (const tick of ticks) ctx.fillRect(Math.min(1, Math.max(0, tick)) * (REC_WIDTH - TICK_WIDTH), REC_HEIGHT - BAR_HEIGHT * 2, TICK_WIDTH, BAR_HEIGHT * 2)
 
     ctx.font = '600 15px system-ui, -apple-system, sans-serif'
     ctx.textAlign = 'center'
@@ -243,21 +311,36 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
 
   map.getContainer().classList.add('mk-playing')
   try {
+    if (list) {
+      map.setMaxPitch(MAX_PITCH)
+      standCity(map, true)
+    }
     cars.setPoses(posesAt(vehicles, 0))
+    if (ghosts.length) cars.setGhosts(posesAt(ghosts, 0))
     draw(posesAt(vehicles, 0), 0)
     recorder.start()
 
-    const durationMs = durationOf(vehicles)
-    const t0 = performance.now()
-    let t = 0
-    while (t < 1) {
+    let clock = 0
+    let last = performance.now()
+    while (clock < end) {
       const now = await nextFrame()
-      t = Math.min(1, (now - t0) / durationMs)
-      const poses = posesAt(vehicles, ease(t))
+      clock = advance(clock, now - last, (list ? shotAt(list, clock).rate : 1) * rate, end)
+      last = now
+      const { poses } = frameAt(vehicles, timeline, clock)
+      const ghostPoses = ghosts.length ? frameAt(ghosts, ghostTimeline, clock).poses : []
       cars.setPoses(poses)
-      draw(poses, t)
+      if (ghosts.length) cars.setGhosts(ghostPoses)
+      if (list) {
+        const cam = cameraAt(list, clock, [...poses, ...ghostPoses], home)
+        map.jumpTo({ center: cam.center, zoom: cam.zoom, pitch: cam.pitch, bearing: cam.bearing })
+        const shock = ringAt(shared, clock)
+        if (shock && shockAt && deps.ring) {
+          deps.ring.material.opacity = shock.opacity
+          cars.setDecor([{ object: deps.ring, at: shockAt, metres: shock.metres }])
+        } else cars.setDecor([])
+      }
+      draw(poses, clock / end)
     }
-    await wait(HOLD_MS)
     recorder.stop()
     return await stopped
   } catch {
@@ -268,10 +351,18 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
     }
     return null
   } finally {
-    // exactly how the customer left it: cars at rest, the DOM markers back — unless the map was
-    // taken down mid-recording (the send won the race and the page moved on), which is no error
+    // exactly how the customer left it: cars at rest, the map flat and where it was, the DOM
+    // markers back — unless the map was taken down mid-recording (the send won the race and the
+    // page moved on), which is no error
     try {
+      cars.setDecor([])
       cars.setPoses(posesAt(vehicles, 1))
+      if (ghosts.length) cars.setGhosts(posesAt(ghosts, 1))
+      if (list) {
+        map.setMaxPitch(0)
+        standCity(map, false)
+        map.jumpTo({ center: home.center, zoom: home.zoom, pitch: 0, bearing: 0 })
+      }
       map.getContainer().classList.remove('mk-playing')
     } catch {
       // nothing left to restore

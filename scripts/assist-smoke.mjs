@@ -277,8 +277,7 @@ if (!(await send.isDisabled())) fail('the review page let the report go unsigned
 
 // the endpoint failing says so and changes nothing
 answer = () => [502, { error: 'the assistant could not answer' }]
-// scrolled into view first: the review page is 4000 px of map and document, and the click's
-// own scroll competes with the step's smooth scroll-to-top for long enough to time out
+// scrolled into view first: the review page is 4000 px of map and document
 const check = page.getByRole('button', { name: 'Check it over for me' })
 await check.scrollIntoViewIfNeeded()
 await check.click()
@@ -428,9 +427,11 @@ await phone.getByRole('button', { name: 'The damage, close up' }).click()
 await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ timeout: 20000 })
 // the sheet renders first and the stream arrives a moment later, as it does on a phone
 await phone.waitForFunction(() => window.__tracks.length === 1, null, { timeout: 15000 }).catch(() => fail('the guide did not open the camera'))
-// the hints are hints: whatever the fake device's test pattern reads as, the shutter works
-await phone.waitForTimeout(900)
+// the hints are hints: whatever the fake device's test pattern reads as, the shutter works.
+// It waits only for the stream to be ready, which a loaded machine takes more than a second to
+// commit — so give that up to 10 s, and then it must be enabled whatever the hints say
 const shutter = phone.getByRole('button', { name: 'Take photo' })
+for (let i = 0; i < 50 && (await shutter.isDisabled()); i++) await phone.waitForTimeout(200)
 if (await shutter.isDisabled()) fail('the shutter was disabled — the checks are hints, never gates')
 await shutter.click()
 await phone.getByRole('dialog', { name: 'Camera' }).waitFor({ state: 'detached', timeout: 10000 })

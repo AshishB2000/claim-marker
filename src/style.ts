@@ -78,6 +78,36 @@ const CSS = `
   pointer-events: none;
 }
 
+/* before/after and the severity map, top left; their own pointer events, so a read-only host
+   that turns the marker's off still gets them */
+.cm-tools {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  pointer-events: auto;
+}
+.cm-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cm-chip);
+  box-shadow: var(--cm-shadow-sm);
+  color: var(--cm-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: auto;
+}
+.cm-tool input { width: 84px; margin: 0; accent-color: var(--cm-accent); cursor: pointer; }
+.cm-tool[aria-pressed="true"] { background: var(--cm-chip-on); color: var(--cm-chip-on-text); }
+
 /* zone name that follows the hover, sitting just above the anchor */
 .cm-zone {
   transform: translateY(-26px);

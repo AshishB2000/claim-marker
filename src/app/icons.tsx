@@ -97,6 +97,12 @@ export const Icon = {
       <rect x="6" y="6" width="12" height="12" rx="2" />
     </svg>
   ),
+  film: () => (
+    <svg {...icon}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M7 5v14M17 5v14M3 10h4M3 14h4M17 10h4M17 14h4" />
+    </svg>
+  ),
   rotate: () => (
     <svg {...icon}>
       <path d="M3 12a9 9 0 1 0 3-6.7" />

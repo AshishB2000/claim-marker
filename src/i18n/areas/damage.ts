@@ -98,6 +98,12 @@ export const en = {
   'damage.list.one': '{n} marked',
   'damage.list.other': '{n} marked',
 
+  // ── this vehicle's photos beside the car: dropped on a panel, each stands there as a card
+  'damage.pinned.title': 'Photos of this vehicle',
+  'damage.pinned.lead': 'Drag a photo onto the panel it shows, or choose the panel under it. It stands beside that panel on the car — tap it there to see it large.',
+  'damage.pinned.shows': 'The panel photo {n} shows',
+  'damage.pinned.none': 'Not one panel',
+
   // ── what happened, in the customer's words, when there was no diagram to draw
   'damage.describe.placeholder': "For example: I came out in the morning and the driver's window was smashed and the glovebox emptied.",
 
@@ -199,6 +205,11 @@ export const es: Record<keyof typeof en, string> = {
   'damage.list.none': 'Nada marcado todavía',
   'damage.list.one': '{n} daño marcado',
   'damage.list.other': '{n} daños marcados',
+
+  'damage.pinned.title': 'Fotos de este vehículo',
+  'damage.pinned.lead': 'Arrastra una foto hasta la parte que muestra, o elige la parte debajo de ella. Quedará junto a esa parte en el auto: tócala ahí para verla en grande.',
+  'damage.pinned.shows': 'La parte que muestra la foto {n}',
+  'damage.pinned.none': 'Ninguna parte en concreto',
 
   'damage.describe.placeholder': 'Por ejemplo: salí en la mañana y la ventana del lado del conductor estaba rota y la guantera vacía.',
 
