@@ -617,6 +617,9 @@ const chased = () =>
     const map = document.querySelector('[data-compare] .maplibregl-map').__map
     const at = async (ms) => {
       window.__play.seek(ms)
+      // the seek is a render away: on a loaded page 400 ms can still read the frame before it,
+      // so wait (bounded) until the clock the page hands out is the moment asked for
+      for (let i = 0; i < 50 && Math.abs(window.__play.clock - ms) > 1; i++) await new Promise((r) => setTimeout(r, 100))
       await new Promise((r) => setTimeout(r, 400))
       return { rate: window.__play.rate, trail: map.getPaintProperty('paths-flow', 'line-width'), pitch: map.getPitch(), bearing: map.getBearing() }
     }
@@ -997,11 +1000,23 @@ const aroundThePin = () =>
     return out
   })
 const changed = (a, b) => a.reduce((n, v, i) => n + (v === b[i] ? 0 : 1), 0)
+// a baseline only once the map has stopped changing by itself — the search's flight and the
+// tiles still arriving after it would otherwise pass for the heat layer, on and off
+const atRest = async () => {
+  let last = await aroundThePin()
+  for (let i = 0; i < 40; i++) {
+    await deskPage.waitForTimeout(400)
+    const now = await aroundThePin()
+    if (changed(now, last) < 50) return now
+    last = now
+  }
+  fail(`the desk map never came to rest around the pin (${changed(await aroundThePin(), last)} px still changing)`)
+}
 
-const cold = await aroundThePin()
+const cold = await atRest()
 await deskPage.getByRole('button', { name: 'Heat' }).click()
 if (!(await settles(async () => changed(await aroundThePin(), cold) > 1000))) fail('turning the heat layer on drew nothing around the report')
-const warm = await aroundThePin()
+const warm = await atRest()
 await deskPage.getByRole('button', { name: 'Heat' }).click()
 if (!(await settles(async () => changed(await aroundThePin(), warm) > 1000))) fail('turning the heat layer off left it on the map')
 ok(`desk map: the heat layer paints volume over the region while it is on, and nothing when it is off (${changed(warm, cold)} px around the pin)`)

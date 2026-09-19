@@ -31,15 +31,21 @@ export function readVideo(page, src) {
       const v = document.createElement('video')
       v.muted = true
       v.src = src
+      // a file that never fires the event awaited would hold the whole smoke for ever; 15 s each
+      const within = (what, promise) =>
+        Promise.race([promise, new Promise((_, no) => setTimeout(() => no(new Error(`it never ${what} within 15 s`)), 15_000))])
       try {
-        await new Promise((ok, no) => {
-          v.onloadeddata = ok
-          v.onerror = () => no(new Error('it does not decode'))
-        })
+        await within(
+          'loaded',
+          new Promise((ok, no) => {
+            v.onloadeddata = ok
+            v.onerror = () => no(new Error('it does not decode'))
+          }),
+        )
         // a MediaRecorder webm often reports an infinite duration until it has been read to the end
         if (!Number.isFinite(v.duration)) {
           v.currentTime = 1e9
-          await new Promise((ok) => (v.ontimeupdate = ok))
+          await within('reported its length', new Promise((ok) => (v.ontimeupdate = ok)))
         }
         const c = document.createElement('canvas')
         c.width = v.videoWidth
@@ -47,7 +53,7 @@ export function readVideo(page, src) {
         const ctx = c.getContext('2d', { willReadFrequently: true })
         const frameAt = async (at) => {
           v.currentTime = at
-          await new Promise((ok) => (v.onseeked = ok))
+          await within(`seeked to ${at.toFixed(1)} s`, new Promise((ok) => (v.onseeked = ok)))
           ctx.drawImage(v, 0, 0)
           return ctx.getImageData(0, 0, c.width, c.height).data
         }
