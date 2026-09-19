@@ -1664,6 +1664,16 @@ the cards stay mounted, `visible={false}` with no handlers, so the photograph is
 again when they return. After a card's tap the card stands aside too, which is right: the
 lightbox is showing the photograph.
 
+**A pin's release is the pin's.** A pin's press selects it and the camera starts turning on the
+next frame, so a finger or a slow click comes up after the pin has moved out from under it — the
+reviewer measured 27–49 px in a 100–150 ms hold, against a tap target of about 29. On the
+customer's marker the body catches that release; on the desk's read-only copy nothing does, and a
+click that hits nothing is r3f's `onPointerMissed`, which cleared the selection it had just made
+and so brought the card back over the pin. `Scene` keeps a `pinPressed` ref: every press resets it
+(`onPointerDownCapture` on the canvas's wrapper, which runs before r3f sees the press), a pin's
+press sets it, and `onPointerMissed` leaves the selection alone when it is set. It is a ref written
+in handlers, not state.
+
 **The desk's copy can be turned; the review's cannot.** `ReportDocument`'s marked-up cars are
 now `readOnly`: the body takes no tap and tints nothing, there is no picker or hint, and the
 wheel scrolls the page instead of zooming. On the desk the wrapper takes pointer events, so an
@@ -1690,8 +1700,9 @@ that photograph; Escape closes it. While the camera faces the door the card's gr
 the frame, and the next drag brings it back. Then the door's own pin is clicked where it stands:
 it is selected, the camera turns to the door, the pin's violet dot is on the frame at its projected
 point, and there is no green within 40 px of it. On the desk, a tap on the car opens no picker;
-after `face(door)` and a turn off it, the card on the door opens the photograph, and the
-Reconstruction tab's screenshot has the card's green by A.
+after `face(door)` and a turn off it, the card on the door opens the photograph; the door's pin,
+held down for 150 ms from a turned view and let go off it, is still selected once the camera has
+come round, with no green round it; and the Reconstruction tab's screenshot has the card's green by A.
 
 ## Tell us everything, once (v9)
 

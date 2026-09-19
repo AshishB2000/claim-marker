@@ -102,7 +102,7 @@ function Pin({
  * takes (`renders`) — shrinks to a dot; every other pin keeps its number, so a crack on a
  * bumper or a scratch on a windshield, which the paint does not show, never fades from view.
  */
-function Markers({ store, accent, dots }: { store: MarkerStore; accent: string; dots: boolean }) {
+function Markers({ store, accent, dots, onPinPress }: { store: MarkerStore; accent: string; dots: boolean; onPinPress: () => void }) {
   const vehicle = useStore(store, (s) => s.vehicle)
   const damages = useStore(store, (s) => s.damages)
   const selected = useStore(store, (s) => s.selected)
@@ -119,6 +119,7 @@ function Markers({ store, accent, dots }: { store: MarkerStore; accent: string; 
           ring={i === selected ? accent : undefined}
           onPick={(e) => {
             e.stopPropagation()
+            onPinPress()
             store.getState().select(i)
           }}
         />
@@ -319,6 +320,13 @@ export function Scene({
   // the sun in the body's own frame — the map's (east, south, up) is the body's (−left, up, −nose),
   // nose north as `CAR_BASIS` has it — standing eight metres out like the studio's own key light
   const key: V3 = lighting ? [-lighting.sun[0] * 8, lighting.sun[2] * 8, -lighting.sun[1] * 8] : [4, 6.5, 3]
+  // A pin's press turns the camera at once, so by the time the button comes up the pin can have
+  // turned out from under the pointer. Where the body takes no taps — the desk's copy — that
+  // release hits nothing and would read as a tap on empty space, clearing the selection the press
+  // just made and bringing the panel's card back over the pin. So the release of a press that
+  // landed on a pin is the pin's, wherever it has gone: set by the pin, reset by every press
+  // before the scene sees it.
+  const pinPressed = useRef(false)
   return (
     <Canvas
       dpr={[1, 2]}
@@ -349,13 +357,16 @@ export function Scene({
           })
         }
       }}
-      onPointerMissed={() => store.getState().select(null)}
+      onPointerDownCapture={() => (pinPressed.current = false)}
+      onPointerMissed={() => {
+        if (!pinPressed.current) store.getState().select(null)
+      }}
     >
       <Studio theme={theme} lighting={lighting} keyAt={key}>
         <Car store={store} paint={paint} modelUrl={modelUrl} pickable={!readOnly} />
       </Studio>
 
-      <Markers store={store} accent={t.accent} dots={dots} />
+      <Markers store={store} accent={t.accent} dots={dots} onPinPress={() => (pinPressed.current = true)} />
       {photos && <PinnedPhotos store={store} photos={photos} onOpenPhoto={onOpenPhoto} />}
       {onTagPhoto && <PhotoDrop store={store} onTagPhoto={onTagPhoto} />}
       <HoverLabel store={store} lang={lang} />

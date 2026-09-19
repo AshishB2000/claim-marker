@@ -549,7 +549,10 @@ has its cards stand aside** — not drawn, no handlers — because `cameraFor` a
 an azimuth, so a faced card covers its own pin and takes its tap. `facing: { point, zone }` is
 set by `select`/`commit` (a pin) and `face` (a card), a new object each time (the rig's one
 trigger, so a repeat tap re-aims), and cleared when the selection clears and by the rig on the
-customer's drag; `PhotoCards` reads it as `faced` in render — never copied into state. `ReportDocument`'s marker is `readOnly` (no pick,
+customer's drag; `PhotoCards` reads it as `faced` in render — never copied into state. **A
+pin's release is the pin's**: the press turns the camera at once, so a held press comes up off the
+pin, and on the desk (no body handlers) r3f calls that `onPointerMissed`; `Scene`'s `pinPressed`
+ref (reset in the wrapper's `onPointerDownCapture`, set by the pin) keeps it from deselecting. `ReportDocument`'s marker is `readOnly` (no pick,
 no picker, no wheel zoom); only the desk's takes pointer events — the review's copy is the
 evidence exported at send and stays as framed. The DEV `__probe` has `card(id)` (canvas px)
 and `azimuth()`.
