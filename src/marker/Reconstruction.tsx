@@ -4,6 +4,7 @@ import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import type { LngLat } from '../geo'
 import type { Damage } from '../schema'
+import type { Photo } from '../claim/schema'
 import { translate, type Lang } from '../i18n'
 import type { Lighting } from '../scene/lighting'
 import type { V3, Vehicle } from '../zones'
@@ -13,6 +14,8 @@ import { applyDamage, createDamageUniforms, patchInstance } from './damageShader
 import { damageUniforms } from './damageUniforms'
 import { placeVehicles, type Placed } from './place'
 import { Studio } from './Studio'
+import { cardsOf, type CardPhoto } from './cards'
+import { PhotoCards } from './PhotoCards'
 
 /** a vehicle as the scene takes it: a `ClaimVehicle` where it came to rest, or a `CarPose` from a playback */
 type Standing = { id: string; body: Vehicle; color: string; position: LngLat | null; heading: number; damages?: Damage[] }
@@ -27,7 +30,7 @@ const RING = '#dc2626'
  * One car, where it stands: its own body and paint, its own materials, and the real damage
  * patched in — the same shader and the same packing as the marker's car and the map's.
  */
-function Body({ v, at }: { v: Stood; at: Placed }) {
+function Body({ v, at, photos }: { v: Stood; at: Placed; photos: CardPhoto[] }) {
   const template = use(loadBody(v.body))
   // one set per car, built once: the caller keys a car by its body, so a new body is a new car
   const [damage] = useState(() => createDamageUniforms(PROPORTION[v.body]))
@@ -50,6 +53,7 @@ function Body({ v, at }: { v: Stood; at: Placed }) {
   return (
     <group name={`car:${v.id}`} position={at.position} rotation-y={at.rotationY}>
       <primitive object={model} scale={PROPORTION[v.body]} />
+      <PhotoCards body={v.body} photos={photos} />
     </group>
   )
 }
@@ -63,12 +67,13 @@ function Body({ v, at }: { v: Stood; at: Placed }) {
  * `vehicles` is where they came to rest, and sets the origin and the framing; `poses`, while a
  * playback runs (`posesAt`, the map's own), is drawn instead, so the cars drive in and meet
  * here too. Each car is a group named `car:<id>` in its body's own metres — nose +Z, left +X —
- * so anything that belongs to a car can stand in that group.
+ * so anything that belongs to a car stands in that group: the photos pinned to its panels do.
  */
 export function Reconstruction({
   vehicles,
   impact,
   poses = null,
+  photos = [],
   lang,
   lighting = null,
   zoom = true,
@@ -78,6 +83,8 @@ export function Reconstruction({
   impact: LngLat | null
   /** a playback's frame, drawn instead of `vehicles`; null is the scene at rest */
   poses?: Standing[] | null
+  /** the claim's photos; those that show a panel stand beside it as cards, on whichever car they are of */
+  photos?: Photo[]
   lang: Lang
   lighting?: Lighting | null
   /** the wheel zooms; off where the canvas sits in a page the wheel should scroll */
@@ -127,7 +134,7 @@ export function Reconstruction({
       >
         <Studio theme="light" lighting={lighting} keyAt={key} reach={view.distance * 1.1}>
           {shown.map((v, i) => (
-            <Body key={`${v.id}:${v.body}`} v={v} at={placed[i]} />
+            <Body key={`${v.id}:${v.body}`} v={v} at={placed[i]} photos={cardsOf(photos, v.id)} />
           ))}
         </Studio>
 

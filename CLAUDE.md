@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 628 tests across 38 files
+npm test               # vitest, 634 tests across 39 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -443,8 +443,8 @@ step's three parts live in `src/app/steps/damage/` (`Capture`, `Suggestions`, `M
 on the vehicle and its photographs, debounced 1.2 s, aborted on change, with the loading state
 *derived* — never a `setState` inside the effect. `Photo.shows` (a zone id, additive to
 `claim/1`, kept only when `of` is a vehicle and the zone is on that body, **absent** otherwise so
-old documents stay byte-identical) is set by `tagPhoto` when a suggestion is added, and
-`ReportDocument` puts those thumbnails beside the mark.
+old documents stay byte-identical) is set by `tagPhoto` when a suggestion is added or a photo
+is dropped on the car, and `ReportDocument` puts those thumbnails beside the mark.
 
 **The customer's page has two languages; everything else has one** (`src/i18n/`). No library:
 flat keys, `{name}` placeholders, `translate(lang, key, vars)` pure in `index.ts` so
@@ -532,6 +532,28 @@ belongs to a car to stand in. On the desk it is the third tab (`ReportView`); on
 page a small copy under the map plays along with the map's `play.poses`, with `zoom={false}`
 and no pointer under 640 px so the page still scrolls over it.
 
+**Photos pinned to the car are cards in the WebGL frame, placed in metres**
+(`src/marker/cards.ts`, drawn by `PhotoCards.tsx`). `cardPlacement(body, zone)` is pure: the
+kit-unit anchor through `toWorld`, the normal from the **footprint centre on the floor** (the
+kit's origin) out through it, the card 0.6 m along — so every normal leans up and no card sinks
+into the floor; `test/cards.test.ts` pins it. A canvas texture on a `Billboard`, **never
+`Html`**, or the export loses it; the leader is a plain `lineSegments`, not drei's `Line` (a
+fat-line shader compiled in every canvas). The desk's reconstruction shows the cards, the review
+page's small copy does not (15 px there, and seconds of main thread on the page that records
+the replay). Tagging by drag is `PHOTO_DRAG` data (the photo's index on the
+claim) dropped on the canvas, cast against the body alone (the car's primitive is named `car`),
+then `toModel` → `nearestZone` → `tagPhoto`; the select under each thumbnail is the same call.
+A card opens on a still click, not the press (a modal under a drag swallows it), through
+`store.face(zone)` and a `<dialog>` lightbox that takes `lang`. **The panel the camera faces
+has its cards stand aside** — not drawn, no handlers — because `cameraFor` and the card share
+an azimuth, so a faced card covers its own pin and takes its tap. `facing: { point, zone }` is
+set by `select`/`commit` (a pin) and `face` (a card), a new object each time (the rig's one
+trigger, so a repeat tap re-aims), and cleared when the selection clears and by the rig on the
+customer's drag; `PhotoCards` reads it as `faced` in render — never copied into state. `ReportDocument`'s marker is `readOnly` (no pick,
+no picker, no wheel zoom); only the desk's takes pointer events — the review's copy is the
+evidence exported at send and stays as framed. The DEV `__probe` has `card(id)` (canvas px)
+and `azimuth()`.
+
 **drei `<Html>` paints over the marker's canvas** regardless of 3D depth; anything that must
 appear above it has to be `<Html>` too with a higher `zIndexRange`.
 
@@ -573,7 +595,7 @@ public/sw.js      the offline shell; its precache list is patched in by vite.con
 src/map/          MapLibre scene, the three.js car layer, the transform maths, styles
 src/scene/        what the place and the time say for themselves: the weather, the sun, the road and its buildings
 src/vehicles/     model loading + paint re-authoring, body previews, the paint palette
-src/marker/       the 3D damage marker, and the reconstruction that stands every car in its studio
+src/marker/       the 3D damage marker, the photos pinned to its panels, and the reconstruction that stands every car in its studio
 src/assist/       the optional assistant: the wire contract and its parsers, the metric frame, the client
 src/zones.ts models.ts schema.ts geo.ts geocode.ts   shared
 server/           the reference claim server, its session tokens, retention and reuse signals (no dependencies)

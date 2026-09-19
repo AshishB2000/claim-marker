@@ -160,7 +160,15 @@ function ReconstructionView({ claim, voice, lighting }: { claim: Claim; voice: V
   const at = play.playing ? Math.min(play.clock, play.timeline.ms) : play.timeline.ms
   return (
     <div data-reconstruction-view className="card overflow-hidden">
-      <Reconstruction vehicles={claim.vehicles} impact={claim.impact} poses={play.poses} lang="en" lighting={lighting} className="h-[480px] bg-slate-100" />
+      <Reconstruction
+        vehicles={claim.vehicles}
+        impact={claim.impact}
+        poses={play.poses}
+        photos={claim.attachments.photos}
+        lang="en"
+        lighting={lighting}
+        className="h-[480px] bg-slate-100"
+      />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 px-4 py-3 text-xs text-slate-600">
         {play.canPlay && (
           <>

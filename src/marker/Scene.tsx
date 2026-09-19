@@ -10,11 +10,13 @@ import { Car } from './Car'
 import { Picker } from './Picker'
 import { translate, type Key, type Lang } from '../i18n'
 import { ORBIT_TARGET, cameraFor } from './camera'
-import { toWorld } from '../vehicles/bodies'
+import { toModel, toWorld } from '../vehicles/bodies'
 import type { Lighting } from '../scene/lighting'
-import type { V3 } from '../zones'
+import { nearestZone, type V3 } from '../zones'
 import { MAX_MARKS, renders } from './damageUniforms'
 import { Studio } from './Studio'
+import { PHOTO_DRAG, type CardPhoto } from './cards'
+import { PhotoCards } from './PhotoCards'
 
 /**
  * A digit drawn into a texture, one per label, shared by every pin and every instance.
@@ -140,28 +142,29 @@ function HoverLabel({ store, lang }: { store: MarkerStore; lang: Lang }) {
 
 type Orbit = { target: THREE.Vector3 } | null
 
+/** where the camera goes to face a point in metres: `cameraFor`, at the current distance, from where it is now */
+function aimAt(camera: THREE.Camera, controls: Orbit, point: V3) {
+  const target = controls?.target ?? new THREE.Vector3(...ORBIT_TARGET)
+  const distance = camera.position.distanceTo(target)
+  return new THREE.Vector3(...cameraFor(point, distance, [target.x, target.y, target.z], [camera.position.x - target.x, camera.position.z - target.z]))
+}
+
 /**
- * Eases the camera round to face a damage when its pin is tapped. Gives up the moment the
- * user actually drags or zooms — a tap on a pin is not a drag — so it never fights a gesture.
+ * Eases the camera round to face a damage when its pin is tapped, or a panel when the photo
+ * pinned to it is — whatever the store is `facing`. Gives up the moment the user actually drags
+ * or zooms — a tap on a pin is not a drag — so it never fights a gesture; and a drag also lets
+ * go of `facing`, which is what brings that panel's photo cards back.
  */
 function CameraRig({ store }: { store: MarkerStore }) {
   const camera = useThree((s) => s.camera)
   const gl = useThree((s) => s.gl)
   const controls = useThree((s) => s.controls) as unknown as Orbit
   const goal = useRef<THREE.Vector3 | null>(null)
-  const selected = useStore(store, (s) => s.selected)
+  const facing = useStore(store, (s) => s.facing)
 
   useEffect(() => {
-    if (selected === null) return
-    const { damages, vehicle } = store.getState()
-    const d = damages[selected]
-    if (!d) return
-    const target = controls?.target ?? new THREE.Vector3(...ORBIT_TARGET)
-    const distance = camera.position.distanceTo(target)
-    goal.current = new THREE.Vector3(
-      ...cameraFor(toWorld(vehicle, d.point), distance, [target.x, target.y, target.z], [camera.position.x - target.x, camera.position.z - target.z]),
-    )
-  }, [selected, store, camera, controls])
+    if (facing) goal.current = aimAt(camera, controls, toWorld(store.getState().vehicle, facing.point))
+  }, [facing, store, camera, controls])
 
   useEffect(() => {
     const el = gl.domElement
@@ -169,7 +172,9 @@ function CameraRig({ store }: { store: MarkerStore }) {
     const onDown = () => (down = true)
     const onUp = () => (down = false)
     const onMove = () => {
-      if (down) goal.current = null
+      if (!down) return
+      goal.current = null
+      if (store.getState().facing) store.setState({ facing: null })
     }
     const onWheel = () => (goal.current = null)
     el.addEventListener('pointerdown', onDown)
@@ -182,7 +187,7 @@ function CameraRig({ store }: { store: MarkerStore }) {
       el.removeEventListener('wheel', onWheel)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [gl])
+  }, [gl, store])
 
   useFrame((_, dt) => {
     const g = goal.current
@@ -196,6 +201,80 @@ function CameraRig({ store }: { store: MarkerStore }) {
   return null
 }
 
+/**
+ * The photos pinned to this body; tapping one turns the camera to its panel and opens it. The
+ * panel the camera has been turned to face — a tapped pin's, a tapped photo's — has its cards
+ * stand aside until the customer turns the camera or the selection clears (`facing`): read here
+ * in render, never copied into state.
+ */
+function PinnedPhotos({ store, photos, onOpenPhoto }: { store: MarkerStore; photos: CardPhoto[]; onOpenPhoto?: (photoId: number) => void }) {
+  const vehicle = useStore(store, (s) => s.vehicle)
+  const faced = useStore(store, (s) => s.facing?.zone ?? null)
+  return (
+    <PhotoCards
+      body={vehicle}
+      photos={photos}
+      faced={faced}
+      onOpen={
+        onOpenPhoto &&
+        ((photo, zone) => {
+          store.getState().face(zone)
+          onOpenPhoto(photo.id)
+        })
+      }
+    />
+  )
+}
+
+/**
+ * A photo's thumbnail dragged onto the car says which panel it shows: the drop point is cast
+ * into the scene from this camera, the hit on the body goes back to the kit's units, and the
+ * nearest zone is the answer. While the drag is over the car the panel under it is tinted, the
+ * same tint as a hover. Only a photo's drag is taken — anything else dropped here is not ours.
+ */
+function PhotoDrop({ store, onTagPhoto }: { store: MarkerStore; onTagPhoto: (photoId: number, zoneId: string) => void }) {
+  const gl = useThree((s) => s.gl)
+  const camera = useThree((s) => s.camera)
+  const scene = useThree((s) => s.scene)
+  useEffect(() => {
+    const el = gl.domElement
+    const zoneAt = (e: DragEvent) => {
+      const car = scene.getObjectByName('car')
+      if (!car) return null
+      const r = el.getBoundingClientRect()
+      const ray = new THREE.Raycaster()
+      ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, 1 - ((e.clientY - r.top) / r.height) * 2), camera)
+      const hit = ray.intersectObject(car, true)[0]
+      if (!hit) return null
+      const { vehicle } = store.getState()
+      return nearestZone(vehicle, toModel(vehicle, [hit.point.x, hit.point.y, hit.point.z]))
+    }
+    const ours = (e: DragEvent) => !!e.dataTransfer?.types.includes(PHOTO_DRAG)
+    const over = (e: DragEvent) => {
+      if (!ours(e)) return
+      e.preventDefault()
+      store.getState().hover(zoneAt(e))
+    }
+    const leave = () => store.getState().hover(null)
+    const drop = (e: DragEvent) => {
+      if (!ours(e)) return
+      e.preventDefault()
+      const zone = zoneAt(e)
+      store.getState().hover(null)
+      if (zone) onTagPhoto(Number(e.dataTransfer!.getData(PHOTO_DRAG)), zone.id)
+    }
+    el.addEventListener('dragover', over)
+    el.addEventListener('dragleave', leave)
+    el.addEventListener('drop', drop)
+    return () => {
+      el.removeEventListener('dragover', over)
+      el.removeEventListener('dragleave', leave)
+      el.removeEventListener('drop', drop)
+    }
+  }, [gl, camera, scene, store, onTagPhoto])
+  return null
+}
+
 export function Scene({
   store,
   modelUrl,
@@ -205,6 +284,10 @@ export function Scene({
   lang,
   lighting = null,
   dots = false,
+  readOnly = false,
+  photos,
+  onTagPhoto,
+  onOpenPhoto,
   onCanvas,
 }: {
   store: MarkerStore
@@ -222,6 +305,14 @@ export function Scene({
    * how much of the studio reflects. Null is the studio as it always was.
    */
   lighting?: Lighting | null
+  /** a document's copy: nothing can be marked or edited, the wheel scrolls the page; turning it round and tapping a pin or a photo still work */
+  readOnly?: boolean
+  /** the photos of this vehicle that show one of its panels, as cards beside those panels */
+  photos?: CardPhoto[]
+  /** a photo's thumbnail was dropped on this panel of the car */
+  onTagPhoto?: (photoId: number, zoneId: string) => void
+  /** a photo's card was tapped: show it large */
+  onOpenPhoto?: (photoId: number) => void
   onCanvas: (canvas: HTMLCanvasElement) => void
 }) {
   const t = THEME[theme]
@@ -239,35 +330,43 @@ export function Scene({
         toneMapping: THREE.ACESFilmicToneMapping,
         outputColorSpace: THREE.SRGBColorSpace,
       }}
-      onCreated={({ gl, camera }) => {
+      onCreated={({ gl, camera, scene }) => {
         onCanvas(gl.domElement)
-        // for the smoke: the store behind this canvas, and where a point in the kit's units lands on it
-        if (import.meta.env.DEV)
+        // for the smoke: the store behind this canvas, where a point in the kit's units lands on it,
+        // where a photo's card is on it (null until it is in the scene), and which way round the camera stands
+        if (import.meta.env.DEV) {
+          const pixels = (v: THREE.Vector3) => [((v.x + 1) / 2) * gl.domElement.width, ((1 - v.y) / 2) * gl.domElement.height]
           Object.assign(gl.domElement, {
             __probe: {
               store,
-              project: (p: V3) => {
-                const v = new THREE.Vector3(...toWorld(store.getState().vehicle, p)).project(camera)
-                return [((v.x + 1) / 2) * gl.domElement.width, ((1 - v.y) / 2) * gl.domElement.height]
+              project: (p: V3) => pixels(new THREE.Vector3(...toWorld(store.getState().vehicle, p)).project(camera)),
+              card: (id: number) => {
+                const card = scene.getObjectByName(`card:${id}`)
+                return card ? pixels(card.getWorldPosition(new THREE.Vector3()).project(camera)) : null
               },
+              azimuth: () => Math.atan2(camera.position.x, camera.position.z),
             },
           })
+        }
       }}
       onPointerMissed={() => store.getState().select(null)}
     >
       <Studio theme={theme} lighting={lighting} keyAt={key}>
-        <Car store={store} paint={paint} modelUrl={modelUrl} />
+        <Car store={store} paint={paint} modelUrl={modelUrl} pickable={!readOnly} />
       </Studio>
 
       <Markers store={store} accent={t.accent} dots={dots} />
+      {photos && <PinnedPhotos store={store} photos={photos} onOpenPhoto={onOpenPhoto} />}
+      {onTagPhoto && <PhotoDrop store={store} onTagPhoto={onTagPhoto} />}
       <HoverLabel store={store} lang={lang} />
-      <Picker store={store} lang={lang} />
+      {!readOnly && <Picker store={store} lang={lang} />}
       <CameraRig store={store} />
 
       <OrbitControls
         makeDefault
         target={ORBIT_TARGET}
         enablePan={false}
+        enableZoom={!readOnly}
         enableDamping
         dampingFactor={0.09}
         rotateSpeed={0.75}

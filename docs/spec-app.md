@@ -1596,6 +1596,103 @@ stands, and the map's Play moving A metres in the reconstruction and back. Scree
 `toDataURL`, because the canvas keeps no buffer; movement in the scene's metres through the
 probe, not on screen, because a car driving at the camera barely moves there.
 
+## Photos pinned to the car (v10)
+
+`Photo.shows` already tied a photograph to a panel, and the report put it beside the mark in the
+list. On the car it was nowhere. Now every photograph that shows a panel stands beside that
+panel in the studio as a small framed card with a thin leader line back to it — on the damage
+step, on the review page's marked-up car (and so in the PNG sent with the report), on the
+desk's, and on each car in the desk's reconstruction. Tapping a card turns the camera to the
+panel and opens the photograph large.
+
+**Where a card stands is pure.** `cardPlacement(body, zone)` in `src/marker/cards.ts` returns
+`{ position, normal }` in the body's own metres — nose +Z, up +Y, the car's left +X. The zone's
+anchor is in the kit's units, like everything `claim-marker/1` stores, so it goes through
+`toWorld` first and the 0.6 m is a real 0.6 m on every body. The outward normal runs from the
+middle of the body's footprint on the floor — the kit's origin, where it stands every body —
+out through the anchor. Measured from there every normal leans upward: a wheel's or a bumper's
+card rises beside it instead of sinking into the floor, a door's stands out at about the height
+of its glass, the roof's above it. `test/cards.test.ts` pins one card to hand-computed metres,
+the directions to the frame (the left door's card at +X, the nose's at +Z, the roof's up), and
+for every zone of every body a unit normal, a card exactly 0.6 m from its anchor, never lower
+than it and farther from the middle than the panel. Several photographs of one panel stack,
+each a little down and to the right of the one before.
+
+**A texture, not `Html`.** The card is a plane on a drei `Billboard` with the photograph drawn
+into a canvas texture — cropped square, in a white frame with a grey edge so it reads against
+the pale studio and against paint — because drei's `Html` is DOM laid over the canvas and would
+be missing from the export. The texture is white until the image decodes, then asks for a frame
+(`invalidate`), which is what the reconstruction's on-demand loop needs to show it at all. The
+leader is a plain one-pixel `lineSegments`, not drei's `Line`: that is a fat-line shader to
+compile in every canvas a card is in, for a line meant to be thin anyway. Each card's placement
+is memoised, because the reconstruction re-renders on every frame of a playback.
+
+**Tagging by dragging.** Beside the car, the damage step lists this vehicle's photographs. Each
+thumbnail is `draggable` with the photo's place on the claim as `PHOTO_DRAG` data; the marker
+listens on its canvas and takes only that type. The drop point is cast from the studio camera
+against the body alone (the car's primitive is named `car`, so pins and cards never catch it),
+the hit goes back to kit units with `toModel`, and `nearestZone` names the panel for the same
+`tagPhoto` the photo-first suggestions use. While the drag is over the car the panel under it is
+tinted, the same tint as a hover, and the turntable stops the moment a drag enters the car, as it
+does at the first touch, so the panel under the pointer holds still. Under each thumbnail a select names the panel it shows — the
+same `tagPhoto` for a keyboard or a phone, where HTML drag is not reliable. A tagged photograph
+can be dropped again on another panel; nothing un-tags one. `shows` is still set only by
+`tagPhoto`, still **absent** from the document when unset, and nothing else in `claim/1` moves.
+
+**Tapping a card.** A card opens on a click that did not move (`e.delta ≤ 2`), not on the press
+a pin uses: a modal opening under a drag would swallow the drag, and a drag that merely starts
+on a card should turn the car. The press is still the card's, so the body behind it is not
+picked. `store.face(zone)` sets `facing` and closes whatever the picker had open; the camera rig
+eases to it through `cameraFor` at the current distance and gives up the moment the user drags.
+The photograph opens in a native modal `<dialog>` (`PhotoLightbox`), which brings Escape, the
+focus trap and the top layer with it, and takes `lang` as a prop because the desk renders it too.
+
+**The panel the camera faces has its cards stand aside.** `cameraFor` puts the camera on the
+azimuth through the point it faces, and a card stands on that same azimuth, 0.6 m out along the
+panel's normal — so seen from where a tap takes the camera, a card covers its own panel: the
+pin behind it is hidden by depth, the card takes the press meant for the pin, and tapping the pin
+of a panel with a photo ended with the photo over the damage. The placement stays; the rule is
+that **while the camera faces a panel, that panel's cards are not drawn and take no taps**.
+`facing` in the marker store is `{ point, zone }` — what the camera was last turned to face — set
+by a pin's selection (`select`, and `commit`, which selects the new mark) and by a card's tap
+(`face`); a new object each time, so a second tap on the same pin or card after a turn aims
+again, and it is also the camera rig's one trigger. It is cleared when the selection clears
+(`select(null)`, `pick`, `remove`, `load`) and by the rig the moment the customer drags the
+camera round — the same moment the rig gives up its goal — so the cards come back as soon as the
+view is the customer's own again. `PhotoCards` takes the zone as `faced` and reads it in render:
+the cards stay mounted, `visible={false}` with no handlers, so the photograph is not decoded
+again when they return. After a card's tap the card stands aside too, which is right: the
+lightbox is showing the photograph.
+
+**The desk's copy can be turned; the review's cannot.** `ReportDocument`'s marked-up cars are
+now `readOnly`: the body takes no tap and tints nothing, there is no picker or hint, and the
+wheel scrolls the page instead of zooming. On the desk the wrapper takes pointer events, so an
+adjuster can walk round the car, tap a pin to face it, and tap a card to open the photograph.
+The customer's review copy keeps `pointer-events-none`: its canvas is the evidence exported at
+send, and it goes as it is framed.
+
+**The reconstruction** stands each car's cards inside that car's `car:<id>` group, which is in
+the body's own metres, so the same `cardPlacement` puts them in the same place and they drive
+in with the car during a playback. Nothing there can be tapped. The desk's tab shows them; the
+review page's 240-px copy leaves them out. A card there is about fifteen pixels, and timed on
+the smoke's software GL the damage-to-review step took the same eighteen seconds to show the
+review either way, but with the card in that canvas the page stayed busy for about five
+seconds more afterwards — on the page that records the replay at send.
+
+**What the smoke proves.** On the damage step (both languages) the photograph of A is dragged
+from its thumbnail onto the left front door where the camera faces it, and the draft says it
+shows `left_front_door`; the frame `export()` takes (`toDataURL`) has no green before and
+thousands of green pixels after, round where the DEV probe (`card(id)`) projects the card — the
+smoke's photograph is green because nothing else in the studio is. The car is then turned away
+by a drag from an empty corner, the card is clicked where it now is, and the camera's azimuth
+(`azimuth()`) comes back to within 5° of the door while the dialog named "Left front door" shows
+that photograph; Escape closes it. While the camera faces the door the card's green is gone from
+the frame, and the next drag brings it back. Then the door's own pin is clicked where it stands:
+it is selected, the camera turns to the door, the pin's violet dot is on the frame at its projected
+point, and there is no green within 40 px of it. On the desk, a tap on the car opens no picker;
+after `face(door)` and a turn off it, the card on the door opens the photograph, and the
+Reconstruction tab's screenshot has the card's green by A.
+
 ## Tell us everything, once (v9)
 
 A form asks forty questions one at a time. A person who has just been in a crash tells you what

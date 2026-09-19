@@ -200,8 +200,10 @@ export type Photo = {
   caption: string
   /**
    * the panel of that vehicle it shows, a zone id — set when the customer adds a mark the
-   * assistant read off this photo, so the report can put the photo beside the mark. Absent
-   * in documents written before it existed, and dropped when the zone is not on that body.
+   * assistant read off this photo, or drops the photo on that panel of the car (or picks the
+   * panel under its thumbnail), so the report can put the photo beside the mark and the car
+   * can stand it beside the panel. Absent in documents written before it existed, and dropped
+   * when the zone is not on that body.
    */
   shows?: string | null
   /**

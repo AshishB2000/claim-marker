@@ -8,6 +8,7 @@ import { themeClass, type Theme } from '../theme'
 import { Scene } from './Scene'
 import type { Lighting } from '../scene/lighting'
 import type { Vehicle } from '../zones'
+import type { CardPhoto } from './cards'
 
 export type ExportResult = {
   json: ClaimValue
@@ -39,6 +40,14 @@ export type DamageMarkerProps = {
   dots?: boolean
   /** the before/after slider and the severity map over the canvas; view state only, never in the document */
   tools?: boolean
+  /** a document's copy (the desk's): nothing can be marked or edited and the wheel scrolls the page, but it still turns round, and a pin or a photo still takes a tap */
+  readOnly?: boolean
+  /** this vehicle's photos that show one of its panels (`cardsOf`), each a card standing out from that panel */
+  photos?: CardPhoto[]
+  /** a photo's thumbnail (dragged with `PHOTO_DRAG`) was dropped on this panel of the car */
+  onTagPhoto?: (photoId: number, zoneId: string) => void
+  /** a photo's card was tapped: the camera turns to its panel, and the host shows the photo large */
+  onOpenPhoto?: (photoId: number) => void
   className?: string
   style?: CSSProperties
   ref?: Ref<DamageMarkerHandle>
@@ -87,6 +96,10 @@ export function DamageMarker({
   lighting = null,
   dots = false,
   tools = true,
+  readOnly = false,
+  photos,
+  onTagPhoto,
+  onOpenPhoto,
   className,
   style,
   ref,
@@ -140,9 +153,24 @@ export function DamageMarker({
   )
 
   return (
-    <div className={themeClass(theme, className)} style={style} onPointerDownCapture={() => setIdle(false)}>
-      <Scene store={store} modelUrl={modelUrl} paint={paint} theme={theme} idle={idle} lang={lang} lighting={lighting} dots={dots} onCanvas={setCanvas} />
-      <Hint store={store} lang={lang} />
+    // the turntable stops at the first touch, or when a photo is dragged over the car to be dropped on a panel
+    <div className={themeClass(theme, className)} style={style} onPointerDownCapture={() => setIdle(false)} onDragEnterCapture={() => setIdle(false)}>
+      <Scene
+        store={store}
+        modelUrl={modelUrl}
+        paint={paint}
+        theme={theme}
+        idle={idle}
+        lang={lang}
+        lighting={lighting}
+        dots={dots}
+        readOnly={readOnly}
+        photos={photos}
+        onTagPhoto={onTagPhoto}
+        onOpenPhoto={onOpenPhoto}
+        onCanvas={setCanvas}
+      />
+      {!readOnly && <Hint store={store} lang={lang} />}
       {tools && <Tools store={store} lang={lang} />}
     </div>
   )
