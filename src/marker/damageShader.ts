@@ -25,7 +25,7 @@
  * never reach the document.
  */
 import * as THREE from 'three'
-import type { Role } from '../vehicles/load'
+import { roles, type Role } from '../vehicles/load'
 import type { V3 } from '../zones'
 import { MAX_MARKS, type DamagePack } from './damageUniforms'
 
@@ -268,4 +268,25 @@ export function patchDamage(material: THREE.Material, u: DamageUniforms, role: R
       .replace('#include <colorspace_fragment>', `#include <colorspace_fragment>${CAVITY_GLSL}`)
   }
   material.customProgramCacheKey = () => `${key}|cm-damage`
+}
+
+/**
+ * Every material of one body instance cloned and patched with `u` — the cached template's
+ * materials are never touched, and two instances never share a uniform. `dress` runs on each
+ * clone first: the marker's zone tint, which the damage patch then composes over.
+ */
+export function patchInstance(root: THREE.Object3D, u: DamageUniforms, dress?: (material: THREE.Material) => void) {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh
+    if (!mesh.isMesh) return
+    const r = roles(mesh)
+    const offset = nodeOffset(mesh, root)
+    const own = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map((m, i) => {
+      const c = m.clone()
+      dress?.(c)
+      patchDamage(c, u, r[i] ?? 'trim', offset)
+      return c
+    })
+    mesh.material = Array.isArray(mesh.material) ? own : own[0]
+  })
 }

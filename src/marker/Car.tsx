@@ -4,9 +4,9 @@ import { useThree, type ThreeEvent } from '@react-three/fiber'
 import { useStore } from 'zustand'
 import { activeZone, type MarkerStore } from './store'
 import { nearestZone, type V3, type Vehicle, type Zone } from '../zones'
-import { bodyBounds, instanceBody, loadBody, roles } from '../vehicles/load'
+import { bodyBounds, instanceBody, loadBody } from '../vehicles/load'
 import { PROPORTION, radiusToWorld, toModel, toWorld } from '../vehicles/bodies'
-import { applyDamage, applyView, createDamageUniforms, nodeOffset, patchDamage } from './damageShader'
+import { applyDamage, applyView, createDamageUniforms, patchInstance } from './damageShader'
 import { damageUniforms } from './damageUniforms'
 
 const TINT = new THREE.Color('#3b82f6')
@@ -89,20 +89,7 @@ export function Car({ store, paint, modelUrl }: { store: MarkerStore; paint: str
   // and two markers on one page must not share them
   const model = useMemo(() => {
     const root = instanceBody(template, paint)
-    root.traverse((o) => {
-      const mesh = o as THREE.Mesh
-      if (!mesh.isMesh) return
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-      const r = roles(mesh)
-      const offset = nodeOffset(mesh, root)
-      const own = mats.map((m, i) => {
-        const c = m.clone()
-        patch(c, uniforms)
-        patchDamage(c, damageU, r[i] ?? 'trim', offset)
-        return c
-      })
-      mesh.material = Array.isArray(mesh.material) ? own : own[0]
-    })
+    patchInstance(root, damageU, (c) => patch(c, uniforms))
     return root
   }, [template, uniforms, damageU, paint])
 

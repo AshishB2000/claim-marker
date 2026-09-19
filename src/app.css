@@ -54,7 +54,8 @@
   .chip {
     @apply inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-slate-900/10 transition select-none hover:bg-slate-50;
   }
-  .chip[aria-pressed="true"] {
+  .chip[aria-pressed="true"],
+  .chip[aria-selected="true"] {
     @apply bg-ink text-white ring-ink;
   }
   /* a yes / no / not sure answer: big enough for a thumb, obvious which one is chosen */

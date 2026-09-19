@@ -180,6 +180,9 @@ export const en = {
   'scene.doc.reportedInSpanish': 'Reported in Spanish',
   'scene.doc.whereHit': 'where they hit',
   'scene.doc.routes': 'The lines are the routes each vehicle took.',
+  // ── the reconstruction: the same diagram in 3D, under the map on the review page and a tab on the desk
+  'scene.doc.reconstruction': 'The same moment in 3D.',
+  'scene.reconstruction.label': 'The vehicles in 3D where they came to rest, with the point of impact ringed on the ground',
   // ── the recorded replay video, desk only: the diagram as it was sent, not the live playback above it
   'scene.doc.replay.heading': 'Recorded replay',
   'scene.doc.replay.stepBack': 'Back a frame',
@@ -387,6 +390,8 @@ export const es: Record<keyof typeof en, string> = {
   'scene.doc.reportedInSpanish': 'Reported in Spanish',
   'scene.doc.whereHit': 'dónde chocaron',
   'scene.doc.routes': 'Las líneas son el recorrido de cada vehículo.',
+  'scene.doc.reconstruction': 'El mismo momento, en 3D.',
+  'scene.reconstruction.label': 'Los vehículos en 3D donde quedaron, con el punto del choque marcado con un círculo en el suelo',
   'scene.doc.replay.heading': 'Repetición grabada',
   'scene.doc.replay.stepBack': 'Retroceder un cuadro',
   'scene.doc.replay.stepForward': 'Avanzar un cuadro',
