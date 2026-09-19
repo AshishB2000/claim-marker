@@ -25,6 +25,14 @@
  * as a sample customer, report an accident in the *built* page it embeds — not the dev page —
  * land on the portal's claim page with the server's reference, and follow its link into the
  * claims desk, which opens that report and nothing else.
+ *
+ * On the way it writes the README's four pictures of the desk — `docs/desk.png`,
+ * `docs/desk-compare.png`, `docs/desk-reconstruction.png` and `docs/desk-map.png` — each taken
+ * at the point in this walk where what is in the frame has just been proved, and none of them
+ * saved unless the frame has colours in it (`figure` below). A desk needs two accounts of one
+ * accident, a filed report with two cars on a diagram and three reports in three places before
+ * any of those pictures means anything, which is why they are taken here and not in
+ * `scripts/shoot.mjs`.
  */
 import { chromium } from 'playwright'
 import { readFileSync as readDictionary } from 'node:fs'
@@ -67,6 +75,34 @@ const fail = (msg) => {
   process.exit(1)
 }
 const ok = (msg) => console.log(`ok — ${msg}`)
+
+/**
+ * A README picture of the desk, taken where this walk has already proved what is in the frame —
+ * the pins in their status colours, both bodies in their paints, the two impact ticks on one
+ * scrubber. The frame is still counted before it is written: three of the desk's four surfaces
+ * are WebGL or a map canvas, and under software GL a canvas that has not finished linking its
+ * shaders hands back a rectangle of one colour, which is exactly what must never reach the
+ * README. Nothing is saved unless it has more than fifty colours in it.
+ */
+const figure = async (page_, name, target = page_, options = {}) => {
+  const buf = await target.screenshot(options)
+  const seen = await page_.evaluate(async (b64) => {
+    const img = new Image()
+    img.src = `data:image/png;base64,${b64}`
+    await img.decode()
+    const c = document.createElement('canvas')
+    c.width = img.width
+    c.height = img.height
+    c.getContext('2d').drawImage(img, 0, 0)
+    const px = c.getContext('2d').getImageData(0, 0, img.width, img.height).data
+    const colours = new Set()
+    for (let i = 0; i < px.length; i += 4 * 499) colours.add(`${px[i]},${px[i + 1]},${px[i + 2]}`)
+    return { width: img.width, height: img.height, colours: colours.size }
+  }, buf.toString('base64'))
+  if (seen.colours < 50) fail(`docs/${name}.png is a blank frame: ${seen.colours} colours in ${seen.width}×${seen.height}`)
+  await writeFile(new URL(`../docs/${name}.png`, import.meta.url), buf)
+  console.log(`   docs/${name}.png (${seen.width}×${seen.height}, ${seen.colours} colours)`)
+}
 
 if (!existsSync(new URL('../dist/lib/claim.js', import.meta.url))) fail('dist/lib/claim.js is missing: run `npm run build` first')
 
@@ -449,7 +485,7 @@ ok("desk: the document reads in the adjuster's voice — the policyholder, not \
 await deskPage.getByRole('radio', { name: 'In review' }).click()
 await deskPage.waitForTimeout(500)
 await deskPage.waitForTimeout(4000)
-await deskPage.screenshot({ path: 'docs/desk.png' })
+await figure(deskPage, 'desk')
 const after = await (await fetch(`http://localhost:${API_PORT}/claims/${shown}`, desk)).json()
 if (after.status !== 'reviewing') fail(`the desk's status change did not reach the server: ${after.status}`)
 ok('desk: lists the report, opens the document, moves it to "in review"')
@@ -582,6 +618,19 @@ const headline = await deskPage.locator('[data-compare] table caption').innerTex
 if (!new RegExp(`^The two accounts' impacts are \\d+ m and ${apartS.replace('.', '\\.')} s apart\\.$`).test(headline)) fail(`the headline does not give the gap as ${apartS} s: "${headline}"`)
 if (Number(apartS) < 1) fail(`the constructed disagreement is only ${apartS} s: the ticks would sit on top of each other`)
 ok(`desk: one scrubber, two impact ticks ${expectTicks.join(' ms and ')} ms — the other driver's where it was built (${OTHER_IMPACT_MS} ms) — and the headline "${headline}"`)
+// the README's picture of the comparison, taken here because the two ticks and the headline in
+// it are the two things the lines above have just held to a number. Only as far down as the
+// headline: below it the whole of both documents follows, and four metres of page is not a
+// picture of anything.
+await deskPage.locator('[data-compare]').scrollIntoViewIfNeeded()
+await deskPage.waitForTimeout(400)
+const compareClip = await deskPage.evaluate(() => {
+  const clock = document.querySelector('[data-compare] > div').getBoundingClientRect()
+  const caption = document.querySelector('[data-compare] table caption').getBoundingClientRect()
+  const y = Math.max(0, Math.round(clock.y))
+  return { x: Math.round(clock.x), y, width: Math.round(clock.width), height: Math.min(Math.round(caption.bottom) - y, window.innerHeight - y) }
+})
+await figure(deskPage, 'desk-compare', deskPage, { clip: compareClip })
 
 // both sets move on that clock: two moments of the scrub, each account's cars somewhere else
 const scrubbed = await deskPage.evaluate(async () => {
@@ -758,6 +807,9 @@ if (turned < still + 5000 || slid < 20) fail(`dragging did not orbit the reconst
 const reconDoc = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles
 if (JSON.stringify(reconDoc) !== JSON.stringify(policyCars)) fail('orbiting the reconstruction changed the stored vehicles')
 ok(`desk: the reconstruction tab stands both bodies in their paints (${paints.red} red px, ${paints.dark} dark px round each), and a drag orbits it (${turned} px changed, ${still} standing still; the red car moved ${slid.toFixed(0)} px on screen, the document did not)`)
+// the README's picture of the third tab, after the orbit — so the cars are seen from the angle
+// an adjuster puts them at, and after the paints above have proved the canvas is a real frame
+await figure(deskPage, 'desk-reconstruction', deskPage.locator('[data-reconstruction-view]'))
 
 // play drives them in on the same clock as the map, and they come back to rest; a scrub holds a moment.
 // Measured in the scene's metres, not on screen, where a car driving at the camera barely moves
@@ -1079,6 +1131,14 @@ ok(`desk map: zoomed out the reports fold into a cluster of ${clustered}, and ta
 
 // and the list follows the map when it is asked to
 await openDeskMap()
+// the README's picture of the desk's second reading of its inbox: the list beside the map, the
+// pins in their status colours, and the heat layer over them — all three of which this walk has
+// already held to the colours and the counts above
+await deskPage.getByRole('button', { name: 'Heat' }).click()
+await deskPage.waitForTimeout(2500)
+await figure(deskPage, 'desk-map')
+await deskPage.getByRole('button', { name: 'Heat' }).click()
+await deskPage.waitForTimeout(500)
 const all = await listed()
 await deskPage.getByRole('button', { name: "Only what's on the map" }).click()
 // fewer than the whole list already: a report with no place is on no map
