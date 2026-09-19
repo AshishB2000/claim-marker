@@ -22,6 +22,8 @@ export type MarkerState = {
   strength: number
   /** the severity map: paint replaced by a blue-to-red gradient of accumulated damage */
   heatmap: boolean
+  /** a point, in the kit's units, the camera was last asked to face — a pinned photo's panel; a new object per ask */
+  facing: { point: V3 } | null
 
   pick: (point: V3) => void
   commit: (severity: Severity) => void
@@ -31,6 +33,8 @@ export type MarkerState = {
   hover: (zone: Zone | null) => void
   setStrength: (strength: number) => void
   setHeatmap: (heatmap: boolean) => void
+  /** turn the camera to a point, closing whatever was being edited */
+  face: (point: V3) => void
   load: (value: ClaimValue) => void
   value: () => ClaimValue
 }
@@ -46,6 +50,7 @@ export function createMarkerStore(initial: ClaimValue = emptyValue()) {
     hovered: null,
     strength: 1,
     heatmap: false,
+    facing: null,
 
     pick: (point) => set({ pending: { zone: nearestZone(get().vehicle, point), point }, selected: null }),
     commit: (severity) => {
@@ -65,6 +70,7 @@ export function createMarkerStore(initial: ClaimValue = emptyValue()) {
     hover: (zone) => set({ hovered: zone }),
     setStrength: (strength) => set({ strength: Math.min(1, Math.max(0, strength)) }),
     setHeatmap: (heatmap) => set({ heatmap }),
+    face: (point) => set({ facing: { point }, selected: null, pending: null }),
     load: (value) => set({ vehicle: value.vehicle, damages: value.damages, selected: null, pending: null }),
     value: () => ({ schema: SCHEMA, vehicle: get().vehicle, damages: get().damages }),
   }))

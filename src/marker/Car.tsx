@@ -67,7 +67,8 @@ function applyZone(u: Uniforms, vehicle: Vehicle, zone: Zone | null) {
 const VIEW_DISTANCE = 1.75
 const VIEW_DIRECTION = new THREE.Vector3(0.59, 0.4, 0.7).normalize()
 
-export function Car({ store, paint, modelUrl }: { store: MarkerStore; paint: string; modelUrl?: string }) {
+/** `pickable` off is a document's copy: the body takes no tap and tints nothing under the pointer */
+export function Car({ store, paint, modelUrl, pickable = true }: { store: MarkerStore; paint: string; modelUrl?: string; pickable?: boolean }) {
   const vehicle = useStore(store, (s) => s.vehicle)
   const zone = useStore(store, activeZone)
   const damages = useStore(store, (s) => s.damages)
@@ -130,21 +131,31 @@ export function Car({ store, paint, modelUrl }: { store: MarkerStore; paint: str
   const at = (e: ThreeEvent<PointerEvent>): V3 => toModel(vehicle, [e.point.x, e.point.y, e.point.z])
 
   return (
+    // named, so a photo dropped on the canvas can be cast against the body alone
     <primitive
       object={model}
+      name="car"
       scale={PROPORTION[vehicle]}
-      onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-        e.stopPropagation()
-        store.getState().pick(at(e))
-      }}
-      onPointerMove={(e: ThreeEvent<PointerEvent>) => {
-        e.stopPropagation()
-        const s = store.getState()
-        if (s.pending || s.selected !== null) return
-        const next = nearestZone(s.vehicle, at(e))
-        if (next !== s.hovered) s.hover(next)
-      }}
-      onPointerOut={() => store.getState().hover(null)}
+      onPointerDown={
+        pickable
+          ? (e: ThreeEvent<PointerEvent>) => {
+              e.stopPropagation()
+              store.getState().pick(at(e))
+            }
+          : undefined
+      }
+      onPointerMove={
+        pickable
+          ? (e: ThreeEvent<PointerEvent>) => {
+              e.stopPropagation()
+              const s = store.getState()
+              if (s.pending || s.selected !== null) return
+              const next = nearestZone(s.vehicle, at(e))
+              if (next !== s.hovered) s.hover(next)
+            }
+          : undefined
+      }
+      onPointerOut={pickable ? () => store.getState().hover(null) : undefined}
     />
   )
 }

@@ -22,11 +22,13 @@ import { plural, translate, type Key, type Lang, type Vars } from '../i18n'
 import { MapScene, type MapSceneHandle } from '../map/MapScene'
 import { DamageMarker, type DamageMarkerHandle } from '../marker/DamageMarker'
 import { Reconstruction } from '../marker/Reconstruction'
+import { cardsOf } from '../marker/cards'
 import { SCHEMA, SEVERITY_COLOR } from '../schema'
 import { PAINTS } from '../vehicles/paint'
 import { Icon } from './icons'
 import { VehiclePhoto } from './VehiclePhoto'
 import { MarkPhotos } from './MarkPhotos'
+import { PhotoLightbox } from './PhotoLightbox'
 import { PlainViewChip } from './PlainView'
 import { usePlayback } from '../map/usePlayback'
 import type { Lighting } from '../scene/lighting'
@@ -222,6 +224,8 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
   const ownMarkers = useRef(new Map<string, DamageMarkerHandle>())
   const marks = markers ?? ownMarkers
   const play = usePlayback(claim.vehicles)
+  // a photo shown large, by its place on the claim — opened by tapping its card on the desk's car
+  const [open, setOpen] = useState<number | null>(null)
 
   const loc = claim.incident.location
   const ctx = claim.incident.context
@@ -558,7 +562,16 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
         {edit && center && info.diagram && claim.vehicles.some((v) => v.position) && (
           <figure className="mt-3 overflow-hidden rounded-xl ring-1 ring-slate-900/10 print:hidden">
             {/* a phone's swipe over it scrolls the page, and a wheel here scrolls it too */}
-            <Reconstruction vehicles={claim.vehicles} impact={claim.impact} poses={play.poses} lang={lang} lighting={lighting} zoom={false} className="h-60 bg-slate-100 max-sm:pointer-events-none" />
+            <Reconstruction
+              vehicles={claim.vehicles}
+              impact={claim.impact}
+              poses={play.poses}
+              photos={photos}
+              lang={lang}
+              lighting={lighting}
+              zoom={false}
+              className="h-60 bg-slate-100 max-sm:pointer-events-none"
+            />
             <figcaption className="bg-slate-50 px-4 py-2 text-xs text-slate-600">{t('scene.doc.reconstruction')}</figcaption>
           </figure>
         )}
@@ -573,7 +586,8 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
           <div className="space-y-4">
             {damaged.map((v) => (
               <div key={v.id} className="grid gap-4 overflow-hidden rounded-xl ring-1 ring-slate-900/10 sm:grid-cols-[340px_minmax(0,1fr)]">
-                <div className="pointer-events-none h-44 bg-slate-100 sm:h-full">
+                {/* the customer's copy is the evidence exported at send, so it stays as it is framed; the desk's turns, and its photos open */}
+                <div className={`${voice === 'customer' ? 'pointer-events-none ' : ''}h-44 bg-slate-100 sm:h-full`}>
                   <DamageMarker
                     ref={(h) => {
                       if (h) marks.current.set(v.id, h)
@@ -587,6 +601,9 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
                     // canvas as evidence at send, so it always shows the marks in full
                     tools={voice !== 'customer'}
                     value={{ schema: SCHEMA, vehicle: v.body, damages: v.damages }}
+                    readOnly
+                    photos={cardsOf(photos, v.id)}
+                    onOpenPhoto={setOpen}
                   />
                 </div>
                 <div className="p-4 pt-3 sm:pl-0">
@@ -672,6 +689,7 @@ export function ReportDocument({ claim, edit = false, mapRef, markers, badge, vo
           />
         </Part>
       )}
+      {open !== null && photos[open] && <PhotoLightbox photo={photos[open]} lang={lang} onClose={() => setOpen(null)} />}
     </article>
   )
 }

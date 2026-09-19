@@ -819,13 +819,14 @@ if (d4b.vehicles[0].damages.length !== 3 || d4b.vehicles[0].damages[2].severity 
 ok(`damage: the missing ${door.id.replace(/_/g, ' ')} is a cavity on the car, rgb(${hole.spot})`)
 
 // a photograph through the real file picker: downscaled to 1280 on the long edge, kept as a
-// JPEG on the claim, tagged with the vehicle it shows
+// JPEG on the claim, tagged with the vehicle it shows. Green, which nothing else in the studio
+// is — not the red car, the pins, the damage or the floor — so its card can be counted on the car.
 const png = await page.evaluate(() => {
   const c = document.createElement('canvas')
   c.width = 1600
   c.height = 1200
   const x = c.getContext('2d')
-  x.fillStyle = '#b91c1c'
+  x.fillStyle = '#15803d'
   x.fillRect(0, 0, 1600, 1200)
   x.fillStyle = '#fff'
   x.fillRect(200, 300, 900, 500)
@@ -849,6 +850,74 @@ const dims = await page.evaluate(
   photo.data,
 )
 if (dims[0] !== 1280 || dims[1] !== 960) fail(`expected 1280×960 after downscaling, got ${dims.join('×')}`)
+
+// ── the photo pinned to the car ───────────────────────────────────────
+// Dragged from its thumbnail beside the car onto the left front door — which the camera faces,
+// the missing door being the last mark — the drop is cast into the scene and the nearest panel is
+// the one the photo shows. Its card then stands out from that door in the very frame the export
+// takes (`toDataURL`, what `export()` returns): green, where the probe says the card is.
+const MARKER = '.cm-root canvas'
+/** green pixels in the marker's exported frame: round the card when it is in the scene, else anywhere */
+const cardGreen = (id) =>
+  page.evaluate(
+    async ([sel, id]) => {
+      const c = document.querySelector(sel)
+      const at = c.__probe.card(id)
+      const img = new Image()
+      img.src = c.toDataURL('image/png')
+      await img.decode()
+      const off = document.createElement('canvas')
+      off.width = img.width
+      off.height = img.height
+      const ctx = off.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+      const [x, y, r] = at ? [Math.round(at[0]), Math.round(at[1]), 40] : [img.width >> 1, img.height >> 1, Math.max(img.width, img.height)]
+      const px = ctx.getImageData(x - r, y - r, 2 * r, 2 * r).data
+      let n = 0
+      for (let k = 0; k < px.length; k += 4) if (px[k + 1] > 90 && px[k + 1] > px[k] * 1.6 && px[k + 1] > px[k + 2] * 1.3) n++
+      return { at, n }
+    },
+    [MARKER, id],
+  )
+const untagged = await cardGreen(1)
+if (untagged.at || untagged.n > 20) fail(`a card is on the car before the photo says which panel it shows (${untagged.n} green px)`)
+await page.locator(MARKER).scrollIntoViewIfNeeded()
+const doorOnCanvas = await page.evaluate(([sel, p]) => document.querySelector(sel).__probe.project(p), [MARKER, door.anchor])
+await page.locator('img[draggable="true"]').dragTo(page.locator(MARKER), { targetPosition: { x: doorOnCanvas[0], y: doorOnCanvas[1] } })
+await page.waitForTimeout(400)
+const pinnedPhoto = (await draft()).attachments.photos[1]
+if (pinnedPhoto.shows !== 'left_front_door') fail(`dropping the photo on the left front door tagged it ${JSON.stringify(pinnedPhoto.shows)}`)
+let tagged = await cardGreen(1)
+for (let i = 0; i < 40 && tagged.n < 150; i++) {
+  await page.waitForTimeout(250)
+  tagged = await cardGreen(1)
+}
+if (!tagged.at || tagged.n < 150) fail(`the exported frame has no card for the photo: ${tagged.n} green px round ${JSON.stringify(tagged.at)}`)
+ok(`damage: the photo dropped on the car shows the ${pinnedPhoto.shows.replace(/_/g, ' ')}, and its card is in the exported frame (${tagged.n} green px round it)`)
+
+// Tapping the card turns the camera to its panel and opens the photo large. The car is turned
+// away first by a drag from the empty corner of the studio, then the card is tapped where it is now.
+const azimuth = () => page.evaluate((sel) => document.querySelector(sel).__probe.azimuth(), MARKER)
+const degreesApart = (a, b) => Math.abs(((((a - b) * 180) / Math.PI + 540) % 360) - 180)
+const facingDoor = await azimuth()
+// the drag to the car may have scrolled the page: the whole canvas in view, so both gestures land on it
+await page.locator(MARKER).evaluate((c) => c.scrollIntoView({ block: 'center' }))
+const markerBox = await page.locator(MARKER).boundingBox()
+await drag({ x: markerBox.x + markerBox.width - 40, y: markerBox.y + 40 }, -110, 0)
+await page.waitForTimeout(2500)
+const turnedAway = await azimuth()
+if (degreesApart(turnedAway, facingDoor) < 20) fail(`the drag did not turn the car away from the door (${degreesApart(turnedAway, facingDoor).toFixed(1)}°)`)
+const cardAt = await page.evaluate((sel) => document.querySelector(sel).__probe.card(1), MARKER)
+await page.mouse.click(markerBox.x + cardAt[0], markerBox.y + cardAt[1])
+const lightbox = page.getByRole('dialog', { name: t('zone.left_front_door') })
+await lightbox.waitFor({ timeout: 5000 }).catch(() => fail('tapping the card did not open the photo'))
+await page.waitForTimeout(2500)
+const backAtDoor = await azimuth()
+if (degreesApart(backAtDoor, facingDoor) > 5) fail(`tapping the card did not turn the camera to the door: ${degreesApart(backAtDoor, facingDoor).toFixed(1)}° off, from ${degreesApart(turnedAway, facingDoor).toFixed(1)}°`)
+if ((await lightbox.locator('img').getAttribute('src')) !== photo.data) fail('the photo opened is not the one pinned')
+await page.keyboard.press('Escape')
+await lightbox.waitFor({ state: 'detached', timeout: 3000 }).catch(() => fail('Escape did not close the photo'))
+ok(`damage: tapping the card opened the photo and turned the camera ${degreesApart(turnedAway, backAtDoor).toFixed(0)}° back round to the door`)
 // the car now, and the pole it took with it
 await page.locator(`[role=radiogroup][aria-label="${N.drivable}"]`).getByRole('radio', { name: N.no, exact: true }).click()
 await page.locator(`[role=radiogroup][aria-label="${N.airbags}"]`).getByRole('radio', { name: N.yes, exact: true }).click()
@@ -1050,8 +1119,26 @@ const deskCavity = { off: await cavityPixels(0, 0, deskPage), on: await cavityPi
 if (deskCavity.on < deskCavity.off + 150) fail(`the desk's car does not show the missing door: ${deskCavity.off} cavity px without the damage, ${deskCavity.on} with it`)
 if ((await deskPage.locator('.cm-tools input[type=range]').count()) < 1) fail('the desk’s marker has no before/after slider')
 if (!(await deskPage.getByRole('button', { name: 'Severity map' }).count())) fail('the desk’s marker has no severity map')
-await deskPage.close()
 ok(`desk: the same marked-up car — the missing door is ${deskCavity.on - deskCavity.off} px of cavity there too — with the before/after slider and the severity map`)
+// The desk's copy is a document: a tap on the car marks nothing — it only stops the turntable —
+// but the photo pinned to the door is on it, and tapping its card opens the photo
+const deskMarker = deskPage.locator('.cm-root canvas').first()
+await deskMarker.evaluate((c) => c.scrollIntoView({ block: 'center' }))
+const deskBox = await deskMarker.boundingBox()
+await deskPage.mouse.click(deskBox.x + deskBox.width / 2, deskBox.y + deskBox.height / 2)
+await deskPage.waitForTimeout(600)
+if (await deskPage.locator('.cm-pop').count()) fail('a tap on the desk’s car opened the severity picker')
+await deskMarker.evaluate((c, p) => c.__probe.store.getState().face(p), door.anchor)
+await deskPage.waitForTimeout(2500)
+const deskCard = await deskMarker.evaluate((c) => c.__probe.card(1))
+if (!deskCard) fail('the desk’s car has no card for the photo pinned to the door')
+await deskPage.mouse.click(deskBox.x + deskCard[0], deskBox.y + deskCard[1])
+await deskPage
+  .getByRole('dialog', { name: DICT.en['zone.left_front_door'] })
+  .waitFor({ timeout: 5000 })
+  .catch(() => fail('tapping the card on the desk did not open the photo'))
+await deskPage.close()
+ok('desk: the photo pinned to the door is a card on the car there too, and opens large; a tap on the car marks nothing')
 
 // ── the replay, recorded at send time ─────────────────────────────────
 // A video data URL of a real size, and — the part that matters — a real frame inside it: the
