@@ -26,6 +26,22 @@ export const RADIUS_M: Record<Severity, number> = { scratch: 0.28, dent: 0.22, c
 /** how much of the body's damage one mark is: the dish's depth, and the severity map's heat */
 export const WEIGHT: Record<Severity, number> = { scratch: 0.35, dent: 0.6, crack: 0.8, missing: 1 }
 
+/**
+ * Whether the shader draws this mark at all, by what its zone is made of: a dent or a scratch
+ * on bodywork, a crack on glass or a lamp, a missing part anywhere. The shader itself decides
+ * per material role inside the mark's reach, and a zone's sphere can spill onto another surface
+ * — a windshield's onto the pillars, a headlight's onto the fender — so a kind the zone does
+ * not take may still show a sliver there; the pin follows the zone, and stays a numbered pin
+ * then. Conservative on purpose: a mark must never vanish from the customer's view.
+ */
+export function renders(d: Damage, body: Vehicle): boolean {
+  if (!zoneById(body, d.zone)) return false
+  const surface = /wheel/.test(d.zone) ? 'wheel' : /windshield|rear_window|headlight|taillight/.test(d.zone) ? 'glass' : 'bodywork'
+  if (d.severity === 'missing') return true
+  if (d.severity === 'crack') return surface === 'glass'
+  return surface === 'bodywork'
+}
+
 export type DamagePack = {
   count: number
   /** xyz per mark, body metres */

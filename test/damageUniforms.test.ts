@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { KIND, KIND_MISSING_WHEEL, MAX_MARKS, RADIUS_M, WEIGHT, damageUniforms } from '../src/marker/damageUniforms'
+import { KIND, KIND_MISSING_WHEEL, MAX_MARKS, RADIUS_M, WEIGHT, damageUniforms, renders } from '../src/marker/damageUniforms'
 import { damage } from '../src/schema'
 import { radiusToWorld, toWorld } from '../src/vehicles/bodies'
 import { zoneById } from '../src/zones'
@@ -65,5 +65,49 @@ describe('damageUniforms', () => {
     expect(WEIGHT.dent).toBeLessThan(WEIGHT.crack)
     expect(WEIGHT.crack).toBeLessThan(WEIGHT.missing)
     expect(WEIGHT.missing).toBe(1)
+  })
+})
+
+describe('renders — whether the paint shows the mark, so its pin may shrink to a dot', () => {
+  const on = (zone: Parameters<typeof damage>[0], severity: Parameters<typeof damage>[2]) => renders(damage(zone, [0, 0.5, 0], severity), 'sedan')
+
+  it('draws a dent and a scratch on bodywork', () => {
+    expect(on('left_front_door', 'dent')).toBe(true)
+    expect(on('hood', 'scratch')).toBe(true)
+    expect(on('front_bumper', 'dent')).toBe(true)
+    expect(on('left_mirror', 'scratch')).toBe(true)
+  })
+
+  it('draws a crack on glass and on a lamp', () => {
+    expect(on('windshield', 'crack')).toBe(true)
+    expect(on('rear_window', 'crack')).toBe(true)
+    expect(on('left_headlight', 'crack')).toBe(true)
+    expect(on('right_taillight', 'crack')).toBe(true)
+  })
+
+  it('does not draw a crack on a bumper, a fender or a door — the pin keeps its number', () => {
+    expect(on('front_bumper', 'crack')).toBe(false)
+    expect(on('left_front_fender', 'crack')).toBe(false)
+    expect(on('right_rear_door', 'crack')).toBe(false)
+  })
+
+  it('does not draw a scratch or a dent on a windshield or a lamp — the pin keeps its number', () => {
+    expect(on('windshield', 'scratch')).toBe(false)
+    expect(on('windshield', 'dent')).toBe(false)
+    expect(on('left_headlight', 'scratch')).toBe(false)
+    expect(on('left_taillight', 'dent')).toBe(false)
+  })
+
+  it('draws a missing part on every surface, and nothing else on a wheel', () => {
+    expect(on('left_front_door', 'missing')).toBe(true)
+    expect(on('windshield', 'missing')).toBe(true)
+    expect(on('left_front_wheel', 'missing')).toBe(true)
+    expect(on('left_front_wheel', 'dent')).toBe(false)
+    expect(on('left_front_wheel', 'scratch')).toBe(false)
+    expect(on('left_front_wheel', 'crack')).toBe(false)
+  })
+
+  it('draws nothing for a zone the body does not have', () => {
+    expect(renders(damage('left_rear_door', [0, 0.5, 0], 'dent'), 'truck')).toBe(false)
   })
 })
