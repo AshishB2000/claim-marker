@@ -161,7 +161,8 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
       a.href = url
       a.download = videoName(left.receipt.reference, blob.type)
       a.click()
-      URL.revokeObjectURL(url)
+      // not revoked on the spot: a browser that starts the download a beat later would find nothing there
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
     } finally {
       setSaving(false)
     }
@@ -187,6 +188,7 @@ export function Compare({ reports, lang }: { reports: Account[]; lang?: Lang }):
               mode={play.mode}
               clock={play.clock}
               follow={follow ?? undefined}
+              onPlaybackStop={play.stop}
               className="h-[420px]"
             />
             {play.canPlay && (

@@ -142,6 +142,19 @@ export function timelineOf(vehicles: ClaimVehicle[]): Timeline {
   return { ms, impactT, impactMs: impactT * ms }
 }
 
+/**
+ * The timeline two accounts share on the desk: the first account's impact — the slow-motion and
+ * the shockwave are its — over the longer of the two drives, so a cinematic camera stays in the
+ * chase until both sets have come to rest and a scrubber runs the whole of both. For the shot
+ * list and the length of the clock only: each account's own cars still run on its own
+ * `timelineOf`, or the shorter drive would be stretched to the longer one's pace.
+ */
+export function sharedTimeline(own: Timeline, other: Timeline | null): Timeline {
+  if (!other) return own
+  const ms = Math.max(own.ms, other.ms)
+  return { ms, impactMs: own.impactMs, impactT: own.impactMs / ms }
+}
+
 // ── the clock ─────────────────────────────────────────────────────────
 
 /** the clock `wallMs` later at `rate`, never past `end` and never backwards */

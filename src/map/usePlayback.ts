@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClaimVehicle } from '../claim/schema'
 import type { CarPose } from './carLayer'
-import { HOLD_MS, advance, endOf, frameAt, shotAt, shots, timelineOf, type PlaybackMode, type Shot } from './playback'
+import { HOLD_MS, advance, endOf, frameAt, sharedTimeline, shotAt, shots, timelineOf, type PlaybackMode, type Shot } from './playback'
 
 type Frame = { poses: CarPose[]; ghostPoses: CarPose[] | null; t: number; ms: number; rate: number; mode: PlaybackMode }
 
@@ -35,8 +35,10 @@ export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | 
   const base = useRef(1)
   const run = useRef<{ list: Shot[] | null; end: number } | null>(null)
 
-  /** the drive, the longer of the two, plus the hold on the last frame */
-  const duration = Math.max(timeline.ms, others.length ? ghostTimeline.ms : 0) + HOLD_MS
+  /** the clock both accounts share: the first account's impact over the longer of the two drives */
+  const shared = useMemo(() => sharedTimeline(timeline, others.length ? ghostTimeline : null), [timeline, ghostTimeline, others])
+  /** the whole clock a scrubber runs across: the longer drive plus the hold on the last frame */
+  const duration = shared.ms + HOLD_MS
 
   const stop = useCallback(() => {
     cancelAnimationFrame(raf.current)
@@ -60,7 +62,7 @@ export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | 
   const start = useCallback(
     (mode: PlaybackMode = 'diagram') => {
       cancelAnimationFrame(raf.current)
-      const list = mode === 'cinematic' && !reducedMotion() ? shots([...vehicles, ...others], timeline) : null
+      const list = mode === 'cinematic' && !reducedMotion() ? shots([...vehicles, ...others], shared) : null
       const r = { list, end: Math.max(list ? endOf(list) : 0, duration) }
       run.current = r
       clock.current = 0
@@ -75,7 +77,7 @@ export function usePlayback(vehicles: ClaimVehicle[], ghosts?: ClaimVehicle[] | 
       }
       raf.current = requestAnimationFrame(tick)
     },
-    [vehicles, others, timeline, duration, show, stop],
+    [vehicles, others, shared, duration, show, stop],
   )
 
   /**

@@ -31,6 +31,7 @@ import {
   posesAt,
   ringAt,
   routeOf,
+  sharedTimeline,
   shotAt,
   shots,
   timelineOf,
@@ -255,8 +256,9 @@ export async function recordPlayback(deps: RecordDeps): Promise<Blob | null> {
   // the end of the clock: the longer of the two drives, held. A cinematic run's own end is
   // later than this — it eases the camera back to the overhead — and the video does not need
   // that: the last thing it shows is the impact, not the way home.
-  const end = Math.max(timeline.ms, ghosts.length ? ghostTimeline.ms : 0) + HOLD_MS
-  const list = deps.mode === 'cinematic' ? shots([...vehicles, ...ghosts], timeline, deps.follow) : null
+  const shared = sharedTimeline(timeline, ghosts.length ? ghostTimeline : null)
+  const end = shared.ms + HOLD_MS
+  const list = deps.mode === 'cinematic' ? shots([...vehicles, ...ghosts], shared, deps.follow) : null
   const rate = list ? recordRate(wallMsOf(list, end)) : 1
   const centre = map.getCenter()
   const home: Camera = { center: [centre.lng, centre.lat], zoom: map.getZoom(), pitch: 0, bearing: 0 }

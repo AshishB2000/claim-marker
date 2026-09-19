@@ -30,7 +30,7 @@ import { spawn } from 'node:child_process'
 import { sign } from '../server/session.mjs'
 import { createServer } from 'node:http'
 import { createHmac } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -448,6 +448,11 @@ if (after.status !== 'reviewing') fail(`the desk's status change did not reach t
 ok('desk: lists the report, opens the document, moves it to "in review"')
 
 // ── the other driver gives their side, on their own phone ─────────────
+// How far their cars drove, and therefore when their account reaches the impact: `durationOf`
+// is the longest route over SPEED (6 m/s, src/map/playback.ts) and two cars that drive to rest
+// touching meet at the end of the drive, so this is the moment of impact on the shared clock.
+const OTHER_DRIVE_M = 24
+const OTHER_IMPACT_MS = (OTHER_DRIVE_M / 6) * 1000
 // A second browser, a stranger's: no session, no prefill, nothing but the link.
 const incidentId = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).incident
 if (!/^INC-/.test(incidentId ?? '')) fail(`the customer's report did not name an incident: ${incidentId}`)
@@ -490,23 +495,26 @@ ok('invite: the other driver lands on a seeded report in party mode, and sees no
 // they fill in the little that is needed and send — describing their own car as the shape and
 // colour it really is, which is how the desk pairs it with the customer's account of it
 const theirCar = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).claim.vehicles.find((v) => v.role === 'other')
-await other.evaluate(({ car, key }) => {
+await other.evaluate(({ car, key, drive }) => {
   const raw = JSON.parse(localStorage.getItem(key))
   raw.state.step = 'review'
   raw.state.claim.reporter = { ...raw.state.claim.reporter, name: 'Dana Q', phone: '555 0199', email: 'dana@example.com', policy: 'OTHER-1' }
   raw.state.claim.incident = { ...raw.state.claim.incident, description: 'I was already in the junction.' }
-  // they place the cars themselves, and remember it differently: the same spot, facing the
-  // other way — a real disagreement for the comparison to find
+  // They place the cars themselves, and remember it differently: nose to nose on the spot, each
+  // having driven `drive` metres to get there. That length is the constructed part — the drive
+  // is the longest route over SPEED (6 m/s), and two cars that arrive touching meet at the end
+  // of it, so this account's moment of impact is a number the desk can be held to.
   const at = raw.state.claim.incident.location
+  const north = (metres) => at.lat + metres / 111320
   raw.state.claim.vehicles = raw.state.claim.vehicles.map((v, i) => ({
     ...v,
     ...(i === 0 ? { body: car.body, color: car.color } : {}),
-    position: [at.lng + 0.00004 * (i + 1), at.lat + 0.00003 * (i + 1)],
-    heading: i === 0 ? 10 : 190,
-    path: [],
+    position: [at.lng, north(i === 0 ? 2 : -2)],
+    path: [[at.lng, north(i === 0 ? 2 + drive : -2 - drive)]],
+    heading: i === 0 ? 180 : 0,
   }))
   localStorage.setItem(key, JSON.stringify(raw))
-}, { car: theirCar, key: partyKey })
+}, { car: theirCar, key: partyKey, drive: OTHER_DRIVE_M })
 await other.reload({ waitUntil: 'networkidle' })
 await other.getByRole('checkbox', { name: enT('scene.send.agreeAria') }).check()
 await other.getByRole('textbox', { name: enT('scene.send.signAria') }).fill('Dana Q')
@@ -549,6 +557,92 @@ for (const word of ['fraud', 'fault', 'liability', 'blame', 'suspicious']) {
   if (new RegExp(word, 'i').test(compared)) fail(`the comparison says "${word}"`)
 }
 ok('desk: two accounts under one incident, laid side by side, saying nothing about who is right')
+
+// one clock for both: the two impacts are two ticks on one scrubber, and the headline says how
+// far apart they are. The other driver's is where it was constructed; the policyholder's is
+// whatever their page drew, so the headline is held to the difference between the two.
+const shared = await deskPage.evaluate(() => {
+  const p = window.__play
+  return p?.ghostTimeline ? { mine: p.timeline.impactMs, theirs: p.ghostTimeline.impactMs, duration: p.duration } : null
+})
+if (!shared) fail('the compare view did not expose its shared clock on window.__play')
+if (Math.abs(shared.theirs - OTHER_IMPACT_MS) > 50) fail(`the other driver's impact is at ${shared.theirs.toFixed(0)} ms on the shared clock, not the constructed ${OTHER_IMPACT_MS}`)
+const tickAt = (await deskPage.locator('[data-impact-tick]').evaluateAll((els) => els.map((e) => Number(e.dataset.impactTick)))).sort((a, b) => a - b)
+const expectTicks = [shared.mine, shared.theirs].map(Math.round).sort((a, b) => a - b)
+if (tickAt.length !== 2 || tickAt.some((t, i) => Math.abs(t - expectTicks[i]) > 1)) fail(`the scrubber's impact ticks are ${JSON.stringify(tickAt)}, not ${JSON.stringify(expectTicks)}`)
+const apartS = (Math.abs(shared.mine - shared.theirs) / 1000).toFixed(1)
+const headline = await deskPage.locator('[data-compare] table caption').innerText()
+if (!new RegExp(`^The two accounts' impacts are \\d+ m and ${apartS.replace('.', '\\.')} s apart\\.$`).test(headline)) fail(`the headline does not give the gap as ${apartS} s: "${headline}"`)
+if (Number(apartS) < 1) fail(`the constructed disagreement is only ${apartS} s: the ticks would sit on top of each other`)
+ok(`desk: one scrubber, two impact ticks ${expectTicks.join(' ms and ')} ms — the other driver's where it was built (${OTHER_IMPACT_MS} ms) — and the headline "${headline}"`)
+
+// both sets move on that clock: two moments of the scrub, each account's cars somewhere else
+const scrubbed = await deskPage.evaluate(async () => {
+  const snap = async (ms) => {
+    window.__play.seek(ms)
+    await new Promise((r) => setTimeout(r, 300))
+    const p = window.__play
+    return { mine: p.poses?.map((x) => x.position) ?? [], theirs: p.ghostPoses?.map((x) => x.position) ?? [] }
+  }
+  const a = await snap(300)
+  const b = await snap(2000)
+  // metres, near enough: a degree of longitude at this latitude is about 84 km
+  const far = (u, v) => Math.max(0, ...u.map((p, i) => Math.hypot((p[0] - v[i][0]) * 84_000, (p[1] - v[i][1]) * 111_320)))
+  window.__play.stop()
+  return { sets: [a.mine.length, a.theirs.length], mine: far(a.mine, b.mine), theirs: far(a.theirs, b.theirs) }
+})
+if (scrubbed.sets[0] < 2 || scrubbed.sets[1] < 2) fail(`the scrub does not hold both accounts' cars: ${JSON.stringify(scrubbed.sets)}`)
+if (scrubbed.mine < 1 || scrubbed.theirs < 1) fail(`scrubbing moved the policyholder's cars ${scrubbed.mine.toFixed(1)} m and the other driver's ${scrubbed.theirs.toFixed(1)} m`)
+ok(`desk: scrubbing 0.3 s → 2 s moves both sets — the policyholder's cars ${scrubbed.mine.toFixed(1)} m, the other driver's ghosts ${scrubbed.theirs.toFixed(1)} m`)
+
+// "Watch both" chases the policyholder's car; "Swap" chases the other driver's. The chase looks
+// the way the car it follows set off, and the two were built to set off opposite ways, so the
+// camera's bearing says which car it is behind — no need to guess from where it is.
+await deskPage.getByRole('button', { name: 'Watch both' }).click()
+await deskPage.locator('[data-compare] .maplibregl-map.mk-playing').waitFor({ timeout: 5000 }).catch(() => fail('"Watch both" did not start'))
+const chased = () =>
+  deskPage.evaluate(async () => {
+    const p = window.__play
+    // the later of the two impacts: the chase has to last until both drives are over, not
+    // hand the camera back while the other account's cars are still on their way
+    p.seek(Math.max(p.timeline.impactMs, p.ghostTimeline.impactMs))
+    await new Promise((r) => setTimeout(r, 400))
+    // the compare view's own map: the two documents under it have one each, and `window.__map`
+    // is whichever of the three was made last
+    const map = document.querySelector('[data-compare] .maplibregl-map').__map
+    return { pitch: map.getPitch(), bearing: map.getBearing(), follow: document.querySelector('[data-compare]').dataset.follow }
+  })
+const angle = (b) => Math.abs(((((b % 360) + 540) % 360) - 180))
+const mineChase = await chased()
+await deskPage.getByRole('button', { name: 'Swap' }).click()
+await deskPage.waitForTimeout(300)
+const theirChase = await chased()
+if (mineChase.pitch < 40 || theirChase.pitch < 40) fail(`the chase did not tilt (${mineChase.pitch.toFixed(0)}°, then ${theirChase.pitch.toFixed(0)}°)`)
+if (angle(mineChase.bearing - 0) > 5) fail(`"Watch both" is not behind the policyholder's car, which set off north: bearing ${mineChase.bearing.toFixed(0)}°`)
+if (angle(theirChase.bearing - 180) > 5) fail(`"Swap" is not behind the other driver's car, which set off south: bearing ${theirChase.bearing.toFixed(0)}°`)
+if (mineChase.follow !== '' || !theirChase.follow.startsWith('other:')) fail(`the followed car did not change: ${mineChase.follow || '(default)'} → ${theirChase.follow}`)
+await deskPage.getByRole('button', { name: 'Stop' }).click()
+await deskPage.waitForTimeout(500)
+const deskHome = await deskPage.evaluate(() => {
+  const map = document.querySelector('[data-compare] .maplibregl-map').__map
+  return { pitch: map.getPitch(), bearing: map.getBearing() }
+})
+if (deskHome.pitch !== 0 || deskHome.bearing !== 0) fail(`the desk's map came back tilted (pitch ${deskHome.pitch}, bearing ${deskHome.bearing})`)
+ok(`desk: "Watch both" chases the policyholder's car (bearing ${mineChase.bearing.toFixed(0)}°), "Swap" the other driver's (${theirChase.bearing.toFixed(0)}°), and Stop hands the map back flat`)
+
+// "Save video" runs the same recorder over both accounts and hands the file over; nothing is uploaded
+const uploads = []
+const watchUploads = (req) => req.method() !== 'GET' && uploads.push(req.url())
+deskPage.on('request', watchUploads)
+const [download] = await Promise.all([deskPage.waitForEvent('download', { timeout: 30000 }), deskPage.getByRole('button', { name: 'Save video' }).click()]).catch(() => [null])
+deskPage.off('request', watchUploads)
+if (!download) fail('"Save video" did not hand over a file')
+const saved = await download.path()
+const savedBytes = statSync(saved).size
+if (!/-both-accounts\.(webm|mp4)$/.test(download.suggestedFilename())) fail(`the saved video is called ${download.suggestedFilename()}`)
+if (savedBytes < 50_000) fail(`the saved video of both accounts is only ${savedBytes} bytes`)
+if (uploads.length) fail(`saving the video sent something: ${uploads.join(', ')}`)
+ok(`desk: "Save video" recorded both accounts to ${download.suggestedFilename()} (${(savedBytes / 1024).toFixed(0)} kB) and uploaded nothing`)
 if (otherErrors.length) fail(`the other driver's page threw: ${otherErrors.join('\n')}`)
 await otherCtx.close()
 

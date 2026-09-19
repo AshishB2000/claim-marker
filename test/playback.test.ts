@@ -22,6 +22,7 @@ import {
   cameraAt,
   durationOf,
   impactPlaceOf,
+  sharedTimeline,
   ease,
   endOf,
   frameAt,
@@ -327,6 +328,21 @@ describe('two accounts on one clock', () => {
     const mine = cameraAt(shots(both, tl), at, poses, home)
     expect(distance(theirs.center, mine.center)).toBeGreaterThan(1)
     expect(distance(theirs.center, poses.find((p) => p.id === 'other:a')!.position)).toBeCloseTo(BEHIND_M, 1)
+  })
+
+  it("the chase lasts until the longer drive is over, and slows into the first account's impact", () => {
+    // the policyholder's drive is the short one; the other driver's is still going after it ends
+    const mine = timelineOf(shortDrive)
+    const theirs = timelineOf(headOn)
+    const shared = sharedTimeline(mine, theirs)
+    expect(shared.ms).toBe(theirs.ms)
+    expect(shared.impactMs).toBe(mine.impactMs)
+    expect(sharedTimeline(mine, null)).toBe(mine)
+    const list = shots(shortDrive, shared)
+    // still behind the car at the other account's impact, and back overhead only after both drives and the hold
+    expect(shotAt(list, theirs.impactMs).chase).not.toBeNull()
+    expect(list[list.length - 1].at).toBe(theirs.ms + HOLD_MS)
+    expect(shotAt(list, mine.impactMs).rate).toBe(SLOW_RATE)
   })
 
   it('an account that never placed the cross still has a place: where its two cars meet', () => {

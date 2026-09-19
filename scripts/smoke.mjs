@@ -952,7 +952,8 @@ ok(`sent: ${doc.reference}, scene ${sceneKb} kB, damage PNG ${Math.round(doc.att
 const replay = doc.attachments.replay
 if (!/^data:video\/(webm|mp4)(;[^,]*)?;base64,/.test(replay ?? '')) fail(`no replay was attached: ${String(replay).slice(0, 40)}`)
 const replayKb = Math.round(replay.length / 1024)
-if (replayKb < 50) fail(`the replay is suspiciously small (${replayKb} kB)`)
+// decoded before the size is judged, so a small file says what it holds: a short run, or a long
+// one of empty frames, are two different failures
 const frame = await page.evaluate(async (src) => {
   const v = document.createElement('video')
   v.muted = true
@@ -979,6 +980,7 @@ const frame = await page.evaluate(async (src) => {
   for (let i = 0; i < px.length; i += 4 * 499) seen.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2])
   return { colours: seen.size, width: c.width, height: c.height, seconds: Math.round(v.duration * 10) / 10 }
 }, replay)
+if (replayKb < 50) fail(`the replay is suspiciously small (${replayKb} kB: ${frame.seconds} s at ${frame.width}×${frame.height}, ${frame.colours} colours in its middle frame)`)
 if (frame.colours < 40) fail(`the middle of the replay is a blank frame (${frame.colours} colours)`)
 ok(`sent: a ${replayKb} kB replay, ${frame.seconds} s at ${frame.width}×${frame.height}, and its middle frame is a real picture (${frame.colours} colours)`)
 

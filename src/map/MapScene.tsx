@@ -20,7 +20,7 @@ import { translate, type Lang } from '../i18n'
 import { ROLE_COLOR, type ClaimVehicle } from '../claim/schema'
 import { SIZE } from '../vehicles/bodies'
 import { CarLayer, shockRing, type CarPose } from './carLayer'
-import { MAX_PITCH, cameraAt, ringAt, shotAt, shots, timelineOf, type Camera, type PlaybackMode, type Shot, type Timeline } from './playback'
+import { MAX_PITCH, cameraAt, ringAt, sharedTimeline, shotAt, shots, timelineOf, type Camera, type PlaybackMode, type Shot, type Timeline } from './playback'
 import { damageCount, paintOverlay, recordPlayback, type OverlayLabel } from './record'
 import { reducedMotion } from './usePlayback'
 import { styleFor, type MapStyle } from './styles'
@@ -280,8 +280,13 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
     map.addControl(new ScaleControl({ maxWidth: 90, unit: 'metric' }), 'bottom-left')
     const state: Live = { map, cars: new CarLayer(init.center), handles: new Map(), impact: null, styleReady: false, style: init.style, cine: null, recording: false }
     live.current = state
-    // a handle for poking at the live map from the console; never in production
-    if (import.meta.env.DEV) Object.assign(window, { __map: map })
+    // a handle for poking at the live map from the console; never in production. On its own
+    // element too, for a page with more than one map: the desk's compare view has three, and
+    // `window.__map` is whichever was made last
+    if (import.meta.env.DEV) {
+      Object.assign(window, { __map: map })
+      Object.assign(container.current!, { __map: map })
+    }
 
     map.on('style.load', () => {
       map.addImage('cm-arrow', arrowImage(), { sdf: true })
@@ -620,8 +625,8 @@ export function MapScene({ className, ref, ...props }: MapSceneProps) {
       return
     }
     if (!s.cine) {
-      const vehicles = latest.current.vehicles
-      const timeline = timelineOf(vehicles)
+      const ghosts = latest.current.ghosts ?? []
+      const timeline = sharedTimeline(timelineOf(latest.current.vehicles), ghosts.length ? timelineOf(ghosts) : null)
       s.cine = {
         shots: [],
         follow: undefined,
