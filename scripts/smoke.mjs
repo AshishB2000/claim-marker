@@ -1137,8 +1137,35 @@ await deskPage
   .getByRole('dialog', { name: DICT.en['zone.left_front_door'] })
   .waitFor({ timeout: 5000 })
   .catch(() => fail('tapping the card on the desk did not open the photo'))
-await deskPage.close()
 ok('desk: the photo pinned to the door is a card on the car there too, and opens large; a tap on the car marks nothing')
+// and it stands by the door in the reconstruction too: green, which nothing else there is, read
+// off screenshots because that canvas keeps no drawing buffer
+await deskPage.keyboard.press('Escape')
+await deskPage.getByRole('tab', { name: 'Reconstruction' }).click()
+const deskRecon = deskPage.locator('[data-reconstruction] canvas')
+await deskRecon.waitFor({ timeout: 20000 })
+let reconGreen = 0
+for (let i = 0; i < 40 && reconGreen < 15; i++) {
+  await deskPage.waitForTimeout(500)
+  const shot = (await deskRecon.screenshot()).toString('base64')
+  reconGreen = await deskPage.evaluate(async (png) => {
+    const img = new Image()
+    img.src = `data:image/png;base64,${png}`
+    await img.decode()
+    const c = document.createElement('canvas')
+    c.width = img.width
+    c.height = img.height
+    const ctx = c.getContext('2d')
+    ctx.drawImage(img, 0, 0)
+    const px = ctx.getImageData(0, 0, img.width, img.height).data
+    let n = 0
+    for (let k = 0; k < px.length; k += 4) if (px[k + 1] > 90 && px[k + 1] > px[k] * 1.6 && px[k + 1] > px[k + 2] * 1.3) n++
+    return n
+  }, shot)
+}
+if (reconGreen < 15) fail(`the desk's reconstruction has no card for the photo pinned to A (${reconGreen} green px)`)
+await deskPage.close()
+ok(`desk: the reconstruction stands the card by A too (${reconGreen} green px)`)
 
 // ── the replay, recorded at send time ─────────────────────────────────
 // A video data URL of a real size, and — the part that matters — a real frame inside it: the
