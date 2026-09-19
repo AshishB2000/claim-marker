@@ -50,7 +50,7 @@ const keep = (e: ThreeEvent<PointerEvent>) => e.stopPropagation()
  * modal opening under a drag would swallow it — and only on a tap that did not move, so letting
  * go of a drag over a card opens nothing.
  */
-function Card({ body, zone, photo, stacked, onOpen }: { body: Vehicle; zone: Zone; photo: CardPhoto; stacked: number; onOpen?: () => void }) {
+function Card({ body, zone, photo, stacked, hidden, onOpen }: { body: Vehicle; zone: Zone; photo: CardPhoto; stacked: number; hidden: boolean; onOpen?: () => void }) {
   const invalidate = useThree((s) => s.invalidate)
   const tex = useMemo(() => photoTexture(photo.dataUrl, () => invalidate()), [photo.dataUrl, invalidate])
   useEffect(() => () => tex.dispose(), [tex])
@@ -59,8 +59,9 @@ function Card({ body, zone, photo, stacked, onOpen }: { body: Vehicle; zone: Zon
     const { position } = cardPlacement(body, zone)
     return { position, leader: new Float32Array([...toWorld(body, zone.anchor), ...position]) }
   }, [body, zone])
+  // hidden: not drawn and, with no handlers, not hit — but kept, so its photo is not decoded again
   return (
-    <group>
+    <group visible={!hidden}>
       {/* a plain one-pixel line: drei's fat Line is a heavy shader to compile, in every canvas the card is in */}
       {stacked === 0 && (
         <lineSegments>
@@ -95,12 +96,27 @@ function Card({ body, zone, photo, stacked, onOpen }: { body: Vehicle; zone: Zon
  * Every photo that shows a panel of this body, as a card standing out from that panel
  * (`cardPlacement`) with a thin leader line back to it. In the body's own metres — the marker's
  * world, or a car's group in the reconstruction. `onOpen`, when given, makes the cards tappable.
+ *
+ * `faced` is the panel the camera has been turned to face: its cards stand aside — not drawn,
+ * taking no taps — because from there a card sits on the line of sight to its own panel, over
+ * the pin and the damage the camera was turned to show.
  */
-export function PhotoCards({ body, photos, onOpen }: { body: Vehicle; photos: CardPhoto[]; onOpen?: (photo: CardPhoto, zone: Zone) => void }) {
+export function PhotoCards({
+  body,
+  photos,
+  faced = null,
+  onOpen,
+}: {
+  body: Vehicle
+  photos: CardPhoto[]
+  faced?: string | null
+  onOpen?: (photo: CardPhoto, zone: Zone) => void
+}) {
   return photos.map((photo, i) => {
     const zone = zoneById(body, photo.shows)
     if (!zone) return null
     const stacked = photos.slice(0, i).filter((p) => p.shows === photo.shows).length
-    return <Card key={photo.id} body={body} zone={zone} photo={photo} stacked={stacked} onOpen={onOpen && (() => onOpen(photo, zone))} />
+    const hidden = photo.shows === faced
+    return <Card key={photo.id} body={body} zone={zone} photo={photo} stacked={stacked} hidden={hidden} onOpen={onOpen && !hidden ? () => onOpen(photo, zone) : undefined} />
   })
 }

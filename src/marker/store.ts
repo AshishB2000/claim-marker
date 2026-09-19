@@ -22,8 +22,14 @@ export type MarkerState = {
   strength: number
   /** the severity map: paint replaced by a blue-to-red gradient of accumulated damage */
   heatmap: boolean
-  /** a point, in the kit's units, the camera was last asked to face — a pinned photo's panel; a new object per ask */
-  facing: { point: V3 } | null
+  /**
+   * What the camera was last turned to face — a selected pin's panel, or a tapped photo's — with
+   * the point it aims at, in the kit's units. A new object per turn: that is what sets the camera
+   * moving. Cleared when the selection clears, and by the camera rig the moment the customer turns
+   * the camera themselves. While it is set, the photo cards of that panel stand aside, because
+   * seen head-on a card stands between the camera and its own panel.
+   */
+  facing: { point: V3; zone: string } | null
 
   pick: (point: V3) => void
   commit: (severity: Severity) => void
@@ -33,8 +39,8 @@ export type MarkerState = {
   hover: (zone: Zone | null) => void
   setStrength: (strength: number) => void
   setHeatmap: (heatmap: boolean) => void
-  /** turn the camera to a point, closing whatever was being edited */
-  face: (point: V3) => void
+  /** turn the camera to a panel, closing whatever was being edited */
+  face: (zone: Zone) => void
   load: (value: ClaimValue) => void
   value: () => ClaimValue
 }
@@ -52,7 +58,7 @@ export function createMarkerStore(initial: ClaimValue = emptyValue()) {
     heatmap: false,
     facing: null,
 
-    pick: (point) => set({ pending: { zone: nearestZone(get().vehicle, point), point }, selected: null }),
+    pick: (point) => set({ pending: { zone: nearestZone(get().vehicle, point), point }, selected: null, facing: null }),
     commit: (severity) => {
       const { pending, damages } = get()
       if (!pending) return
@@ -60,18 +66,22 @@ export function createMarkerStore(initial: ClaimValue = emptyValue()) {
         damages: [...damages, damage(pending.zone.id, pending.point, severity)],
         pending: null,
         selected: damages.length,
+        facing: { point: pending.point, zone: pending.zone.id },
       })
     },
     edit: (index, patch) =>
       set({ damages: get().damages.map((d, i) => (i === index ? { ...d, ...patch } : d)) }),
     remove: (index) =>
-      set({ damages: get().damages.filter((_, i) => i !== index), selected: null }),
-    select: (index) => set({ selected: index, pending: null }),
+      set({ damages: get().damages.filter((_, i) => i !== index), selected: null, facing: null }),
+    select: (index) => {
+      const d = index === null ? undefined : get().damages[index]
+      set({ selected: index, pending: null, facing: d ? { point: d.point, zone: d.zone } : null })
+    },
     hover: (zone) => set({ hovered: zone }),
     setStrength: (strength) => set({ strength: Math.min(1, Math.max(0, strength)) }),
     setHeatmap: (heatmap) => set({ heatmap }),
-    face: (point) => set({ facing: { point }, selected: null, pending: null }),
-    load: (value) => set({ vehicle: value.vehicle, damages: value.damages, selected: null, pending: null }),
+    face: (zone) => set({ facing: { point: zone.anchor, zone: zone.id }, selected: null, pending: null }),
+    load: (value) => set({ vehicle: value.vehicle, damages: value.damages, selected: null, pending: null, facing: null }),
     value: () => ({ schema: SCHEMA, vehicle: get().vehicle, damages: get().damages }),
   }))
 }

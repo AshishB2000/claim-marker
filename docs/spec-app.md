@@ -1389,12 +1389,27 @@ can be dropped again on another panel; nothing un-tags one. `shows` is still set
 **Tapping a card.** A card opens on a click that did not move (`e.delta ≤ 2`), not on the press
 a pin uses: a modal opening under a drag would swallow the drag, and a drag that merely starts
 on a card should turn the car. The press is still the card's, so the body behind it is not
-picked. `store.face(point)` sets `facing` — a new object every time, so a second tap on the same
-card after an orbit aims again — and closes whatever the picker had open; the
-camera rig has a second effect for it beside the pin's, both through `cameraFor` at the current
-distance, and both give up the moment the user drags. The photograph opens in a native modal
-`<dialog>` (`PhotoLightbox`), which brings Escape, the focus trap and the top layer with it, and
-takes `lang` as a prop because the desk renders it too.
+picked. `store.face(zone)` sets `facing` and closes whatever the picker had open; the camera rig
+eases to it through `cameraFor` at the current distance and gives up the moment the user drags.
+The photograph opens in a native modal `<dialog>` (`PhotoLightbox`), which brings Escape, the
+focus trap and the top layer with it, and takes `lang` as a prop because the desk renders it too.
+
+**The panel the camera faces has its cards stand aside.** `cameraFor` puts the camera on the
+azimuth through the point it faces, and a card stands on that same azimuth, 0.6 m out along the
+panel's normal — so seen from where a tap takes the camera, a card covers its own panel: the
+pin behind it is hidden by depth, the card takes the press meant for the pin, and tapping the pin
+of a panel with a photo ended with the photo over the damage. The placement stays; the rule is
+that **while the camera faces a panel, that panel's cards are not drawn and take no taps**.
+`facing` in the marker store is `{ point, zone }` — what the camera was last turned to face — set
+by a pin's selection (`select`, and `commit`, which selects the new mark) and by a card's tap
+(`face`); a new object each time, so a second tap on the same pin or card after a turn aims
+again, and it is also the camera rig's one trigger. It is cleared when the selection clears
+(`select(null)`, `pick`, `remove`, `load`) and by the rig the moment the customer drags the
+camera round — the same moment the rig gives up its goal — so the cards come back as soon as the
+view is the customer's own again. `PhotoCards` takes the zone as `faced` and reads it in render:
+the cards stay mounted, `visible={false}` with no handlers, so the photograph is not decoded
+again when they return. After a card's tap the card stands aside too, which is right: the
+lightbox is showing the photograph.
 
 **The desk's copy can be turned; the review's cannot.** `ReportDocument`'s marked-up cars are
 now `readOnly`: the body takes no tap and tints nothing, there is no picker or hint, and the
@@ -1418,13 +1433,12 @@ thousands of green pixels after, round where the DEV probe (`card(id)`) projects
 smoke's photograph is green because nothing else in the studio is. The car is then turned away
 by a drag from an empty corner, the card is clicked where it now is, and the camera's azimuth
 (`azimuth()`) comes back to within 5° of the door while the dialog named "Left front door" shows
-that photograph; Escape closes it. On the desk, a tap on the car opens no picker, the card on the
-door opens the photograph, and the Reconstruction tab's screenshot has the card's green by A.
-
-**A known limit.** Seen head-on — which is where tapping a card takes the camera — the card
-stands between the camera and its panel, because it is on the panel's outward normal. The photo
-is open large at that moment, and a drag shows the panel beside it; lifting the card or lowering
-the normal's origin is the one-line change if it matters.
+that photograph; Escape closes it. While the camera faces the door the card's green is gone from
+the frame, and the next drag brings it back. Then the door's own pin is clicked where it stands:
+it is selected, the camera turns to the door, the pin's violet dot is on the frame at its projected
+point, and there is no green within 40 px of it. On the desk, a tap on the car opens no picker;
+after `face(door)` and a turn off it, the card on the door opens the photograph, and the
+Reconstruction tab's screenshot has the card's green by A.
 
 ## Tell us everything, once (v9)
 

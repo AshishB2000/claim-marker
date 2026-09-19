@@ -857,12 +857,14 @@ if (dims[0] !== 1280 || dims[1] !== 960) fail(`expected 1280×960 after downscal
 // the one the photo shows. Its card then stands out from that door in the very frame the export
 // takes (`toDataURL`, what `export()` returns): green, where the probe says the card is.
 const MARKER = '.cm-root canvas'
-/** green pixels in the marker's exported frame: round the card when it is in the scene, else anywhere */
-const cardGreen = (id) =>
+/**
+ * The marker's exported frame round a point on its canvas: the colour of the 3-px spot on it, and
+ * how many green pixels — the pinned photo's, which nothing else in the studio is — lie within 40 px.
+ */
+const frameAt = (at) =>
   page.evaluate(
-    async ([sel, id]) => {
+    async ([sel, [x, y]]) => {
       const c = document.querySelector(sel)
-      const at = c.__probe.card(id)
       const img = new Image()
       img.src = c.toDataURL('image/png')
       await img.decode()
@@ -871,29 +873,34 @@ const cardGreen = (id) =>
       off.height = img.height
       const ctx = off.getContext('2d')
       ctx.drawImage(img, 0, 0)
-      const [x, y, r] = at ? [Math.round(at[0]), Math.round(at[1]), 40] : [img.width >> 1, img.height >> 1, Math.max(img.width, img.height)]
-      const px = ctx.getImageData(x - r, y - r, 2 * r, 2 * r).data
-      let n = 0
-      for (let k = 0; k < px.length; k += 4) if (px[k + 1] > 90 && px[k + 1] > px[k] * 1.6 && px[k + 1] > px[k + 2] * 1.3) n++
-      return { at, n }
+      const px = ctx.getImageData(Math.round(x) - 40, Math.round(y) - 40, 80, 80).data
+      let green = 0
+      for (let k = 0; k < px.length; k += 4) if (px[k + 1] > 90 && px[k + 1] > px[k] * 1.6 && px[k + 1] > px[k + 2] * 1.3) green++
+      const spot = ctx.getImageData(Math.round(x) - 1, Math.round(y) - 1, 3, 3).data
+      const rgb = [0, 0, 0]
+      for (let k = 0; k < spot.length; k += 4) for (let ch = 0; ch < 3; ch++) rgb[ch] += spot[k + ch] / 9
+      return { green, rgb: rgb.map(Math.round) }
     },
-    [MARKER, id],
+    [MARKER, at],
   )
-const untagged = await cardGreen(1)
-if (untagged.at || untagged.n > 20) fail(`a card is on the car before the photo says which panel it shows (${untagged.n} green px)`)
+/** where the photo's card is on the marker's canvas, null while it is not in the scene */
+const cardOnCanvas = () => page.evaluate((sel) => document.querySelector(sel).__probe.card(1), MARKER)
+const onCanvas = (point) => page.evaluate(([sel, p]) => document.querySelector(sel).__probe.project(p), [MARKER, point])
+if (await cardOnCanvas()) fail('a card is on the car before the photo says which panel it shows')
 await page.locator(MARKER).scrollIntoViewIfNeeded()
-const doorOnCanvas = await page.evaluate(([sel, p]) => document.querySelector(sel).__probe.project(p), [MARKER, door.anchor])
+const doorOnCanvas = await onCanvas(door.anchor)
 await page.locator('img[draggable="true"]').dragTo(page.locator(MARKER), { targetPosition: { x: doorOnCanvas[0], y: doorOnCanvas[1] } })
 await page.waitForTimeout(400)
 const pinnedPhoto = (await draft()).attachments.photos[1]
 if (pinnedPhoto.shows !== 'left_front_door') fail(`dropping the photo on the left front door tagged it ${JSON.stringify(pinnedPhoto.shows)}`)
-let tagged = await cardGreen(1)
-for (let i = 0; i < 40 && tagged.n < 150; i++) {
+let tagged = { green: 0 }
+for (let i = 0; i < 40 && tagged.green < 150; i++) {
   await page.waitForTimeout(250)
-  tagged = await cardGreen(1)
+  const at = await cardOnCanvas()
+  if (at) tagged = await frameAt(at)
 }
-if (!tagged.at || tagged.n < 150) fail(`the exported frame has no card for the photo: ${tagged.n} green px round ${JSON.stringify(tagged.at)}`)
-ok(`damage: the photo dropped on the car shows the ${pinnedPhoto.shows.replace(/_/g, ' ')}, and its card is in the exported frame (${tagged.n} green px round it)`)
+if (tagged.green < 150) fail(`the exported frame has no card for the photo: ${tagged.green} green px round where the probe puts it`)
+ok(`damage: the photo dropped on the car shows the ${pinnedPhoto.shows.replace(/_/g, ' ')}, and its card is in the exported frame (${tagged.green} green px round it)`)
 
 // Tapping the card turns the camera to its panel and opens the photo large. The car is turned
 // away first by a drag from the empty corner of the studio, then the card is tapped where it is now.
@@ -903,11 +910,15 @@ const facingDoor = await azimuth()
 // the drag to the car may have scrolled the page: the whole canvas in view, so both gestures land on it
 await page.locator(MARKER).evaluate((c) => c.scrollIntoView({ block: 'center' }))
 const markerBox = await page.locator(MARKER).boundingBox()
-await drag({ x: markerBox.x + markerBox.width - 40, y: markerBox.y + 40 }, -110, 0)
-await page.waitForTimeout(2500)
-const turnedAway = await azimuth()
-if (degreesApart(turnedAway, facingDoor) < 20) fail(`the drag did not turn the car away from the door (${degreesApart(turnedAway, facingDoor).toFixed(1)}°)`)
-const cardAt = await page.evaluate((sel) => document.querySelector(sel).__probe.card(1), MARKER)
+const turnAway = async () => {
+  await drag({ x: markerBox.x + markerBox.width - 40, y: markerBox.y + 40 }, -110, 0)
+  await page.waitForTimeout(2500)
+  const az = await azimuth()
+  if (degreesApart(az, facingDoor) < 20) fail(`the drag did not turn the car away from the door (${degreesApart(az, facingDoor).toFixed(1)}°)`)
+  return az
+}
+const turnedAway = await turnAway()
+const cardAt = await cardOnCanvas()
 await page.mouse.click(markerBox.x + cardAt[0], markerBox.y + cardAt[1])
 const lightbox = page.getByRole('dialog', { name: t('zone.left_front_door') })
 await lightbox.waitFor({ timeout: 5000 }).catch(() => fail('tapping the card did not open the photo'))
@@ -918,6 +929,30 @@ if ((await lightbox.locator('img').getAttribute('src')) !== photo.data) fail('th
 await page.keyboard.press('Escape')
 await lightbox.waitFor({ state: 'detached', timeout: 3000 }).catch(() => fail('Escape did not close the photo'))
 ok(`damage: tapping the card opened the photo and turned the camera ${degreesApart(turnedAway, backAtDoor).toFixed(0)}° back round to the door`)
+
+// Seen head-on a card stands on the line of sight to its own panel, so while the camera faces the
+// door its card stands aside, and the next turn of the car brings it back. Then the door's own pin,
+// tapped where it stands: the camera turns to the door, the pin is drawn there, and no card covers it.
+const aside = await frameAt(await cardOnCanvas())
+if (aside.green > 5) fail(`the card stays in front of the door the camera was turned to face (${aside.green} green px)`)
+await turnAway()
+const cardBack = await frameAt(await cardOnCanvas())
+if (cardBack.green < 150) fail(`turning the car did not bring the door's card back (${cardBack.green} green px)`)
+const doorMark = d4b.vehicles[0].damages[2]
+const pinAt = await onCanvas(doorMark.point)
+await page.mouse.click(markerBox.x + pinAt[0], markerBox.y + pinAt[1])
+await page.waitForTimeout(2500)
+const tappedPin = await page.evaluate((sel) => document.querySelector(sel).__probe.store.getState().selected, MARKER)
+if (tappedPin !== 2) fail(`the tap on the door's pin did not select it (selected: ${tappedPin})`)
+const pinFaced = await azimuth()
+if (degreesApart(pinFaced, facingDoor) > 5) fail(`the door's pin did not turn the camera to the door (${degreesApart(pinFaced, facingDoor).toFixed(1)}° off)`)
+const pin = await frameAt(await onCanvas(doorMark.point))
+const [pr, pg, pb] = pin.rgb
+// the missing mark's violet dot, #7c3aed
+if (!(pb > 170 && pb > pr * 1.5 && pb > pg * 2)) fail(`the door's pin is not drawn where it stands once the camera faces the door: rgb(${pin.rgb})`)
+if (pin.green > 5) fail(`a card covers the door's pin once the camera faces the door (${pin.green} green px round it)`)
+await page.locator('.cm-pop .cm-x').click({ force: true })
+ok(`damage: facing the door, its card stands aside — after the card's tap (${aside.green} green px) and after the pin's, whose dot is drawn, rgb(${pin.rgb}), with ${pin.green} green px round it — and a turn of the car brings it back (${cardBack.green})`)
 // the car now, and the pole it took with it
 await page.locator(`[role=radiogroup][aria-label="${N.drivable}"]`).getByRole('radio', { name: N.no, exact: true }).click()
 await page.locator(`[role=radiogroup][aria-label="${N.airbags}"]`).getByRole('radio', { name: N.yes, exact: true }).click()
@@ -1128,7 +1163,13 @@ const deskBox = await deskMarker.boundingBox()
 await deskPage.mouse.click(deskBox.x + deskBox.width / 2, deskBox.y + deskBox.height / 2)
 await deskPage.waitForTimeout(600)
 if (await deskPage.locator('.cm-pop').count()) fail('a tap on the desk’s car opened the severity picker')
-await deskMarker.evaluate((c, p) => c.__probe.store.getState().face(p), door.anchor)
+// facing the door stands its card aside; a turn off it brings the card back, where it is tapped
+await deskMarker.evaluate((c, z) => c.__probe.store.getState().face(z), door)
+await deskPage.waitForTimeout(2500)
+await deskPage.mouse.move(deskBox.x + deskBox.width - 30, deskBox.y + 60)
+await deskPage.mouse.down()
+await deskPage.mouse.move(deskBox.x + deskBox.width - 90, deskBox.y + 60, { steps: 12 })
+await deskPage.mouse.up()
 await deskPage.waitForTimeout(2500)
 const deskCard = await deskMarker.evaluate((c) => c.__probe.card(1))
 if (!deskCard) fail('the desk’s car has no card for the photo pinned to the door')

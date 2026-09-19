@@ -151,24 +151,16 @@ function aimAt(camera: THREE.Camera, controls: Orbit, point: V3) {
 
 /**
  * Eases the camera round to face a damage when its pin is tapped, or a panel when the photo
- * pinned to it is. Gives up the moment the user actually drags or zooms — a tap on a pin is
- * not a drag — so it never fights a gesture.
+ * pinned to it is — whatever the store is `facing`. Gives up the moment the user actually drags
+ * or zooms — a tap on a pin is not a drag — so it never fights a gesture; and a drag also lets
+ * go of `facing`, which is what brings that panel's photo cards back.
  */
 function CameraRig({ store }: { store: MarkerStore }) {
   const camera = useThree((s) => s.camera)
   const gl = useThree((s) => s.gl)
   const controls = useThree((s) => s.controls) as unknown as Orbit
   const goal = useRef<THREE.Vector3 | null>(null)
-  const selected = useStore(store, (s) => s.selected)
   const facing = useStore(store, (s) => s.facing)
-
-  useEffect(() => {
-    if (selected === null) return
-    const { damages, vehicle } = store.getState()
-    const d = damages[selected]
-    if (!d) return
-    goal.current = aimAt(camera, controls, toWorld(vehicle, d.point))
-  }, [selected, store, camera, controls])
 
   useEffect(() => {
     if (facing) goal.current = aimAt(camera, controls, toWorld(store.getState().vehicle, facing.point))
@@ -180,7 +172,9 @@ function CameraRig({ store }: { store: MarkerStore }) {
     const onDown = () => (down = true)
     const onUp = () => (down = false)
     const onMove = () => {
-      if (down) goal.current = null
+      if (!down) return
+      goal.current = null
+      if (store.getState().facing) store.setState({ facing: null })
     }
     const onWheel = () => (goal.current = null)
     el.addEventListener('pointerdown', onDown)
@@ -193,7 +187,7 @@ function CameraRig({ store }: { store: MarkerStore }) {
       el.removeEventListener('wheel', onWheel)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [gl])
+  }, [gl, store])
 
   useFrame((_, dt) => {
     const g = goal.current
@@ -207,17 +201,24 @@ function CameraRig({ store }: { store: MarkerStore }) {
   return null
 }
 
-/** the photos pinned to this body; tapping one turns the camera to its panel and opens it */
+/**
+ * The photos pinned to this body; tapping one turns the camera to its panel and opens it. The
+ * panel the camera has been turned to face — a tapped pin's, a tapped photo's — has its cards
+ * stand aside until the customer turns the camera or the selection clears (`facing`): read here
+ * in render, never copied into state.
+ */
 function PinnedPhotos({ store, photos, onOpenPhoto }: { store: MarkerStore; photos: CardPhoto[]; onOpenPhoto?: (photoId: number) => void }) {
   const vehicle = useStore(store, (s) => s.vehicle)
+  const faced = useStore(store, (s) => s.facing?.zone ?? null)
   return (
     <PhotoCards
       body={vehicle}
       photos={photos}
+      faced={faced}
       onOpen={
         onOpenPhoto &&
         ((photo, zone) => {
-          store.getState().face(zone.anchor)
+          store.getState().face(zone)
           onOpenPhoto(photo.id)
         })
       }

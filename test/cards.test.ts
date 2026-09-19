@@ -3,6 +3,8 @@ import { CARD_OFFSET, cardPlacement, cardsOf } from '../src/marker/cards'
 import { toWorld } from '../src/vehicles/bodies'
 import { VEHICLE_IDS, zoneById, zonesOf, type V3, type Vehicle } from '../src/zones'
 import type { Photo } from '../src/claim/schema'
+import { createMarkerStore } from '../src/marker/store'
+import { SCHEMA, damage } from '../src/schema'
 
 const zone = (body: Vehicle, id: string) => zoneById(body, id)!
 const len = (v: V3) => Math.hypot(...v)
@@ -56,5 +58,43 @@ describe('cardsOf', () => {
       { id: 4, dataUrl: photos[4].data, shows: 'roof' },
     ])
     expect(cardsOf(photos, 'c')).toEqual([])
+  })
+})
+
+describe('facing: the panel whose cards stand aside', () => {
+  const store = () =>
+    createMarkerStore({ schema: SCHEMA, vehicle: 'sedan', damages: [damage('hood', [0, 0.76, 0.78], 'dent'), damage('left_front_door', [0.65, 0.5, 0.16], 'missing')] })
+
+  it('is the panel of a selected pin, of a new mark, or of a tapped photo — a new object each time, so a repeat tap aims again', () => {
+    const s = store()
+    s.getState().select(1)
+    const first = s.getState().facing
+    expect(first).toEqual({ point: [0.65, 0.5, 0.16], zone: 'left_front_door' })
+    s.getState().select(1)
+    expect(s.getState().facing).toEqual(first)
+    expect(s.getState().facing).not.toBe(first)
+
+    s.getState().face(zone('sedan', 'roof'))
+    expect(s.getState().facing).toEqual({ point: zone('sedan', 'roof').anchor, zone: 'roof' })
+    expect(s.getState().selected).toBeNull()
+
+    s.getState().pick([0.65, 0.58, -0.9])
+    s.getState().commit('scratch')
+    expect(s.getState().facing?.zone).toBe('left_rear_quarter_panel')
+  })
+
+  it('lets go when the selection clears — the picker closed, a new tap on the car, a mark removed, a new value', () => {
+    const s = store()
+    const clears: (() => void)[] = [
+      () => s.getState().select(null),
+      () => s.getState().pick([0, 1.3, -0.2]),
+      () => s.getState().remove(0),
+      () => s.getState().load({ schema: SCHEMA, vehicle: 'sedan', damages: [] }),
+    ]
+    for (const clear of clears) {
+      s.getState().face(zone('sedan', 'hood'))
+      clear()
+      expect(s.getState().facing).toBeNull()
+    }
   })
 })

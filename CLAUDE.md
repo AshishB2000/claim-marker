@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 597 tests across 38 files
+npm test               # vitest, 599 tests across 38 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -473,8 +473,12 @@ the replay). Tagging by drag is `PHOTO_DRAG` data (the photo's index on the
 claim) dropped on the canvas, cast against the body alone (the car's primitive is named `car`),
 then `toModel` → `nearestZone` → `tagPhoto`; the select under each thumbnail is the same call.
 A card opens on a still click, not the press (a modal under a drag swallows it), through
-`store.face(point)` — a new `facing` object per tap, or a second tap would not re-aim —
-and a `<dialog>` lightbox that takes `lang`. `ReportDocument`'s marker is `readOnly` (no pick,
+`store.face(zone)` and a `<dialog>` lightbox that takes `lang`. **The panel the camera faces
+has its cards stand aside** — not drawn, no handlers — because `cameraFor` and the card share
+an azimuth, so a faced card covers its own pin and takes its tap. `facing: { point, zone }` is
+set by `select`/`commit` (a pin) and `face` (a card), a new object each time (the rig's one
+trigger, so a repeat tap re-aims), and cleared when the selection clears and by the rig on the
+customer's drag; `PhotoCards` reads it as `faced` in render — never copied into state. `ReportDocument`'s marker is `readOnly` (no pick,
 no picker, no wheel zoom); only the desk's takes pointer events — the review's copy is the
 evidence exported at send and stays as framed. The DEV `__probe` has `card(id)` (canvas px)
 and `azimuth()`.
