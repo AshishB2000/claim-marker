@@ -14,6 +14,8 @@ import { ReportDocument } from '../app/ReportDocument'
 import { Compare } from './Compare'
 import { DeskMap } from './DeskMap'
 import { inboxRows } from './inbox'
+import { DeskInsights } from './DeskInsights'
+import { inFocus, insightsOf, type Focus } from './insights'
 import { inRange, inView, RANGE_LABEL, type Bounds, type Range } from './pins'
 import { lightingFor, type Lighting } from '../scene/lighting'
 import { Reconstruction } from '../marker/Reconstruction'
@@ -73,6 +75,11 @@ export type Receipt = {
     damaged: number
     photos: number
     drivable: boolean | null
+    /** what the inbox is counted by as a whole: the panels marked, the conditions, and the offset that makes `at` an instant */
+    panels?: string[]
+    weather?: string
+    light?: string
+    utcOffset?: number | null
   }
 }
 
@@ -268,6 +275,9 @@ export function Desk() {
   const [mapOn, setMapOn] = useState(false)
   const [heat, setHeat] = useState(false)
   const [onlyOnMap, setOnlyOnMap] = useState(false)
+  // the inbox read as a whole, and the one tile of it the list and the map are held to
+  const [insightsOn, setInsightsOn] = useState(false)
+  const [focus, setFocus] = useState<Focus | null>(null)
   const [bounds, setBounds] = useState<Bounds | null>(null)
   const [ref, setRef] = useState<string | null>(() => window.location.hash.replace(/^#\/?/, '') || null)
   const [open, setOpen] = useState<{ receipt: Receipt; claim: Claim } | null>(null)
@@ -374,10 +384,15 @@ export function Desk() {
   // same reports, and only the list narrows further to the part of the map on screen
   const now = new Date()
   const kept = (c: Receipt) => (filter === 'all' || c.status === filter) && inRange(c.receivedAt, range, now) && matches(c)
+  // a held tile narrows the list and the map alike, but the tiles are counted off `kept` alone:
+  // press "Collision" and the other kinds must still be there to press instead
+  const focused = (c: Receipt) => kept(c) && inFocus(c, focus)
   const onScreen = (c: Receipt) => !mapOn || !onlyOnMap || !bounds || inView(c, bounds)
-  const pinned = (claims ?? []).filter(kept)
+  const pinned = (claims ?? []).filter(focused)
   // the accounts of one accident share a row; it shows when any of them matches
-  const rows = inboxRows(claims ?? []).filter((g) => g.accounts.some((c) => kept(c) && onScreen(c)))
+  const rows = inboxRows(claims ?? []).filter((g) => g.accounts.some((c) => focused(c) && onScreen(c)))
+  // one accident is one row here too, so two accounts of it are counted once
+  const counts = insightsOn ? insightsOf(inboxRows((claims ?? []).filter(kept)).map((r) => r.lead), now) : null
   const showing = open && open.receipt.reference === ref ? open : null
   // the fetched incident, but only once it actually names the report on screen — a stale
   // answer for a report we have since left never reads as this one's
@@ -459,7 +474,11 @@ export function Desk() {
               <button className="chip" aria-pressed={mapOn} onClick={() => setMapOn((v) => !v)}>
                 Map
               </button>
+              <button className="chip" aria-pressed={insightsOn} onClick={() => setInsightsOn((v) => !v)}>
+                Insights
+              </button>
             </div>
+            {counts && <DeskInsights of={counts} focus={focus} onFocus={setFocus} />}
             {mapOn && (
               <>
                 {/* the rows, not the receipts: two accounts of one accident stand in one place, and they are one row and one pin */}
@@ -492,7 +511,7 @@ export function Desk() {
                       : 'Nothing here yet. A report sent from the page lands in this list.'}
               </p>
             )}
-            <ul className={`space-y-2 ${showing ? '' : 'grid gap-3 space-y-0 sm:grid-cols-2 lg:grid-cols-3'}`}>
+            <ul data-inbox className={`space-y-2 ${showing ? '' : 'grid gap-3 space-y-0 sm:grid-cols-2 lg:grid-cols-3'}`}>
               {rows.map(({ lead: c, accounts }) => {
                 const on = accounts.some((a) => a.reference === ref)
                 // the open incident may know of an account this inbox has not loaded yet

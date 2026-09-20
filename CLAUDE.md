@@ -18,7 +18,7 @@ changing behaviour it describes.
 ```bash
 npm run dev            # vite, http://localhost:5173 (the claims desk is /adjuster.html)
 npm run lint           # oxlint — must be silent, warnings included (react-compiler-style rules are on)
-npm test               # vitest, 636 tests across 39 files
+npm test               # vitest, 650 tests across 40 files
 npm run build          # tsc -b, the static site (two pages) into dist/, and dist/lib/claim.js for the server
 npm run server         # the whole product on 8788: the page, the desk and the API; needs a build
 ```
@@ -259,6 +259,21 @@ div can hold; `DeskMap` compares the drawn collection before `setData`/`fitBound
 answers its own `moveend` for ever through the desk's bounds state; the map and the list show
 the same reports and only "only what's on the map" makes the list follow the view; and "today"
 is the desk's day from midnight, not the last twenty-four hours.
+
+**Insights are the same receipts, counted, and the tiles never re-count themselves.**
+`src/adjuster/insights.ts` is pure (`insightsOf(rows, now)`, `inFocus`), so `DeskInsights.tsx`
+only draws — divs for the bars and one `polyline` for the thirty days, because a bar is a width
+and no chart library is worth a dependency for that. Four rules that are easy to undo. It is fed
+`inboxRows(...)`'s **leads**, like the map, so two accounts of one accident are counted once.
+It counts off the receipts alone — the list endpoint stays receipts-only, and `summarise()` grew
+`panels`, `weather`, `light` and `utcOffset` for it, so a receipt filed before that line simply
+has nothing to count by and is silently out of those tiles while staying in every other. A held
+tile (`focus`) narrows the list and the map alike, but the tiles are counted off what the status
+chips, the dates and the search kept and **never** off the tile being held, or pressing
+"Collision" would leave nothing else to press. And `medianLag` takes only the reports whose
+`utcOffset` makes `at` an instant (`instantOf`), because a wall clock can be half a day out
+either way and a median made of that says nothing. Like everything else in `src/adjuster/`, it
+says nothing about what it counts: no fault, no liability, no speed, no cost.
 
 **Two accounts of one accident are linked by `incident.shared` and `reporter.party`.**
 The customer invites the other driver with a QR code (`src/app/Invite.tsx`, the one runtime
@@ -610,7 +625,7 @@ era that still suits it. The app itself is Tailwind (`src/app.css`).
 ```
 src/app/          the seven steps, the shell, the shared ReportDocument, submit
 src/app/steps/damage/   the damage step's three parts: the camera, the suggestions, the marker
-src/adjuster/     the claims desk (adjuster.html), the insurer's side: the inbox, the map of everything, the comparison
+src/adjuster/     the claims desk (adjuster.html), the insurer's side: the inbox, the map of everything, the inbox counted, the comparison
 src/claim/        the claim/1 document, the persisted store, prefill, the outbox, a photo's own EXIF
 src/config.ts     runtime configuration and the host-page channel
 public/sw.js      the offline shell; its precache list is patched in by vite.config.ts

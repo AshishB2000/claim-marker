@@ -1088,7 +1088,7 @@ const openDeskMap = async () => {
 }
 await openDeskMap()
 const deskFind = deskPage.getByRole('searchbox', { name: 'Search reports' })
-const listed = () => deskPage.locator('aside ul li').count()
+const listed = () => deskPage.locator('aside ul[data-inbox] li').count()
 
 // one report at a time: the map frames its one pin in the middle, so the colour under the
 // middle is that report's status and nothing the basemap happens to paint
@@ -1224,6 +1224,78 @@ const narrowed = await listed()
 await deskPage.getByRole('button', { name: "Only what's on the map" }).click()
 if (!(await settles(async () => (await listed()) === all))) fail(`the list did not come back when it stopped following the map: ${await listed()} of ${all}`)
 ok(`desk map: "only what's on the map" narrows the list to the view (${all} filed, ${framed} on the map, ${narrowed} in the view) and gives it back`)
+
+// ── the desk's insights: the same inbox, counted ──────────────────────
+// The tiles are counted off the receipts the list endpoint already sends, so first the receipt
+// has to carry what they count by, then the desk has to count one accident once, then pressing
+// a bar has to hold the list to it and let go again.
+
+// one report of another kind, in weather, with a panel marked and an offset on its clock: the
+// inbox is otherwise nine collisions with nothing to separate, and a bar that holds everything
+// proves nothing when it is pressed
+const glass = await (
+  await fetch(`${API}/claims`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${await mapSession('insight-glass')}`, ...mapIp },
+    body: JSON.stringify({
+      schema: 'claim/1',
+      reporter: { name: 'Dana Okafor' },
+      vehicles: [{ id: 'a', role: 'insured', body: 'sedan', color: '#2f6bff', damages: [{ zone: 'windshield', point: [0, 1.06, 0.26], severity: 'crack' }] }],
+      incident: {
+        kind: 'glass',
+        at: '2026-09-18T22:10',
+        utcOffset: 60,
+        conditions: { weather: 'rain', road: 'wet', light: 'dark_lit' },
+        location: { lng: -73.9442, lat: 40.6782, address: 'Flatbush Avenue, Brooklyn' },
+      },
+    }),
+  })
+).json()
+const glassSummary = (await (await fetch(`${API}/claims/${glass.reference}`, desk)).json()).summary
+if (!glassSummary.panels?.includes('windshield') || glassSummary.weather !== 'rain' || glassSummary.light !== 'dark_lit' || glassSummary.utcOffset !== 60)
+  fail(`the glass report's receipt does not carry what the desk counts by: ${JSON.stringify(glassSummary)}`)
+
+const counted = (await (await fetch(`${API}/claims/${shown}`, desk)).json()).summary
+if (!counted.panels?.length) fail(`the receipt carries no panels to count: ${JSON.stringify(counted.panels)}`)
+if (typeof counted.weather !== 'string' || typeof counted.light !== 'string') fail(`the receipt carries no conditions: ${JSON.stringify({ weather: counted.weather, light: counted.light })}`)
+if (counted.utcOffset === undefined) fail('the receipt carries no utcOffset, so "how long did they take to report" is a wall clock')
+ok(`server: the receipt carries what the desk counts by (${counted.panels.length} panels, ${counted.weather || 'no weather'}/${counted.light || 'no light'}, offset ${counted.utcOffset})`)
+
+await deskPage.goto(`${PAGE}/adjuster.html?api=${API}`)
+await deskPage.getByRole('button', { name: 'Insights' }).click()
+await deskPage.locator('[data-insights]').waitFor({ timeout: 20000 }).catch(() => fail('the Insights panel never appeared'))
+const accidents = async () => Number(/(\d+)\s+accidents?/.exec(await deskPage.locator('[data-insights]').innerText())?.[1])
+// one row per accident on both sides: the two accounts of one are one row and one count
+if (!(await settles(async () => (await accidents()) === (await listed())))) fail(`the tiles count ${await accidents()} accidents where the list shows ${await listed()} rows`)
+const everything = await listed()
+ok(`desk insights: the inbox counted as a whole — ${everything} accidents, two accounts of one counted once`)
+
+// what that one report carried, counted: its panel, its weather, its light, and the interval
+// its offset makes possible
+const panelText = await deskPage.locator('[data-insights]').innerText()
+for (const word of ['Windshield', 'Rain', 'Dark, street lights on'])
+  if (!panelText.includes(word)) fail(`the tiles do not count "${word}": ${panelText.replace(/\n/g, ' | ')}`)
+const typical = /(\S+(?: \S+)?)\s*\n\s*typical time to report/.exec(panelText)?.[1]
+if (!typical || typical === '—') fail(`nothing reached the typical time to report (${typical}), though a report carries the offset that makes one`)
+ok(`desk insights: the panel, the weather and the light that report carried are counted, and the typical time to report is ${typical}`)
+
+const kindBars = deskPage.locator('[data-bars="kind"] button')
+const kinds = await kindBars.count()
+if (kinds < 2) fail(`the kinds of incident do not separate: ${kinds} bar(s)`)
+// the smallest bar: narrowing to it is a proof, narrowing to the one everything is in is not
+const firstBar = kindBars.last()
+const barLines = (await firstBar.innerText()).split('\n').map((s) => s.trim()).filter(Boolean)
+const [kindName, kindCount] = [barLines[0], barLines[barLines.length - 1]]
+await firstBar.click()
+if (!(await settles(async () => (await listed()) === Number(kindCount)))) fail(`holding "${kindName}" (${kindCount}) left ${await listed()} rows`)
+if (Number(kindCount) >= everything) fail(`"${kindName}" holds all ${everything} reports, so narrowing to it proves nothing`)
+// the bars are counted off what the filters keep, never off the bar being held, or there would
+// be nothing else left to press
+if ((await kindBars.count()) !== kinds) fail(`holding one kind left ${await kindBars.count()} of ${kinds} bars to press instead`)
+if ((await accidents()) !== everything) fail(`holding one kind re-counted the tiles: ${await accidents()} of ${everything}`)
+await deskPage.getByRole('button', { name: /show everything/ }).click()
+if (!(await settles(async () => (await listed()) === everything))) fail(`letting go of "${kindName}" left ${await listed()} of ${everything} rows`)
+ok(`desk insights: pressing "${kindName}" holds the list to its ${kindCount} of ${everything}, leaves the other ${kinds - 1} bar${kinds === 2 ? '' : 's'} to press, and lets go`)
 
 // ── the demo portal, on the same server, embedding the built page ─────
 
