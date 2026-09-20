@@ -48,7 +48,7 @@ never cached. `dist/lib/` is not served: it is the parser this server validates 
 | `SESSION_SECRET` · `API_KEY` | per-customer sessions: the HMAC key, and the key your backend calls `/sessions` with |
 | `DESK_TOKEN` | what the claims desk sends to read and re-file reports |
 | `ALLOWED_HOSTS` | origins allowed to embed the page; sets `frame-ancestors` and the page's own trust list |
-| `BRAND` · `ASSIST_URL` | injected into the page |
+| `BRAND` · `ASSIST_URL` · `LANG_DEFAULT` | injected into the page; `LANG_DEFAULT=es` fixes it to Spanish and hides the switch |
 | `CONNECT_SRC` | extra origins the page may reach — your own tiles, geocoder, weather or road data — added to the CSP. The page already reaches Esri (tiles), Photon (addresses), vPIC (makes and models), Wikipedia (vehicle photographs), Open-Meteo (`api.open-meteo.com`, `archive-api.open-meteo.com` — the weather at the hour of the accident) and Overpass (`overpass.kumi.systems` — the road it happened on); all keyless. Point `VITE_WEATHER_URL`, `VITE_WEATHER_ARCHIVE_URL` or `VITE_ROADS_URL` at your own provider at build time and add its origin here. |
 | `RATE_LIMIT` · `TRUST_PROXY` | POSTs per minute per IP (default 30), and whether to believe `Fly-Client-IP` or `X-Forwarded-For` |
 | `WEBHOOK_URL` · `WEBHOOK_SECRET` | where new reports are announced, and the key for the signature |
@@ -197,9 +197,15 @@ the outbox sending again. Key on `Idempotency-Key` (or `reference` in the body):
 and answer the second exactly as the first.
 
 **Attachments** are inline data URLs: `attachments.scene` (PNG, the diagram),
-`attachments.damage[vehicleId]` (PNG, the marked-up car) and `attachments.photos[].data`
-(JPEG, the customer's photographs, already downscaled to 1280 px). Decode them to files on
-receipt; the reference server shows how.
+`attachments.replay` (a short video of the diagram playing back — `video/webm` or `video/mp4`,
+whichever that browser could record, up to 4 MB), `attachments.damage[vehicleId]` (PNG, the
+marked-up car) and `attachments.photos[].data` (JPEG, the customer's photographs, already
+downscaled to 1280 px). Decode them to files on receipt; the reference server shows how.
+
+`attachments.replay` is the one attachment that may be missing for reasons that are nobody's
+mistake: a browser that cannot record, an incident with nothing to play back, or a clip that
+came out over the cap. It is `null` in all three cases and the report is sent anyway — never
+hold a report up for it, and never treat its absence as a problem with the report.
 
 ## 2b. Sessions: a token that names the customer
 
@@ -420,8 +426,24 @@ printable to PDF, with a status the desk moves along. It reads the server's API 
 `VITE_CLAIMS_API` (build-time) or `?api=` (for a desk pointed elsewhere), and asks for the
 desk token once per tab.
 
-A claims system with its own inbox does not need it: `ReportDocument` in
-`src/app/ReportDocument.tsx` renders a `claim/1` document from wherever you keep the JSON.
+Three more readings sit beside the list, all of them drawn from what has already arrived:
+
+- **The map of everything.** Every receipt carrying a place (`summarise()` adds `lng`/`lat`) is
+  a pin in the colour of its status, clustered as the map zooms out, with a heat layer for
+  volume. It is a second way of reading the inbox, never a filter on it — a receipt filed
+  before that line existed has no place and is simply not on the map while staying in the list.
+- **The reconstruction.** A tab beside the report: every vehicle on the diagram stood in the
+  damage studio where the map put it, in its own paint and with its own damage, to orbit and
+  play through. Nothing there writes to the document.
+- **Both accounts.** When a report is linked to another through `incident.shared` (§2c), the
+  desk lays the two side by side on one map and one clock, with an impact tick each. It says
+  how far apart the two accounts are, and nothing about who is right.
+
+A claims system with its own inbox does not need any of it: `ReportDocument` in
+`src/app/ReportDocument.tsx` renders a `claim/1` document from wherever you keep the JSON. It
+takes the road and the buildings as props and the desk passes neither, because `claim/1` carries
+the road in words and the buildings not at all — a report read on the desk is flat ground with
+cars on it.
 
 ## 5. Proving it
 
@@ -435,3 +457,10 @@ to the desk, mints a session and hands its token and prefill to the embed, prove
 is refused, floods the server until it answers `429`, and checks the built page is served
 with its CSP, its injected config and immutable assets — with `dist/lib` and anything outside
 `dist/` unreachable.
+
+It goes on through the parts of the desk that need more than one report to mean anything: a
+second browser opening a party link and filing the other driver's account, the two laid side by
+side on one clock, the reconstruction tab orbited and played, three reports at three places
+drawn as three pins in their status colours and folded into a cluster, and the replay decoded
+from its bytes rather than weighed. Four of the README's pictures are written on the way past,
+each at the point where what is in the frame has just been proved.
