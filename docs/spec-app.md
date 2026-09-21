@@ -1723,6 +1723,46 @@ before calling `setData` and refitting, or `fitBounds` would answer its own `mov
 That is the whole reason the bounds live in the desk's state and the data does not depend on
 them.
 
+### What the inbox says as a whole
+
+An adjuster reads one report at a time; the person they report to asks a different question —
+how many, where, when, which panels, in what weather, how long people take to tell us. Every
+answer is already on the receipts the desk has fetched, so "Insights" is a third reading of the
+same list beside the rows and the map: a tile each for the count, the share that hurt somebody,
+the share that left a car undrivable and the typical time to report, thirty days of arrivals as
+one line, then bars for the kind, the panels, the weather and the light, and the twenty-four
+hours of the day as columns.
+
+**It is counted off the receipts, so the list endpoint stays receipts-only.** No document is
+fetched for a tile. `summarise()` grew four fields for it — `panels` (the zone ids marked across
+the report's vehicles), `weather`, `light` and `utcOffset` — which is the same bargain the map's
+`lng`/`lat` made: a receipt filed before that line has nothing to count by and is quietly out of
+those tiles while staying in the list, the map and every other count.
+
+**One accident is one row, one pin and one count.** `insightsOf` is fed `inboxRows(...)`'s leads
+for exactly the reason `DeskMap` is, or an accident both drivers reported would weigh twice.
+
+**Every bar is a button, and pressing one never re-counts the bars.** A held tile (`focus`)
+narrows the list and the map alike — the same rule the map's own toggle follows — but the tiles
+themselves are counted off what the status chips, the dates and the search kept, and never off
+the tile being held. Count them off the held tile and pressing "Collision" leaves one bar at
+100 % and nothing else to press.
+
+**The median time to report takes only the reports that name an instant.** `incident.at` is a
+wall clock; without `incident.utcOffset` it could be half a day out either way, and a median
+made of that is a number that looks like an answer. `instantOf` decides, and a report with no
+offset is simply not in it.
+
+**Divs and one `polyline`, not a chart library.** A bar is a width and a sparkline is thirty
+points; a charting dependency here would be the largest thing on the desk's page for something
+CSS already does. The counting is pure in `src/adjuster/insights.ts` and `test/insights.test.ts`
+holds the parts that could be wrong without anyone noticing on screen: a day bucket off by one,
+an accident counted twice, an hour read off a string, a median quietly full of wall clocks.
+
+And, like the rest of `src/adjuster/`, it says nothing about what it counts. These are counts an
+insurer already has in its own reporting, brought to the screen the adjuster is already looking
+at — no fault, no liability, no speed, no cost.
+
 ## Tell us everything, once (v9)
 
 A form asks forty questions one at a time. A person who has just been in a crash tells you what

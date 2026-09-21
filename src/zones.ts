@@ -21,17 +21,18 @@ export type V3 = [number, number, number]
 
 const LABEL_OVERRIDE: Record<string, string> = { trunk: 'Trunk / tailgate' }
 
-const label = (id: string) =>
+/** a zone id in words. Exported because the desk counts panels across bodies and has only the id */
+export const zoneLabel = (id: string) =>
   LABEL_OVERRIDE[id] ?? id.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
 
 const one = <T extends string>(id: T, anchor: V3, radius: number) =>
-  [{ id, label: label(id), anchor, radius }] as const
+  [{ id, label: zoneLabel(id), anchor, radius }] as const
 
 /** mirrored pair; the given anchor is the car's left (+X) side, see the frame note above */
 const pair = <T extends string>(id: T, [x, y, z]: V3, radius: number) =>
   [
-    { id: `left_${id}` as const, label: label(`left_${id}`), anchor: [x, y, z] as V3, radius },
-    { id: `right_${id}` as const, label: label(`right_${id}`), anchor: [-x, y, z] as V3, radius },
+    { id: `left_${id}` as const, label: zoneLabel(`left_${id}`), anchor: [x, y, z] as V3, radius },
+    { id: `right_${id}` as const, label: zoneLabel(`right_${id}`), anchor: [-x, y, z] as V3, radius },
   ] as const
 
 // sedan — body x ±0.75 (skin ±0.65), y 0.15–1.30, z −1.30–1.25; beltline 0.70; roof 1.30

@@ -601,6 +601,13 @@ const summarise = (doc) => ({
   damaged: doc.vehicles.filter((v) => v.damages.length > 0).length,
   photos: doc.attachments.photos.length,
   drivable: doc.vehicles.find((v) => v.role === 'insured')?.condition.drivable ?? null,
+  // what the desk counts across the whole inbox: the panels marked, and the weather and light
+  // the report was filed under. Enum values, not words — the desk labels them itself.
+  panels: [...new Set(doc.vehicles.flatMap((v) => v.damages.map((d) => d.zone)))],
+  weather: doc.incident.conditions.weather,
+  light: doc.incident.conditions.light,
+  // so "how long did they take to report" is an interval and not a wall clock half a day out
+  utcOffset: doc.incident.utcOffset,
 })
 
 async function list() {
